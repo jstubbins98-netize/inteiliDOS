@@ -1,5 +1,5 @@
-# inteiliDOS
- Inteilix Software Corporation — Version 1.0
+# inteiliDOS — Version 1.0
+ Inteilix Software Corporation
 
 
 ---
