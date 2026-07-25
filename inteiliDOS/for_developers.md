@@ -1,12 +1,6 @@
 # inteiliDOS — Developer Reference
 
 ```
-  _       _       _ _ _  ___   ___  ____
- (_)_ __ | |_ ___(_) (_)|   \ / _ \/ ___|
- | | '_ \| __/ _ \ | | || |) | | | \___ \
- | | | | | ||  __/ | | ||___/ | |_| |___) |
- |_|_| |_|\__\___|_|_|_||_|    \___/|____/
-
  Developer Reference — Version 1.0
  Inteilix Software Corporation
 ```
@@ -24,6 +18,8 @@
    - [Keyboard Input](#43-keyboard-input)
    - [Timer & PC Speaker](#44-timer--pc-speaker)
    - [Interrupt Handling](#45-interrupt-handling)
+   - [PCI Bus Scanner](#46-pci-bus-scanner)
+   - [USB HID Keyboard Driver](#47-usb-hid-keyboard-driver)
 5. [The IntelliShell Application Model](#5-the-intellishell-application-model)
    - [Adding a Shell Command](#adding-a-shell-command)
    - [Adding an NLP Phrase](#adding-an-nlp-phrase)
@@ -49,6 +45,7 @@ inteiliDOS is a flat, single-address-space, single-privilege-level (ring 0) oper
 ├──────────────┴──────────────────────────────┤
 │               Kernel Services               │
 │  VGA │ Keyboard │ Timer │ Memory │ ISR/IRQ  │  kernel/*.c
+│  PCI scanner │ USB HID keyboard (UHCI)         │  kernel/pci.c, usb.c
 ├─────────────────────────────────────────────┤
 │           Protected-Mode Stubs              │  boot/isr_stubs.asm
 │           GDT / IDT / TSS                  │  kernel/gdt.c, idt.c
@@ -96,6 +93,7 @@ kernel/kernel.c  kernel_main(mb_magic, mb_info_phys)
   ├── keyboard_init()            register IRQ1 handler
   ├── sti                        enable interrupts
   ├── speaker_boot_chime()       C5→E5→G5→C6 arpeggio
+  ├── usb_keyboard_init()        PCI scan → UHCI reset → USB HID enumeration
   ├── print_banner(mem_kb)       welcome screen
   └── shell_run()                ← control never returns from here
 ```
@@ -307,6 +305,12 @@ int keyboard_getchar(void);
 
 /* Return the next character from the keyboard buffer, or -1 if empty. */
 int keyboard_poll(void);
+
+/* Inject a character directly into the keyboard ring buffer.
+ * Used by external drivers (e.g. the USB HID driver) to share the same
+ * buffer without touching IRQ1 or the PS/2 port.
+ * Safe to call from any context, including timer callbacks.            */
+void keyboard_inject(uint8_t c);
 ```
 
 #### Special key constants
@@ -362,6 +366,13 @@ uint32_t timer_get_ticks(void);
 
 /* Busy-wait for ms milliseconds (uses hlt; requires interrupts enabled). */
 void timer_sleep(uint32_t ms);
+
+/* Register a function to be called on every 1 kHz PIT tick, immediately
+ * after the tick counter is incremented.  Only one secondary callback is
+ * supported; a second call replaces the first.  Pass NULL to unregister.
+ * The callback executes inside the IRQ0 handler with interrupts disabled —
+ * keep it short (< 1 ms) and do not call timer_sleep() from within it.  */
+void timer_register_secondary(void (*cb)(void));
 
 /* PC speaker control */
 void speaker_on(uint32_t freq_hz);    /* start a tone at freq_hz */
@@ -454,6 +465,124 @@ For **CPU exceptions (vectors 0–31)**, if you do not register a handler, the k
 | 13 | 45 | FPU coprocessor |
 | 14 | 46 | Primary ATA |
 | 15 | 47 | Secondary ATA |
+
+---
+
+---
+
+### 4.6 PCI Bus Scanner
+
+**Headers:** `kernel/pci.h`, `kernel/pci.c`
+
+The PCI scanner reads configuration space through the standard x86 port pair 0xCF8 (address) / 0xCFC (data). It scans buses 0–7, devices 0–31, functions 0–7, and provides two public calls used by the USB driver.
+
+```c
+/* Search all PCI functions for the first device matching the given
+ * class code, subclass, and programming interface.
+ *
+ * On success writes the bus/device/function triple into *bus_out,
+ * *dev_out, *fn_out and returns 1.  Returns 0 if nothing matched.  */
+int pci_find_device(uint8_t class_code, uint8_t subclass, uint8_t prog_if,
+                    uint8_t *bus_out, uint8_t *dev_out, uint8_t *fn_out);
+
+/* Set Command register bits 0 (I/O enable), 1 (memory enable), and
+ * 2 (bus-master enable) for the given BDF.  Required before the CPU
+ * can issue DMA or port-I/O transactions on behalf of the device.    */
+void pci_enable_busmaster(uint8_t bus, uint8_t dev, uint8_t fn);
+```
+
+#### PCI class codes for common devices
+
+| Class | Subclass | Prog IF | Device type |
+|-------|----------|---------|-------------|
+| 0x0C | 0x03 | 0x00 | UHCI USB host controller |
+| 0x0C | 0x03 | 0x10 | OHCI USB host controller |
+| 0x0C | 0x03 | 0x20 | EHCI USB host controller |
+| 0x01 | 0x01 | — | IDE/ATA controller |
+| 0x02 | 0x00 | — | Ethernet controller |
+
+#### Reading other config-space registers
+
+If you need to read additional config-space DWORDs (e.g. BARs), use the same port pair:
+
+```c
+/* Build a type-1 config-space address */
+static inline uint32_t pci_addr(uint8_t bus, uint8_t dev,
+                                 uint8_t fn, uint8_t reg) {
+    return (1u << 31)
+         | ((uint32_t)bus  << 16)
+         | ((uint32_t)dev  << 11)
+         | ((uint32_t)fn   <<  8)
+         | (reg & 0xFC);          /* reg must be DWORD-aligned */
+}
+
+/* Example: read BAR0 (offset 0x10) */
+outl(0xCF8, pci_addr(bus, dev, fn, 0x10));
+uint32_t bar0 = inl(0xCFC);
+```
+
+The base I/O address for a port-I/O BAR is `bar0 & ~0x3u` (mask off the type bits).
+
+---
+
+### 4.7 USB HID Keyboard Driver
+
+**Headers:** `kernel/usb.h`, `kernel/usb.c`
+
+The USB driver implements a UHCI (Universal Host Controller Interface) keyboard driver for the boot HID protocol. It is entirely self-contained: it finds the UHCI controller via PCI, owns all UHCI data structures (frame list, Queue Heads, Transfer Descriptors), and feeds decoded keycodes into the shared keyboard ring buffer via `keyboard_inject()`.
+
+#### Public API
+
+```c
+/* Locate the UHCI host controller, enumerate the first USB HID keyboard
+ * found on ports 1 or 2, and arm the interrupt-endpoint polling loop.
+ * Called once by kernel_main after sti.
+ * Prints a green confirmation line on success; silent on failure.      */
+void usb_keyboard_init(void);
+```
+
+That is the only exported symbol. Everything else in `usb.c` is `static`.
+
+#### Enumeration sequence
+
+On a successful init the driver performs this sequence of synchronous control transfers to the device at USB address 0, then address 1:
+
+| Step | Request | Notes |
+|------|---------|-------|
+| 1 | `SET_ADDRESS(1)` | Moves device off address 0 |
+| 2 | `GET_DESCRIPTOR(Device, 18 B)` | Reads `bcdUSB`, `bMaxPacketSize0` |
+| 3 | `GET_DESCRIPTOR(Configuration, 64 B)` | Locates the interrupt IN endpoint descriptor |
+| 4 | `SET_CONFIGURATION(bConfigurationValue)` | Activates the configuration |
+| 5 | `SET_PROTOCOL(0)` — boot protocol | Switches to the fixed 8-byte report format |
+| 6 | `SET_IDLE(0, 0)` — report on change only | Optional; STALL is silently ignored |
+
+After step 6 a single interrupt-endpoint TD is armed in the UHCI frame list and the polling loop begins.
+
+#### Polling loop
+
+`timer_register_secondary(usb_poll)` installs `usb_poll` as the 1 kHz tick callback. The callback decrements an 8 ms counter; when it reaches zero it checks whether the interrupt TD has completed (Active bit cleared without error). If a report arrived, it decodes the 8-byte HID boot report and calls `keyboard_inject()` for each pressed key, then re-arms the TD and resets the counter.
+
+#### UHCI data structure alignment
+
+UHCI link pointers store a physical address in bits 31:4 and use bits 3:0 for flags (T = terminate, Q = QH, Vf = depth-first). This means every structure used as a link target — both Queue Heads (`uhci_qh_t`) and Transfer Descriptors (`uhci_td_t`) — **must be 16-byte aligned**. The driver declares these structures with `__attribute__((aligned(16)))`. If you add new QH or TD arrays, observe the same constraint or the controller will decode their addresses incorrectly and transfers will silently fail.
+
+#### HID boot-protocol report format
+
+The keyboard sends 8-byte reports on each key state change:
+
+| Byte | Field | Notes |
+|------|-------|-------|
+| 0 | Modifier bitmap | Bit 1 = Left Shift, Bit 5 = Right Shift; others ignored |
+| 1 | Reserved | Always 0x00 |
+| 2–7 | Keycode[0–5] | Up to 6 simultaneously pressed keys (HID Usage IDs) |
+
+The driver translates Usage IDs 0x04–0x52 to ASCII using two tables (`hid_normal[]` and `hid_shift[]`). Keys outside that range, or keycodes 0x01 (Rollover error), are silently dropped.
+
+#### Extending the driver
+
+- **Support more keys:** extend the `hid_normal` and `hid_shift` translation tables in `usb.c`. HID Usage IDs are defined in the *HID Usage Tables* document (USB-IF, usage page 0x07).
+- **Support OHCI/EHCI:** call `pci_find_device(0x0C, 0x03, prog_if, ...)` with `prog_if = 0x10` (OHCI) or `0x20` (EHCI). Each controller type has a different register set and TD format; OHCI and EHCI each require a separate driver module.
+- **Support multiple devices:** the current driver tracks a single device address (`usb_kbd_addr = 1`). To support multiple keyboards, the enumeration loop would need to probe all ports and assign a unique address to each device.
 
 ---
 
@@ -642,6 +771,8 @@ set(KERNEL_C_SOURCES
     kernel/isr.c
     kernel/timer.c
     kernel/keyboard.c
+    kernel/pci.c
+    kernel/usb.c
     kernel/memory.c
     kernel/ata.c
 )
@@ -903,7 +1034,7 @@ These are the open tasks most likely to be useful to new contributors, roughly o
 
 - **Persistent file system** — design a simple flat filesystem (FAT12 or a custom layout) on top of the ATA driver. Wire it into the existing simulated directory structure in `commands.c`.
 - **Multitasking scheduler** — a round-robin pre-emptive scheduler using the PIT IRQ0. Requires a per-task `registers_t`-equivalent context block, a task switch on each tick, and separate stacks per task. This is the single biggest architectural change possible.
-- **USB HID keyboard** — replace `kernel/keyboard.c` with a UHCI/OHCI driver for machines without a PS/2 port. Requires PCI enumeration first.
+- **OHCI/EHCI USB keyboard** *(UHCI already implemented)* — extend `kernel/usb.c` to support OHCI (prog_if 0x10) and EHCI (prog_if 0x20) host controllers, for hardware or hypervisors that do not expose a UHCI controller. See §4.7 for the extension guide.
 - **Network stack** — NE2000 or RTL8139 Ethernet driver (IRQ10 or IRQ11), ARP, IP, UDP. The `PING` and `NETWORK` commands are currently stubs waiting for this.
 - **VGA graphics mode** — switch the display into a planar 640×480 16-colour graphics mode (INT 10h mode 0x12 via VESA, or direct VGA register programming). Enables a graphical shell or bitmap rendering.
 
