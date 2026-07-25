@@ -567,7 +567,7 @@ This section is for readers who want to understand how inteiliDOS works under th
 
 ## 7. Building from Source
 
-See **[BUILD.md](BUILD.md)** for the full step-by-step build guide. A quick summary:
+See **BUILD.md** for the full step-by-step build guide. A quick summary:
 
 ### Prerequisites
 
