@@ -1,6 +1,8 @@
 # inteiliDOS — Version 1.0
- Inteilix Software Corporation
 
+```
+Inteilix Software Corporation
+```
 
 ---
 
@@ -51,6 +53,8 @@ inteiliDOS was designed to be:
 | **ISR / IRQ handling** | All 32 CPU exception vectors + 16 hardware IRQ lines wired through a remapped PIC |
 | **PIT timer** | Intel 8254 programmable timer at 1 kHz; drives `TIME` and tick-based delays |
 | **PS/2 keyboard** | Full US QWERTY keyboard driver; scancode set 1; shift, caps lock, special keys |
+| **PCI bus scanner** | Scans PCI configuration space (buses 0–7) via ports 0xCF8/0xCFC; locates devices by class, subclass, and prog_if |
+| **USB HID keyboard** | UHCI host controller driver; enumerates USB keyboards in boot-protocol mode; shares the keyboard ring buffer with PS/2 |
 | **Memory manager** | Bitmap physical allocator seeded from the Multiboot2 memory map + 2 MB embedded heap |
 | **IntelliShell** | Interactive command shell with 30+ built-in commands, history, and NLP input |
 | **IEdit** | Full-screen 80×25 text editor supporting 200 lines × 79 columns |
@@ -68,6 +72,14 @@ If you have QEMU installed:
 ```bash
 qemu-system-i386 -cdrom build/inteilidOS.iso -m 128
 ```
+
+To use a **USB keyboard** in QEMU (in addition to the default PS/2 keyboard), add the `-usb` and `-device usb-kbd` flags:
+
+```bash
+qemu-system-i386 -cdrom build/inteilidOS.iso -m 128 -serial stdio -usb -device usb-kbd
+```
+
+inteiliDOS will detect the USB keyboard automatically during boot and print a confirmation message in green. Both the USB keyboard and the PS/2 keyboard feed the same key buffer, so either can be used at any time.
 
 inteiliDOS boots in a few seconds and drops you into the IntelliShell prompt:
 
@@ -520,8 +532,10 @@ This section is for readers who want to understand how inteiliDOS works under th
 | **GDT** | `kernel/gdt.c` | Sets up a flat 32-bit protected-mode memory model with code, data, and TSS segments. |
 | **IDT** | `kernel/idt.c` | Installs interrupt gate descriptors for all 256 interrupt vectors. |
 | **ISR / IRQ** | `kernel/isr.c`, `boot/isr_stubs.asm` | NASM stubs push registers and call C handlers. The PIC (8259A) is remapped so IRQs start at vector 32. |
-| **PIT timer** | `kernel/timer.c` | Programs the Intel 8254 PIT to fire IRQ0 at 1 kHz. Maintains a global tick counter used by `TIME`. |
-| **PS/2 keyboard** | `kernel/keyboard.c` | Services IRQ1. Translates US QWERTY scancode set 1 to ASCII; handles shift, caps lock, and special keys. Provides both blocking (`keyboard_getchar`) and non-blocking (`keyboard_poll`) reads. |
+| **PIT timer** | `kernel/timer.c` | Programs the Intel 8254 PIT to fire IRQ0 at 1 kHz. Maintains a global tick counter used by `TIME`. Supports one registered secondary callback (called on every tick) used by the USB polling loop. |
+| **PS/2 keyboard** | `kernel/keyboard.c` | Services IRQ1. Translates US QWERTY scancode set 1 to ASCII; handles shift, caps lock, and special keys. Provides both blocking (`keyboard_getchar`) and non-blocking (`keyboard_poll`) reads. Exposes `keyboard_inject()` so external drivers can share the same ring buffer. |
+| **PCI bus scanner** | `kernel/pci.c` | Scans PCI config-space ports 0xCF8/0xCFC across buses 0–7. `pci_find_device(class, sub, prog_if)` returns the BDF of the first matching function; `pci_enable_busmaster()` sets Command register bits 0–2. |
+| **USB HID keyboard** | `kernel/usb.c` | UHCI host controller driver. Locates the UHCI controller via PCI, resets it, probes both USB ports, and runs a synchronous control-transfer enumeration sequence (SET_ADDRESS → GET_DESCRIPTOR Device → GET_DESCRIPTOR Config → SET_CONFIGURATION → SET_PROTOCOL boot → SET_IDLE). An interrupt-endpoint TD is then polled every 8 ms through the timer secondary callback; decoded keycodes are injected into the shared keyboard ring buffer. |
 | **Memory manager** | `kernel/memory.c` | Reads the Multiboot2 memory map to build a page-frame bitmap. Also manages a 2 MB statically embedded heap with `kmalloc` / `kfree`. |
 | **IntelliShell** | `shell/shell.c` | The REPL: reads a line with inline editing and history, strips whitespace, calls the NLP translator, then dispatches to a command handler. |
 | **Commands** | `shell/commands.c` | Implements all 30+ built-in commands and the NLP phrase-to-command table. |
@@ -611,8 +625,10 @@ inteiliDOS/
 │   ├── gdt.c / gdt.h         Global Descriptor Table
 │   ├── idt.c / idt.h         Interrupt Descriptor Table
 │   ├── isr.c / isr.h         ISR/IRQ dispatch + PIC remapping
-│   ├── timer.c / timer.h     PIT 8254 timer driver
-│   ├── keyboard.c / keyboard.h  PS/2 keyboard driver
+│   ├── timer.c / timer.h     PIT 8254 timer driver (+ secondary callback)
+│   ├── keyboard.c / keyboard.h  PS/2 keyboard driver + keyboard_inject()
+│   ├── pci.c / pci.h         PCI config-space bus scanner
+│   ├── usb.c / usb.h         UHCI USB HID keyboard driver
 │   ├── memory.c / memory.h   Physical allocator + heap
 │   └── multiboot.h           Multiboot2 structure definitions
 ├── shell/                    IntelliShell + applications
@@ -730,7 +746,7 @@ inteiliDOS is compiled with the `i686-elf` toolchain, which produces a flat 32-b
 - Supports a **Multiboot2-compliant bootloader** (GRUB2 is the default).
 - Has a **VGA-compatible text display** (virtually all PC hardware since 1987, and most VM configurations).
 
-If you are porting to a machine without a PS/2 keyboard, you will need to replace `kernel/keyboard.c` with a USB HID driver — a significantly larger undertaking, but a good project.
+If you are porting to a machine without a PS/2 keyboard, inteiliDOS now includes a UHCI USB HID keyboard driver (`kernel/usb.c`) that runs alongside the PS/2 driver. Both sources share the same keyboard ring buffer transparently — no changes to the shell or applications are required to support USB input.
 
 ---
 
@@ -744,6 +760,8 @@ If you are porting to a machine without a PS/2 keyboard, you will need to replac
 | ISR / IRQ / PIC remapping | ✅ Complete |
 | PIT timer (1 kHz) | ✅ Complete |
 | PS/2 keyboard driver | ✅ Complete |
+| PCI bus scanner | ✅ Complete |
+| USB HID keyboard driver (UHCI) | ✅ Complete |
 | Physical memory manager | ✅ Complete |
 | Heap (kmalloc/kfree, 2 MB) | ✅ Complete |
 | IntelliShell + NLP | ✅ Complete |
