@@ -1,7 +1,8 @@
-# inteiliDOS — Version 1.0
+# inteiliDOS
 
 ```
- Inteilix Software Corporation 
+"The future still has a blinking cursor."
+ Inteilix Software Corporation — Version 1.0
 ```
 
 ---
@@ -19,6 +20,8 @@
 5. [Applications](#5-applications)
    - [IEdit — Text Editor](#iedit--text-editor)
    - [InteiliBASIC — BASIC Interpreter](#inteilibasic--basic-interpreter)
+   - [InteiliSheets — Spreadsheet](#inteiliSheets--spreadsheet)
+   - [InteiliTalk — Text-to-Speech](#intellitalk--text-to-speech)
    - [TOUR — Text Adventure](#tour--text-adventure)
 6. [Kernel Internals](#6-kernel-internals)
 7. [Building from Source](#7-building-from-source)
@@ -61,9 +64,13 @@ inteiliDOS was designed to be:
 | **ATA/IDE detection** | Enumerates IDE drives at boot; distinguishes ATA (hard disks) from ATAPI (CD-ROMs) by signature |
 | **ATAPI CD-ROM driver** | PIO PACKET command driver; detects up to four IDE positions; `READ 10` for 2048-byte sectors; `START STOP UNIT` eject; `READ CAPACITY` |
 | **Memory manager** | Bitmap physical allocator seeded from the Multiboot1 memory map + 2 MB embedded heap |
-| **IntelliShell** | Interactive command shell with 30+ built-in commands, history, and NLP input |
-| **IEdit** | Full-screen 80×25 text editor supporting 200 lines × 79 columns |
+| **IntelliShell** | Interactive command shell with 35+ built-in commands, history, NLP input, and universal `quit` |
+| **IEdit** | Full-screen 80×25 text editor — 200 lines × 79 columns; type `quit` on a blank line to exit |
 | **InteiliBASIC** | Complete BASIC interpreter — variables, arrays, loops, functions, string ops, and a REPL |
+| **InteiliSheets** | Full-screen spreadsheet — 7 columns (A–G), 50 scrollable rows, `=SUM` and `=AVG` formula support |
+| **InteiliTalk** | PC-speaker text-to-speech — phoneme synthesis per character, digraph detection (TH, SH, CH, NG…) |
+| **DEMO command** | Animated 8-section feature showcase; speaks the tagline live via InteiliTalk |
+| **Universal QUIT** | Type `quit` at any prompt in any application to return instantly to IntelliShell |
 | **TOUR** | A 14-scene text adventure game set inside your own computer |
 
 ---
@@ -315,11 +322,16 @@ Type a command and press **Enter** to run it. Commands are **case-insensitive** 
 
 | Command | Usage | Description |
 |---|---|---|
-| `IEDIT` | `IEDIT` or `IEDIT filename` | Open the full-screen text editor |
+| `IEDIT` | `IEDIT` or `IEDIT filename` | Open the IEdit full-screen text editor |
 | `BASIC` | `BASIC` | Open the InteiliBASIC interpreter |
 | `IBASIC` | `IBASIC` | Alias for `BASIC` |
-| `NETWORK` | `NETWORK` | List available network utilities |
-| `PING` | `PING hostname` | Ping a host (requires NIC driver) |
+| `SHEETS` | `SHEETS` | Open InteiliSheets full-screen spreadsheet |
+| `ISHEETS` | `ISHEETS` | Alias for `SHEETS` |
+| `TALK` | `TALK` | Open InteiliTalk text-to-speech REPL |
+| `TALK` | `TALK Hello world` | Speak a phrase directly without entering the REPL |
+| `ITALK` | `ITALK` | Alias for `TALK` |
+| `DEMO` | `DEMO` | Run the animated inteiliDOS feature showcase |
+| `QUIT` | `QUIT` | Return to IntelliShell (works anywhere; also `EXIT`) |
 
 #### Games & Extras
 
@@ -349,6 +361,9 @@ Examples:
 | `how much memory` | `MEM` |
 | `what time is it` | `TIME` |
 | `turn off` | `SHUTDOWN` |
+| `quit` | `QUIT` |
+| `go back` | `QUIT` |
+| `return to shell` | `QUIT` |
 
 When IntelliShell translates a phrase it prints the resolved command in brackets before running it:
 
@@ -396,6 +411,7 @@ C:\> IEDIT NOTES.TXT
 | `Ctrl + S` | Save the current buffer |
 | `Ctrl + K` | Delete (kill) the current line |
 | `Ctrl + Q` | Quit IEdit and return to the shell |
+| Type `quit` on a blank line | Exit IEdit immediately and return to IntelliShell |
 
 > **Note:** In the current release, `Ctrl+S` saves the buffer to an in-memory store. Disk persistence will be enabled once the ATA driver is complete.
 
@@ -552,6 +568,70 @@ Use `LIST` to view your program, and `NEW` to clear it and start fresh.
 
 ---
 
+### InteiliSheets — Spreadsheet
+
+**InteiliSheets** is a full-screen spreadsheet application modelled after the column-and-row spreadsheets of the 1980s DOS era. It takes over the entire 80×25 display and writes directly to the VGA buffer for smooth, flicker-free rendering.
+
+**Launching InteiliSheets:**
+
+```
+C:\> SHEETS
+C:\> ISHEETS
+```
+
+**What you can do:**
+
+- Edit a grid of **7 columns** (A–G) and **50 scrollable rows**.
+- Type integer values directly into any cell.
+- Type `=SUM(A1:A10)` or `=AVG(B2:B8)` to insert calculated formulas.
+- Formulas update when their source cells change.
+
+**Keyboard controls:**
+
+| Key | Action |
+|---|---|
+| Arrow keys | Move the cursor between cells |
+| `Enter` | Open the edit bar for the current cell; confirm edits |
+| `Escape` | Cancel the current cell edit without saving |
+| `Ctrl + Q` | Exit InteiliSheets and return to IntelliShell |
+| Type `quit` then `Enter` in a cell | Exit InteiliSheets immediately |
+
+> **Note:** Data is held in memory and lost on reboot until ATA disk I/O is implemented.
+
+---
+
+### InteiliTalk — Text-to-Speech
+
+**InteiliTalk** is a PC-speaker text-to-speech application built entirely in software. It converts typed ASCII text into audible phoneme sequences using the existing `speaker_beep()` timer API — no extra hardware is required.
+
+**Launching InteiliTalk:**
+
+```
+C:\> TALK
+C:\> ITALK
+```
+
+You can also speak a phrase directly from the shell without entering the REPL:
+
+```
+C:\> TALK Hello, welcome to inteiliDOS
+```
+
+**In the InteiliTalk REPL:**
+
+- Type any sentence and press **Enter** to speak it aloud through the PC speaker.
+- Press **Escape** at any time during speech to stop immediately.
+- Type `EXIT` or `quit` to return to IntelliShell.
+
+**How it works:**
+
+- Each printable ASCII character maps to a (frequency Hz, duration ms) phoneme pair.
+- Common digraphs — `TH`, `SH`, `CH`, `NG`, `PH`, `QU`, `CK`, `WH`, `GH` — are detected first and produce a single combined sound rather than two separate phonemes.
+- A 10 ms silence is inserted between each phoneme to improve intelligibility.
+- The current character being spoken is highlighted on-screen in real time.
+
+---
+
 ### TOUR — Text Adventure
 
 **TOUR** is a 14-scene interactive text adventure in which **you have been shrunk down to microscopic size and injected into a real PC**. Explore the motherboard, collect components, survive hazards, and make it to the keyboard controller to escape.
@@ -598,10 +678,12 @@ This section is for readers who want to understand how inteiliDOS works under th
 | **ATAPI CD-ROM driver** | `kernel/cdrom.c` | ATAPI PIO driver using the `PACKET` command (`ATA 0xA0`). Detects drives by ATAPI signature at all four IDE positions. Implements `cdrom_init()`, `cdrom_read_sector()` (READ 10, 2048-byte sectors), `cdrom_eject()` (START STOP UNIT), `cdrom_count()`, and `cdrom_drives()`. The `CDROM` shell command exposes all three sub-functions. |
 | **Memory manager** | `kernel/memory.c` | Reads the Multiboot1 memory map to build a page-frame bitmap. Also manages a 2 MB statically embedded heap with `kmalloc` / `kfree`. |
 | **IntelliShell** | `shell/shell.c` | The REPL: reads a line with inline editing and history, strips whitespace, calls the NLP translator, then dispatches to a command handler. |
-| **Commands** | `shell/commands.c` | Implements all 30+ built-in commands and the NLP phrase-to-command table. |
-| **IEdit** | `shell/iedit.c` | Bypasses the sequential VGA state machine and writes directly to `0xB8000` for full-screen cursor positioning. |
+| **Commands** | `shell/commands.c` | Implements all 35+ built-in commands, the QUIT/EXIT universal-return command, and the NLP phrase-to-command table. |
+| **IEdit** | `shell/iedit.c` | Bypasses the sequential VGA state machine and writes directly to `0xB8000` for full-screen cursor positioning. Detects `quit` typed alone on any line and exits cleanly. |
 | **InteiliBASIC** | `shell/basic.c` | Recursive-descent expression parser with full statement execution, string heap, and REPL. All arithmetic is 32-bit integer to avoid 64-bit division intrinsics. |
-| **TOUR** | `shell/tour.c` | Scene table + item bitmask state machine driving the text adventure. |
+| **InteiliSheets** | `shell/sheets.c` | Full-screen spreadsheet — 7 columns (A–G), 50 scrollable rows. Direct VGA buffer writes for cell and formula-bar rendering. Integer `=SUM`/`=AVG` formula evaluation. Ctrl+Q or typing `quit` in a cell exits. |
+| **InteiliTalk** | `shell/talk.c` | PC-speaker text-to-speech. Maps printable ASCII characters and common digraphs (TH, SH, CH, NG, PH…) to (frequency, duration) phoneme pairs; uses `speaker_beep()` from `timer.h`. REPL accepts `quit` or `exit` to return to the shell. |
+| **TOUR** | `shell/tour.c` | Scene table + item bitmask state machine driving the text adventure. Pressing `q`/`Q` exits at any choice prompt. |
 
 ### Memory Map (at runtime)
 
@@ -620,8 +702,10 @@ This section is for readers who want to understand how inteiliDOS works under th
 - **No 64-bit division.** The kernel is compiled freestanding without `libgcc`'s 64-bit helper `__udivmoddi4`. All integer arithmetic uses `int32_t` / `uint32_t`.
 - **No dynamic linking.** Everything is statically linked into a single ELF binary by `linker.ld` and then stripped into a flat binary for the ISO.
 - **No floating point.** The FPU is never initialised. InteiliBASIC uses integer arithmetic only.
-- **Direct VGA writes in IEdit.** The sequential-write VGA API is bypassed so the editor can position the cursor arbitrarily without repainting the whole screen.
-- **Static allocation only.** All major data structures (keyboard buffer, shell history, BASIC program store, IEdit line buffer) are fixed-size static arrays — no heap-fragmentation risk.
+- **Direct VGA writes in IEdit and InteiliSheets.** The sequential-write VGA API is bypassed so full-screen applications can position characters arbitrarily without repainting the whole screen from top to bottom on every keystroke.
+- **Static allocation only.** All major data structures (keyboard buffer, shell history, BASIC program store, IEdit line buffer, InteiliSheets cell grid) are fixed-size static arrays — no heap-fragmentation risk.
+- **Universal `quit` keyword.** Every interactive application recognises the word `quit` at any input prompt as a signal to return cleanly to IntelliShell. The check is implemented per-application inside each event loop — there is no global signal mechanism.
+- **PC-speaker phoneme synthesis.** InteiliTalk synthesises speech entirely through the `speaker_beep()` API in `timer.h`, requiring no additional hardware. Digraph detection (TH, SH, CH, NG, PH…) runs before single-character fallback to produce more natural output from the limited 1-bit speaker.
 
 ---
 
@@ -721,9 +805,11 @@ inteiliDOS/
 │   └── multiboot.h           Multiboot1 structure definitions
 ├── shell/                    IntelliShell + applications
 │   ├── shell.c / shell.h     REPL: readline, history, dispatch
-│   ├── commands.c / commands.h  All built-in commands (incl. CDROM) + NLP
+│   ├── commands.c / commands.h  All built-in commands (incl. QUIT, DEMO, CDROM) + NLP
 │   ├── iedit.c / iedit.h     IEdit full-screen text editor
 │   ├── basic.c / basic.h     InteiliBASIC interpreter
+│   ├── sheets.c / sheets.h   InteiliSheets spreadsheet (7 cols, 50 rows, =SUM/=AVG)
+│   ├── talk.c / talk.h       InteiliTalk text-to-speech (PC speaker phoneme synthesis)
 │   └── tour.c / tour.h       TOUR text adventure
 ├── grub/
 │   ├── grub.cfg              GRUB2 boot menu (modern build — i686)
@@ -763,11 +849,11 @@ There are no restrictions on commercial or non-commercial use.
 
 Contributions are welcome. The best places to start:
 
-1. **ATA disk I/O** — PIO-mode read/write to an IDE hard disk (detection already works; disk I/O is the next step). Enables real file persistence for IEdit and BASIC SAVE/LOAD.
-2. **PC speaker / BEEP** — port 0x61 + PIT channel 2. The `BEEP` statement in InteiliBASIC is currently a no-op.
+1. **ATA disk I/O** — PIO-mode read/write to an IDE hard disk (detection already works; disk I/O is the next step). Enables real file persistence for IEdit, InteiliSheets, and BASIC SAVE/LOAD.
+2. **InteiliBASIC BEEP statement** — wire `speaker_beep(freq_hz, duration_ms)` (already in `timer.h` and used by InteiliTalk) into the `BEEP` statement in `shell/basic.c`, which is currently a no-op.
 3. **More BASIC statements** — `SCREEN`, `COLOR`, `LOCATE`, `LINE INPUT`, `OPEN`/`CLOSE` (once disk is available).
 4. **NLP expansion** — add more plain-English phrases to the translator table in `commands.c`.
-5. **New shell commands** — add a handler function in `commands.c` and wire it into the dispatch table. The `CDROM` command is a good example to follow.
+5. **New shell commands** — add a handler function in `commands.c` and wire it into the dispatch table. The `CDROM` command is a good example to follow; remember to also add `quit` detection if your command has an interactive loop.
 6. **Multitasking scheduler** — a simple round-robin task switcher using the PIT tick would make a great next kernel feature.
 7. **Network stack** — a minimal UDP/IP stack on top of an RTL8139 or NE2000 driver.
 8. **OHCI/EHCI USB support** — extend `kernel/usb.c` to support non-UHCI host controllers (prog_if `0x10`/`0x20`). See §4.7 of for_developers.md.
@@ -864,13 +950,17 @@ If you are porting to a machine without a PS/2 keyboard, inteiliDOS now includes
 | Heap (kmalloc/kfree, 2 MB) | ✅ Complete |
 | IntelliShell + NLP | ✅ Complete |
 | Command history (↑/↓) | ✅ Complete |
-| 30+ built-in shell commands | ✅ Complete |
+| 35+ built-in shell commands | ✅ Complete |
+| Universal QUIT / EXIT from any app | ✅ Complete |
 | IEdit text editor | ✅ Complete |
 | InteiliBASIC interpreter | ✅ Complete |
+| InteiliSheets spreadsheet (=SUM, =AVG) | ✅ Complete |
+| InteiliTalk text-to-speech (PC speaker) | ✅ Complete |
+| DEMO feature showcase | ✅ Complete |
 | TOUR text adventure | ✅ Complete |
 | ATA disk I/O (persistent reads/writes) | 🔧 Planned |
 | Persistent file system | 🔧 Planned (requires ATA disk I/O) |
-| PC speaker / BEEP | 🔧 Planned |
+| InteiliBASIC BEEP statement (PC speaker) | 🔧 Planned |
 | Multitasking scheduler | 🔧 Planned |
 | Network stack (TCP/IP) | 🔧 Planned |
 | User accounts / permissions | 🔧 Planned |
