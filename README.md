@@ -1,8 +1,7 @@
-# inteiliDOS
+# inteiliDOS — Version 1.0
 
 ```
-"The future still has a blinking cursor."
- Inteilix Software Corporation — Version 1.0
+ Inteilix Software Corporation 
 ```
 
 ---
