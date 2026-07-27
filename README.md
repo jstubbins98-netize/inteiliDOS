@@ -1,7 +1,8 @@
-# inteiliDOS — Version 1.0
+# inteiliDOS
 
 ```
- Inteilix Software Corporation 
+"The future still has a blinking cursor."
+ Inteilix Software Corporation — Version 1.0
 ```
 
 ---
@@ -67,7 +68,7 @@ inteiliDOS was designed to be:
 | **IEdit** | Full-screen 80×25 text editor — 200 lines × 79 columns; type `quit` on a blank line to exit |
 | **InteiliBASIC** | Complete BASIC interpreter — variables, arrays, loops, functions, string ops, and a REPL |
 | **InteiliSheets** | Full-screen spreadsheet — 7 columns (A–G), 50 scrollable rows, `=SUM` and `=AVG` formula support |
-| **InteiliTalk** | PC-speaker text-to-speech — phoneme synthesis per character, digraph detection (TH, SH, CH, NG…) |
+| **InteiliTalk** | PC-speaker text-to-speech — full SAM formant synthesiser (English reciter → phoneme parser → PCM render → PIT PWM playback at 22050 Hz) |
 | **DEMO command** | Animated 8-section feature showcase; speaks the tagline live via InteiliTalk |
 | **Universal QUIT** | Type `quit` at any prompt in any application to return instantly to IntelliShell |
 | **TOUR** | A 14-scene text adventure game set inside your own computer |
@@ -601,7 +602,7 @@ C:\> ISHEETS
 
 ### InteiliTalk — Text-to-Speech
 
-**InteiliTalk** is a PC-speaker text-to-speech application built entirely in software. It converts typed ASCII text into audible phoneme sequences using the existing `speaker_beep()` timer API — no extra hardware is required.
+**InteiliTalk** is a PC-speaker text-to-speech engine that produces real synthesised speech — not a series of beeps. It is a bare-metal port of **SAM (Software Automatic Mouth)**, the formant speech synthesiser from the Commodore 64, running entirely in software with no audio hardware beyond the standard PC speaker.
 
 **Launching InteiliTalk:**
 
@@ -619,15 +620,53 @@ C:\> TALK Hello, welcome to inteiliDOS
 **In the InteiliTalk REPL:**
 
 - Type any sentence and press **Enter** to speak it aloud through the PC speaker.
-- Press **Escape** at any time during speech to stop immediately.
 - Type `EXIT` or `quit` to return to IntelliShell.
 
 **How it works:**
 
-- Each printable ASCII character maps to a (frequency Hz, duration ms) phoneme pair.
-- Common digraphs — `TH`, `SH`, `CH`, `NG`, `PH`, `QU`, `CK`, `WH`, `GH` — are detected first and produce a single combined sound rather than two separate phonemes.
-- A 10 ms silence is inserted between each phoneme to improve intelligibility.
-- The current character being spoken is highlighted on-screen in real time.
+InteiliTalk runs a four-stage pipeline every time you speak a phrase:
+
+```
+English text
+    │
+    ▼
+1. Reciter (sam_reciter.c)
+   Converts English spelling to SAM phoneme notation using
+   letter-to-sound rule tables — the same rules the C64 SAM used.
+    │
+    ▼
+2. Phoneme parser (sam_phoneme.c)
+   Parses the phoneme string, applies stress, adjusts durations,
+   inserts breath boundaries, and assembles the frame sequence.
+    │
+    ▼
+3. Formant synthesiser (sam_render.c)
+   Mixes two sinusoidal formants (F1, F2) and one rectangular
+   formant (F3) with pitch contour, amplitude rescaling, and
+   sampled consonant bursts into a 131 KB buffer of 8-bit PCM
+   audio at 22 050 Hz.
+    │
+    ▼
+4. PIT PWM playback (timer.c → speaker_play_pcm)
+   IRQ0 is temporarily reprogrammed to 22 050 Hz. Each interrupt
+   loads the next sample's duty cycle into PIT channel 2 (mode 0
+   one-shot), which gates the PC speaker on and off to approximate
+   the target amplitude. The system timer is corrected for the
+   elapsed time after playback completes.
+```
+
+The resulting audio sounds like intelligible synthetic speech — the same voice that spoke on Commodore 64 software in the 1980s — produced entirely through a single-bit speaker driven by a reprogrammed hardware timer.
+
+**Voice parameters** (set before speaking, via the `SetSpeed`, `SetPitch`, `SetMouth`, and `SetThroat` API in `shell/sam/sam_phoneme.h`):
+
+| Parameter | Default | Effect |
+|---|---|---|
+| Speed | 72 | Higher = slower speech |
+| Pitch | 64 | Fundamental pitch (0–255) |
+| Mouth | 128 | Mouth formant scaling |
+| Throat | 128 | Throat formant scaling |
+
+> **No extra hardware required.** InteiliTalk uses only the standard PC speaker (present on virtually all x86 machines since the IBM PC) and the Intel 8254 PIT timer (used by the system clock). The speech synthesiser runs entirely in software on the main CPU.
 
 ---
 
@@ -681,7 +720,7 @@ This section is for readers who want to understand how inteiliDOS works under th
 | **IEdit** | `shell/iedit.c` | Bypasses the sequential VGA state machine and writes directly to `0xB8000` for full-screen cursor positioning. Detects `quit` typed alone on any line and exits cleanly. |
 | **InteiliBASIC** | `shell/basic.c` | Recursive-descent expression parser with full statement execution, string heap, and REPL. All arithmetic is 32-bit integer to avoid 64-bit division intrinsics. |
 | **InteiliSheets** | `shell/sheets.c` | Full-screen spreadsheet — 7 columns (A–G), 50 scrollable rows. Direct VGA buffer writes for cell and formula-bar rendering. Integer `=SUM`/`=AVG` formula evaluation. Ctrl+Q or typing `quit` in a cell exits. |
-| **InteiliTalk** | `shell/talk.c` | PC-speaker text-to-speech. Maps printable ASCII characters and common digraphs (TH, SH, CH, NG, PH…) to (frequency, duration) phoneme pairs; uses `speaker_beep()` from `timer.h`. REPL accepts `quit` or `exit` to return to the shell. |
+| **InteiliTalk** | `shell/talk.c`, `shell/sam/` | PC-speaker text-to-speech using a full SAM formant synthesiser. English text → reciter (`sam_reciter.c`) → phoneme parser (`sam_phoneme.c`) → formant render (`sam_render.c`) → 22 050 Hz PCM → `speaker_play_pcm()` (PIT channel 2 PWM, IRQ0 at 22 050 Hz). REPL accepts `quit` or `exit` to return to the shell. |
 | **TOUR** | `shell/tour.c` | Scene table + item bitmask state machine driving the text adventure. Pressing `q`/`Q` exits at any choice prompt. |
 
 ### Memory Map (at runtime)
@@ -704,7 +743,7 @@ This section is for readers who want to understand how inteiliDOS works under th
 - **Direct VGA writes in IEdit and InteiliSheets.** The sequential-write VGA API is bypassed so full-screen applications can position characters arbitrarily without repainting the whole screen from top to bottom on every keystroke.
 - **Static allocation only.** All major data structures (keyboard buffer, shell history, BASIC program store, IEdit line buffer, InteiliSheets cell grid) are fixed-size static arrays — no heap-fragmentation risk.
 - **Universal `quit` keyword.** Every interactive application recognises the word `quit` at any input prompt as a signal to return cleanly to IntelliShell. The check is implemented per-application inside each event loop — there is no global signal mechanism.
-- **PC-speaker phoneme synthesis.** InteiliTalk synthesises speech entirely through the `speaker_beep()` API in `timer.h`, requiring no additional hardware. Digraph detection (TH, SH, CH, NG, PH…) runs before single-character fallback to produce more natural output from the limited 1-bit speaker.
+- **Full SAM formant synthesis.** InteiliTalk runs a bare-metal port of the SAM (Software Automatic Mouth) speech synthesiser. An English reciter converts text to phoneme notation, a phoneme parser assembles the frame sequence, and a formant synthesiser mixes sinusoidal and rectangular waveforms into 8-bit PCM. Playback uses PIT channel 2 as a pulse-width modulator with IRQ0 reprogrammed to 22 050 Hz — no audio hardware beyond the standard PC speaker is required.
 
 ---
 
@@ -808,7 +847,13 @@ inteiliDOS/
 │   ├── iedit.c / iedit.h     IEdit full-screen text editor
 │   ├── basic.c / basic.h     InteiliBASIC interpreter
 │   ├── sheets.c / sheets.h   InteiliSheets spreadsheet (7 cols, 50 rows, =SUM/=AVG)
-│   ├── talk.c / talk.h       InteiliTalk text-to-speech (PC speaker phoneme synthesis)
+│   ├── talk.c / talk.h       InteiliTalk shell wrapper (calls SAM pipeline + speaker_play_pcm)
+│   ├── sam/                  SAM text-to-speech engine
+│   │   ├── sam_reciter.c     English text → SAM phoneme notation (letter-to-sound rules)
+│   │   ├── sam_phoneme.c/h   Phoneme parser chain + PrepareOutput() PCM pipeline driver
+│   │   ├── sam_render.c/h    SAM formant synthesiser → 8-bit PCM in sam_pcm_buf[]
+│   │   ├── RenderTabs.h      Render-side lookup tables (formant, sinus, sampleTable…)
+│   │   └── SamTabs.h         Parser-side lookup tables
 │   └── tour.c / tour.h       TOUR text adventure
 ├── grub/
 │   ├── grub.cfg              GRUB2 boot menu (modern build — i686)
@@ -954,7 +999,7 @@ If you are porting to a machine without a PS/2 keyboard, inteiliDOS now includes
 | IEdit text editor | ✅ Complete |
 | InteiliBASIC interpreter | ✅ Complete |
 | InteiliSheets spreadsheet (=SUM, =AVG) | ✅ Complete |
-| InteiliTalk text-to-speech (PC speaker) | ✅ Complete |
+| InteiliTalk text-to-speech (SAM formant synthesis, PIT PWM, 22 050 Hz) | ✅ Complete |
 | DEMO feature showcase | ✅ Complete |
 | TOUR text adventure | ✅ Complete |
 | ATA disk I/O (persistent reads/writes) | 🔧 Planned |
