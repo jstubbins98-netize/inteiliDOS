@@ -1,4 +1,4 @@
-# inteiliDOS — Version 1.0
+# inteiliDOS
 
 ```
  Inteilix Software Corporation
@@ -34,6 +34,8 @@
 
 **inteiliDOS** is a bare-metal x86 operating system written from scratch in **C** and **NASM assembly**. It boots directly on real hardware or inside a virtual machine — no host operating system underneath it. It is not a Linux distribution, not a POSIX layer, and not an emulator. Every line of code, from the first assembly instruction at boot to the BASIC interpreter prompt, is purpose-built for inteiliDOS.
 
+> **This is the HP Vectra VEi8 port.** It includes all features of the standard release plus hardware-specific additions for the HP Vectra VEi8 desktop: an AC'97 audio driver (Crystal CS4281 PCI codec) for real cassette-tape CLOAD capture, a floppy disk controller driver, FAT12 filesystem reader, ISO 9660 filesystem reader, the **LaunchPad** program manager (load and run IPGM/ELF programs from CD-ROM or floppy), InteiliFile Manager, Tetris, and a SETUP installation wizard. If you are running on different hardware, these features may not function — use the standard inteiliDOS build instead.
+
 inteiliDOS was designed to be:
 
 - **Educational** — every subsystem is readable, documented C code with no external runtime dependencies.
@@ -41,7 +43,7 @@ inteiliDOS was designed to be:
 - **Hackable** — a clean foundation for anyone who wants to learn OS development or add their own features.
 - **Self-contained** — the kernel, shell, editor, and BASIC interpreter ship as a single bootable ISO under 1 MB.
 
-> **Minimum requirements:** Any x86 (32-bit or 64-bit) machine with 4 MB RAM. Works in QEMU, VirtualBox, VMware, and on real PC hardware from the last 30 years.
+> **Minimum requirements:** Any x86 (32-bit or 64-bit) machine with 4 MB RAM. Works in QEMU, VirtualBox, VMware, and on real PC hardware from the last 30 years. **8 MB RAM recommended for LaunchPad** (programs load at the 5 MB mark).
 
 ---
 
@@ -63,14 +65,25 @@ inteiliDOS was designed to be:
 | **ATA/IDE detection** | Enumerates IDE drives at boot; distinguishes ATA (hard disks) from ATAPI (CD-ROMs) by signature |
 | **ATAPI CD-ROM driver** | PIO PACKET command driver; detects up to four IDE positions; `READ 10` for 2048-byte sectors; `START STOP UNIT` eject; `READ CAPACITY` |
 | **Memory manager** | Bitmap physical allocator seeded from the Multiboot1 memory map + 2 MB embedded heap |
-| **IntelliShell** | Interactive command shell with 35+ built-in commands, history, NLP input, and universal `quit` |
+| **IntelliShell** | Interactive command shell with 40+ built-in commands, history, NLP input, and universal `quit` |
 | **IEdit** | Full-screen 80×25 text editor — 200 lines × 79 columns; type `quit` on a blank line to exit |
 | **InteiliBASIC** | Complete BASIC interpreter — variables, arrays, loops, functions, string ops, and a REPL |
 | **InteiliSheets** | Full-screen spreadsheet — 7 columns (A–G), 50 scrollable rows, `=SUM` and `=AVG` formula support |
 | **InteiliTalk** | PC-speaker text-to-speech — full SAM formant synthesiser (English reciter → phoneme parser → PCM render → PIT PWM playback at 22050 Hz) |
+| **InteiliBASIC cassette I/O** | `CSAVE` encodes the BASIC program as KCS audio tones, writes a RIFF/WAV temp file, plays live through the PC speaker, then erases the file. `CLOAD` listens via the AC'97 driver (Crystal CS4281 on HP Vectra VEi8) and decodes the incoming KCS stream back into memory. |
 | **DEMO command** | Animated 8-section feature showcase; speaks the tagline live via InteiliTalk |
 | **Universal QUIT** | Type `quit` at any prompt in any application to return instantly to IntelliShell |
 | **TOUR** | A 14-scene text adventure game set inside your own computer |
+| **LaunchPad** ⬅ HP | Full-screen program manager — browse ISO 9660 CD-ROMs and FAT12 floppy disks, navigate subdirectories, and load/run IPGM or ELF32 executables directly into RAM at 0x00500000. Hot-disc detection (F2/F3) and CD-ROM eject (F5). Type `PROGRAM` or `LAUNCHPAD` to open. |
+| **InteiliFile Manager** ⬅ HP | Graphical file-system browser — navigate the kernel's in-memory virtual filesystem with arrow keys, Enter, and Backspace. Type `FM` to open. |
+| **Tetris** ⬅ HP | Classic block-stacking game with the Korobeiniki (Tetris A-theme) playing in the background via PC speaker. USB gamepad supported (D-pad + face buttons). Type `TETRIS` to play. |
+| **SETUP wizard** ⬅ HP | Interactive OS installation wizard — installs inteiliDOS to an attached IDE hard disk or CompactFlash card. Type `SETUP` to launch. |
+| **VOLUME control** ⬅ HP | Get or set the PC speaker volume (0–100). Type `VOLUME` to query, `VOLUME 75` to set. |
+| **DISKCHECK** ⬅ HP | Queries IDE hard disk health and geometry via `IDENTIFY DEVICE`. Aliases: `CHKDSK`. |
+| **AC'97 audio driver** ⬅ HP | PCI driver for the Crystal CS4281 codec on the HP Vectra VEi8. Provides 8 kHz mono ADC capture used by CLOAD. Supports VRA for exact 8 kHz sample rate; falls back to 48 kHz decode on non-VRA codecs. |
+| **FAT12 / FDC** ⬅ HP | Floppy disk controller driver and FAT12 filesystem reader. Used by LaunchPad to browse and load programs from physical 3.5″ floppy disks. |
+| **ISO 9660 reader** ⬅ HP | CD-ROM filesystem reader used by LaunchPad. Reads root and subdirectories, strips version suffixes, supports directories up to 8 levels deep. |
+| **Easter eggs** ⬅ HP | `DAISY` — draws IBM 7094 console art and plays *Daisy Bell* through the PC speaker. `ALIVE` — plays *Still Alive* (Portal end credits) through the PC speaker. |
 
 ---
 
@@ -337,10 +350,30 @@ Type a command and press **Enter** to run it. Commands are **case-insensitive** 
 | Command | Usage | Description |
 |---|---|---|
 | `TOUR` | `TOUR` | Play the text adventure: *A Tour of inteiliDOS* |
+| `TETRIS` | `TETRIS` | Play Tetris — Korobeiniki BGM via PC speaker; USB gamepad supported |
 | `ABOUT` | `ABOUT` | Show the inteiliDOS version and tagline |
 | `HELLO` | `HELLO` | Friendly greeting |
 | `COFFEE` | `COFFEE` | Error: coffee module not found |
 | `HELP` | `HELP` | Show this command list inside the shell |
+| `DAISY` | `DAISY` | Easter egg — IBM 7094 console art + *Daisy Bell* on PC speaker |
+| `ALIVE` | `ALIVE` | Easter egg — *Still Alive* (Portal) on PC speaker |
+
+#### HP-Exclusive Commands
+
+| Command | Usage | Description |
+|---|---|---|
+| `PROGRAM` | `PROGRAM` | Open LaunchPad — load programs from CD-ROM or floppy disk |
+| `LAUNCHPAD` | `LAUNCHPAD` | Alias for `PROGRAM` |
+| `FM` | `FM` | Open InteiliFile Manager — graphical file-system browser |
+| `FILEMAN` | `FILEMAN` | Alias for `FM` |
+| `FILEMANAGER` | `FILEMANAGER` | Alias for `FM` |
+| `SETUP` | `SETUP` | OS installation wizard — install to IDE HDD or CompactFlash |
+| `INSTALL-OS` | `INSTALL-OS` | Alias for `SETUP` |
+| `VOLUME` | `VOLUME` | Show current PC speaker volume (0–100) |
+| `VOLUME` | `VOLUME 75` | Set PC speaker volume to 75% |
+| `VOL` | `VOL` | Alias for `VOLUME` |
+| `DISKCHECK` | `DISKCHECK` | Check IDE hard disk health and geometry |
+| `CHKDSK` | `CHKDSK` | Alias for `DISKCHECK` |
 
 ---
 
@@ -479,11 +512,71 @@ Use `LIST` to view your program, and `NEW` to clear it and start fresh.
 | `LIST` | Print all program lines |
 | `LIST 10-50` | Print lines 10 through 50 |
 | `NEW` | Erase the program and all variables |
-| `SAVE` | Save the program to the in-memory bank |
-| `LOAD` | Restore the program from the in-memory bank |
+| `SAVE` | Save the program to disk; prompts for filename and device (`C:\` or `D:\`) |
+| `LOAD` | Load a program from disk; prompts for filename and device |
+| `CSAVE` | Save the program to cassette tape via KCS audio through the PC speaker |
+| `CLOAD` | Load a program from cassette tape via microphone input |
 | `DEMO 1`–`4` | Load and run a built-in demo program |
 | `HELP` | Show a quick-reference card |
 | `BYE` / `QUIT` | Exit InteiliBASIC and return to the shell |
+
+---
+
+#### Cassette Tape Interface (CSAVE / CLOAD)
+
+InteiliBASIC supports saving and loading programs to and from a real cassette tape using the **Kansas City Standard (KCS)** audio encoding — the same cassette format used by home computers such as the TRS-80, Commodore PET, and Apple II in the late 1970s and 1980s.
+
+**What you need:**
+
+| Item | Notes |
+|---|---|
+| A cassette recorder | Any standard audio cassette player/recorder with a microphone jack |
+| A USB-to-3.5 mm audio adapter | Plugs into any USB port; exposes a standard 3.5 mm headphone and microphone jack |
+| A blank audio cassette | Standard Type I cassette tape |
+
+**Wiring for CSAVE (saving):**
+```
+PC speaker output → USB audio adapter → 3.5 mm headphone jack → cassette recorder MIC-IN
+```
+
+**Wiring for CLOAD (loading):**
+```
+Cassette recorder HEADPHONE-OUT → 3.5 mm mic jack → USB audio adapter → microphone input
+```
+
+**CSAVE — saving a program to tape:**
+
+1. Connect the USB audio adapter. Plug the adapter's headphone jack into the cassette recorder's microphone or AUX-IN jack.
+2. Type `CSAVE` and press **Enter**.
+3. inteiliDOS reports the program size and writes a temporary `CASSETTE.WAV` file to `C:\`.
+4. The screen shows: **"Press RECORD on your tape recorder / then press ENTER to begin transfer."**
+5. Press **Record** on the recorder, then press **Enter** on the keyboard.
+6. The PC speaker emits KCS tones (a series of alternating 1200 Hz and 2400 Hz beeps) while the screen shows a progress indicator.
+7. When done, the screen shows: **"Save complete! Deleting the temporary wav file from the HDD…"** and the WAV is erased from disk.
+
+**CLOAD — loading a program from tape:**
+
+1. Connect the USB audio adapter. Plug the cassette recorder's earphone jack into the adapter's microphone jack.
+2. Type `CLOAD` and press **Enter**.
+3. The screen shows: **"Press PLAY on your tape recorder"**
+4. Press **Play** on the recorder, then press **Enter** on the keyboard.
+5. inteiliDOS listens for an incoming KCS signal for up to 10 seconds.
+
+> **Note:** Audio input requires the Intel HD Audio (HDA) controller driver, which is currently on the roadmap (see §Feature Status). The CLOAD UI flow and decoder are fully implemented and ready for when the HDA driver is added. On a machine without the HDA driver, CLOAD will display "No signal detected" after the 10-second window.
+
+**KCS encoding details (for hackers):**
+
+| Parameter | Value |
+|---|---|
+| Baud rate | 1200 baud |
+| 0 bit | 1 cycle of 1200 Hz per bit period |
+| 1 bit | 2 cycles of 2400 Hz per bit period |
+| Framing | 8N1 — 1 start bit, 8 data bits (LSB first), 1 stop bit |
+| Leader | 1 second of 2400 Hz tone before the first data byte |
+| Trailer | 0.5 seconds of 2400 Hz tone after the last data byte |
+| WAV file | RIFF/WAV, 8 kHz, 8-bit unsigned PCM, mono |
+
+The WAV file is written to `C:\CASSETTE.WAV` before playback so that the USB audio adapter has a clean digital source to convert and route to the cassette recorder's input. It is erased immediately after playback completes.
 
 ---
 
@@ -669,6 +762,103 @@ The resulting audio sounds like intelligible synthetic speech — the same voice
 
 ---
 
+### LaunchPad — Program Manager
+
+**LaunchPad** is a full-screen program manager that lets you browse real filesystems on attached hardware and load external programs into RAM to run them — without rebooting.
+
+**Launching LaunchPad:**
+
+```
+C:\> PROGRAM
+C:\> LAUNCHPAD
+```
+
+**What you can do:**
+
+- Browse **ISO 9660 CD-ROMs** (up to 4 drives: CD-ROM 0–3) and **FAT12 floppy disks** (Floppy A:).
+- Navigate into **subdirectories** (up to 8 levels deep) with Enter; go back with Backspace or ←.
+- See file names, sizes, and types at a glance.
+- Press **Enter** on any `.ELF` or `.IPGM` file to load it into RAM and run it. When the program exits it returns you to LaunchPad automatically.
+- Press **F2** to cycle through sources (CD-ROM 0 → CD-ROM 1 → … → Floppy A:). LaunchPad re-probes the hardware for each switch, so discs inserted after boot are detected without rebooting.
+- Press **F3** to manually rescan the current source.
+- Press **F5** to eject the current CD-ROM tray.
+- Press **Esc** or **Q** to return to IntelliShell.
+
+**Screen layout:**
+
+```
+Row  0   Title bar           (inteiliDOS LaunchPad 1.0 / current path)
+Row  1   Source selector     (CD-ROM 0 | CD-ROM 1 | CD-ROM 2 | CD-ROM 3 | Floppy A:)
+Row  2   Column headers      (Name | Size | Type | Info)
+Rows 3–20  File listing      (18 visible entries; ↑/↓ scroll; ^ / v scroll indicators)
+Row 21   Separator
+Row 22   Selected-file info  (name + size)
+Row 23   Key bindings
+Row 24   Footer
+```
+
+**Supported program formats:**
+
+| Format | Magic | How LaunchPad loads it |
+|---|---|---|
+| **IPGM** | `IPGM` (bytes 0–3) | Reads entry offset and load address from the 16-byte header; calls the entry point as a flat-32 C function |
+| **ELF32** | `\x7fELF` (bytes 0–3) | Iterates PT_LOAD segments; copies each to its physical address (`p_paddr`); zeros BSS; calls `e_entry` |
+
+Both formats run in the same flat-32 protected-mode environment as the kernel (CS=0x08, DS/SS=0x10, no paging). Programs should be linked at **0x00500000** or higher. The kernel occupies 0x00100000 and upward; the load window ends at **0x00900000** (4 MB from 0x500000).
+
+> **Writing a LaunchPad program:** any bare-metal i386 ELF32 executable linked at 0x00500000 will run. The kernel's GDT is already loaded; do not install your own GDT or switch privilege levels. If you need keyboard input, mask IRQ1 for the duration of your program to prevent the kernel's IRQ handler from draining your keystrokes, then unmask it on exit. See the three example games in `programs for inteiliDOS/` for the full entry/exit boilerplate.
+
+---
+
+### InteiliFile Manager
+
+**InteiliFile Manager** is a graphical file-system browser for the kernel's in-memory virtual filesystem.
+
+**Launching the file manager:**
+
+```
+C:\> FM
+C:\> FILEMAN
+C:\> FILEMANAGER
+```
+
+**Keyboard controls:**
+
+| Key | Action |
+|---|---|
+| ↑ / ↓ | Navigate entries |
+| `Enter` | Open a directory / show action menu for a file |
+| `Backspace` | Go up one directory level |
+| `Escape` | Go up one level; quits at the root |
+| `Q` | Quit and return to IntelliShell |
+
+---
+
+### Tetris
+
+**Tetris** is a full-screen implementation of the classic block-stacking game with the **Korobeiniki** (Tetris A-theme) playing continuously in the background through the PC speaker.
+
+**Launching Tetris:**
+
+```
+C:\> TETRIS
+```
+
+**Controls:**
+
+| Key | Action |
+|---|---|
+| ← / → | Move piece left / right |
+| ↑ | Rotate piece clockwise |
+| ↓ | Soft drop (accelerate fall) |
+| Space | Hard drop (instant placement) |
+| `P` | Pause / unpause |
+| `Q` / Esc | Quit |
+
+A USB gamepad is also supported: D-pad maps to movement, face buttons rotate and drop.
+
+---
+
 ### TOUR — Text Adventure
 
 **TOUR** is a 14-scene interactive text adventure in which **you have been shrunk down to microscopic size and injected into a real PC**. Explore the motherboard, collect components, survive hazards, and make it to the keyboard controller to escape.
@@ -748,7 +938,7 @@ This section is for readers who want to understand how inteiliDOS works under th
 
 ## 7. Building from Source
 
-See **BUILD.md** for the full step-by-step build guide. A quick summary:
+See **[BUILD.md](BUILD.md)** for the full step-by-step build guide. A quick summary:
 
 ### Prerequisites
 
@@ -818,7 +1008,7 @@ i686-elf-gdb build_modern/inteilidOS.elf
 ## 8. Project Structure
 
 ```
-inteiliDOS/
+inteiliDOS for HP/
 ├── boot/                     Assembly stubs + boot sectors
 │   ├── boot.asm              Multiboot1 header + _start entry point
 │   ├── gdt_flush.asm         lgdt + far jump to reload CS
@@ -837,16 +1027,25 @@ inteiliDOS/
 │   ├── pci.c / pci.h         PCI config-space bus scanner
 │   ├── usb.c / usb.h         UHCI USB HID keyboard driver
 │   ├── ata.c / ata.h         ATA/IDE drive detection (enumerates HDD positions)
-│   ├── cdrom.c / cdrom.h     ATAPI CD-ROM driver (PACKET, READ 10, EJECT)
+│   ├── cdrom.c / cdrom.h     ATAPI CD-ROM driver (PACKET, READ 10, EJECT, RESCAN)
 │   ├── memory.c / memory.h   Physical allocator + heap
-│   └── multiboot.h           Multiboot1 structure definitions
+│   ├── multiboot.h           Multiboot1 structure definitions
+│   ├── ac97.c / ac97.h  ⬅HP  AC'97 audio driver — Crystal CS4281 PCI codec
+│   ├── fdc.c / fdc.h    ⬅HP  82077AA floppy disk controller driver
+│   ├── fat12.c / fat12.h ⬅HP FAT12 filesystem reader (over FDC)
+│   ├── iso9660.c / iso9660.h ⬅HP  ISO 9660 filesystem reader (over ATAPI)
+│   ├── loader.c / loader.h ⬅HP  IPGM + ELF32 program loader (IPGM_LOAD_ADDR=0x500000)
+│   └── hda.c / hda.h    ⬅HP  Intel HDA reference (compiled, not called on HP Vectra)
 ├── shell/                    IntelliShell + applications
 │   ├── shell.c / shell.h     REPL: readline, history, dispatch
-│   ├── commands.c / commands.h  All built-in commands (incl. QUIT, DEMO, CDROM) + NLP
+│   ├── commands.c / commands.h  All built-in commands (incl. QUIT, DEMO, CDROM, LaunchPad) + NLP
 │   ├── iedit.c / iedit.h     IEdit full-screen text editor
 │   ├── basic.c / basic.h     InteiliBASIC interpreter
 │   ├── sheets.c / sheets.h   InteiliSheets spreadsheet (7 cols, 50 rows, =SUM/=AVG)
-│   ├── talk.c / talk.h       InteiliTalk shell wrapper (calls SAM pipeline + speaker_play_pcm)
+│   ├── talk.c / talk.h       InteiliTalk shell wrapper (SAM pipeline + speaker_play_pcm)
+│   ├── launchpad.c / launchpad.h ⬅HP  LaunchPad — browse ISO9660/FAT12, run IPGM/ELF
+│   ├── filemanager.c / filemanager.h ⬅HP  InteiliFile Manager (graphical FS browser)
+│   ├── setup.c / setup.h     ⬅HP  OS installation wizard (IDE HDD / CompactFlash)
 │   ├── sam/                  SAM text-to-speech engine
 │   │   ├── sam_reciter.c     English text → SAM phoneme notation (letter-to-sound rules)
 │   │   ├── sam_phoneme.c/h   Phoneme parser chain + PrepareOutput() PCM pipeline driver
@@ -854,6 +1053,12 @@ inteiliDOS/
 │   │   ├── RenderTabs.h      Render-side lookup tables (formant, sinus, sampleTable…)
 │   │   └── SamTabs.h         Parser-side lookup tables
 │   └── tour.c / tour.h       TOUR text adventure
+├── tetris/                   ⬅HP  Tetris game
+│   ├── tetris.c / tetris.h   Full-screen Tetris, Korobeiniki BGM; USB gamepad support
+├── daisy_bell_easter_egg/    ⬅HP  Daisy Bell easter egg
+│   ├── daisy.c / daisy.h     IBM 7094 art + Daisy Bell on PC speaker (DAISY command)
+├── still_alive_easter_egg/   ⬅HP  Still Alive easter egg
+│   ├── stillalive.c/h        Still Alive (Portal) on PC speaker (ALIVE command)
 ├── grub/
 │   ├── grub.cfg              GRUB2 boot menu (modern build — i686)
 │   └── grub_legacy.cfg       GRUB2 legacy menu (legacy build — i486, text-only)
@@ -865,6 +1070,11 @@ inteiliDOS/
 ├── build.sh                  Interactive build script (--modern / --legacy flags)
 ├── BUILD.md                  Full build guide
 └── README.md                 This file
+
+programs for inteiliDOS/      ⬅HP  External LaunchPad programs (separate build systems)
+├── Apocalypse/               VGA raycaster game
+├── DungeonsOfDoom/           D&D text-mode RPG with PC-speaker sound
+└── OdysseyOfHAL/             2001: A Space Odyssey CYOA with Daisy Bell ending
 ```
 
 ---
@@ -893,13 +1103,14 @@ There are no restrictions on commercial or non-commercial use.
 Contributions are welcome. The best places to start:
 
 1. **ATA disk I/O** — PIO-mode read/write to an IDE hard disk (detection already works; disk I/O is the next step). Enables real file persistence for IEdit, InteiliSheets, and BASIC SAVE/LOAD.
-2. **InteiliBASIC BEEP statement** — wire `speaker_beep(freq_hz, duration_ms)` (already in `timer.h` and used by InteiliTalk) into the `BEEP` statement in `shell/basic.c`, which is currently a no-op.
-3. **More BASIC statements** — `SCREEN`, `COLOR`, `LOCATE`, `LINE INPUT`, `OPEN`/`CLOSE` (once disk is available).
-4. **NLP expansion** — add more plain-English phrases to the translator table in `commands.c`.
-5. **New shell commands** — add a handler function in `commands.c` and wire it into the dispatch table. The `CDROM` command is a good example to follow; remember to also add `quit` detection if your command has an interactive loop.
-6. **Multitasking scheduler** — a simple round-robin task switcher using the PIT tick would make a great next kernel feature.
-7. **Network stack** — a minimal UDP/IP stack on top of an RTL8139 or NE2000 driver.
-8. **OHCI/EHCI USB support** — extend `kernel/usb.c` to support non-UHCI host controllers (prog_if `0x10`/`0x20`). See §4.7 of for_developers.md.
+2. **Intel HD Audio (HDA) driver for CLOAD** — implement `kernel/hda.c` with `hda_has_signal()` and `hda_capture_kcs_byte()`. The CLOAD decoder skeleton in `shell/basic.c` is already written and wired — adding this driver immediately enables full cassette load. See the HDA hook comment block inside `do_cload()` in `shell/basic.c`.
+3. **InteiliBASIC BEEP statement** — wire `speaker_beep(freq_hz, duration_ms)` (already in `timer.h` and used by InteiliTalk) into the `BEEP` statement in `shell/basic.c`, which is currently a no-op.
+4. **More BASIC statements** — `SCREEN`, `COLOR`, `LOCATE`, `LINE INPUT`, `OPEN`/`CLOSE` (once disk is available).
+5. **NLP expansion** — add more plain-English phrases to the translator table in `commands.c`.
+6. **New shell commands** — add a handler function in `commands.c` and wire it into the dispatch table. The `CDROM` command is a good example to follow; remember to also add `quit` detection if your command has an interactive loop.
+7. **Multitasking scheduler** — a simple round-robin task switcher using the PIT tick would make a great next kernel feature.
+8. **Network stack** — a minimal UDP/IP stack on top of an RTL8139 or NE2000 driver.
+9. **OHCI/EHCI USB support** — extend `kernel/usb.c` to support non-UHCI host controllers (prog_if `0x10`/`0x20`). See §4.7 of for_developers.md.
 
 ---
 
@@ -999,8 +1210,20 @@ If you are porting to a machine without a PS/2 keyboard, inteiliDOS now includes
 | InteiliBASIC interpreter | ✅ Complete |
 | InteiliSheets spreadsheet (=SUM, =AVG) | ✅ Complete |
 | InteiliTalk text-to-speech (SAM formant synthesis, PIT PWM, 22 050 Hz) | ✅ Complete |
+| InteiliBASIC CSAVE (KCS encode → RIFF/WAV → PC speaker → erase) | ✅ Complete |
+| InteiliBASIC CLOAD (KCS UI flow, 10 s listen window, decode skeleton) | ✅ Complete |
 | DEMO feature showcase | ✅ Complete |
 | TOUR text adventure | ✅ Complete |
+| LaunchPad program manager (IPGM + ELF32, CD-ROM + floppy) | ✅ Complete (HP port) |
+| ISO 9660 filesystem reader (CD-ROM, subdirectory navigation) | ✅ Complete (HP port) |
+| FAT12 filesystem reader (floppy disk) | ✅ Complete (HP port) |
+| Floppy disk controller driver (FDC, 82077AA) | ✅ Complete (HP port) |
+| AC'97 audio driver (Crystal CS4281, KCS capture for CLOAD) | ✅ Complete (HP port) |
+| InteiliFile Manager (graphical virtual-FS browser) | ✅ Complete (HP port) |
+| Tetris (Korobeiniki BGM via PC speaker; USB gamepad) | ✅ Complete (HP port) |
+| SETUP installation wizard (IDE HDD / CompactFlash) | ✅ Complete (HP port) |
+| VOLUME command (PC speaker volume control 0–100) | ✅ Complete (HP port) |
+| DISKCHECK / CHKDSK (IDE drive health + geometry) | ✅ Complete (HP port) |
 | ATA disk I/O (persistent reads/writes) | 🔧 Planned |
 | Persistent file system | 🔧 Planned (requires ATA disk I/O) |
 | InteiliBASIC BEEP statement (PC speaker) | 🔧 Planned |
