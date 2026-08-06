@@ -1,4 +1,4 @@
-# inteiliDOS
+# inteiliDOS - version 1.0
 
 ```
  Inteilix Software Corporation
