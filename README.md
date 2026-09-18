@@ -35,7 +35,7 @@ Kernel C code is compiled with:
 The operating system does not require CPUID, CMOV, MMX, SSE, APIC, USB, ACPI,
 or PCI to start. Optional drivers can use later hardware when it is present.
 
-See [COMPATIBILITY.md](inteiliDOS for 1990s computers/COMPATIBILITY.md) for detailed boundaries and testing
+See inteiliDOS for 1990s computers/COMPATIBILITY.md for detailed boundaries and testing
 recommendations.
 
 ## Features
