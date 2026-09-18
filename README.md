@@ -246,4 +246,4 @@ inteiliDOS is open-source software. You may study, modify, use, and distribute
 the source and compiled images. Redistributed versions must clearly credit
 Inteilix Software Corporation as the original author.
 
-See [for_developers.md](for_developers.md) for development details.
+See inteiliDOS for 1990s computers/for_developers.md for development details.
