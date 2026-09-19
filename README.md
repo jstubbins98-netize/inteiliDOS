@@ -1,4 +1,4 @@
-# inteiliDOS
+# inteiliDOS for 1990s Computers
 
 > “The future still has a blinking cursor.”
 
@@ -35,7 +35,7 @@ Kernel C code is compiled with:
 The operating system does not require CPUID, CMOV, MMX, SSE, APIC, USB, ACPI,
 or PCI to start. Optional drivers can use later hardware when it is present.
 
-See inteiliDOS for 1990s computers/COMPATIBILITY.md for detailed boundaries and testing
+See COMPATIBILITY.md for detailed boundaries and testing
 recommendations.
 
 ## Features
@@ -79,6 +79,49 @@ space.
 Hardware-dependent applications remain available but may report that their
 required controller is absent.
 
+## Willburd the Setup Wizard
+
+`build.sh` is guided by **Willburd the Setup Wizard**, a wizard-themed
+interactive assistant. Willburd asks about the target computer's processor,
+RAM, boot media, keyboard, supported IDE storage, floppy drive, and optional
+audio capture.
+
+Every hardware question offers:
+
+```text
+H) How do I find the correct answer?
+```
+
+Willburd then explains where to look on the case, power-on screen, cables, or
+BIOS Setup.
+
+The answers are written to:
+
+```text
+configurations/config.h
+```
+
+The generated header controls kernel startup and optional hardware probes.
+Re-run `build.sh` whenever the target computer changes.
+
+Willburd builds only the selected boot media. Choosing “Both” produces the ISO
+and raw floppy image.
+
+To generate the header without compiling:
+
+```bash
+./build.sh --config-only
+```
+
+For an unattended build using safe generic defaults:
+
+```bash
+./build.sh --defaults
+```
+
+The compiler always remains restricted to i386 instructions, even when a newer
+processor is selected.
+
 ## Building
 
 ### Required tools
@@ -108,9 +151,10 @@ To remove the existing build directory first:
 ./build.sh --clean
 ```
 
-The only supported build target is `universal`. The compatibility flags
-`--modern` and `--legacy` are accepted by the script but both resolve to the
-same universal i386 build.
+The only compiler target is `universal`. Hardware differences are represented
+by `configurations/config.h`, not by selecting a newer instruction set. The
+compatibility flags `--modern`, `--legacy`, and `--universal` are accepted but
+all resolve to the same i386-safe target.
 
 ### Outputs
 
@@ -221,6 +265,7 @@ daisy_bell_easter_egg/        Daisy Bell demonstration
 still_alive_easter_egg/       Still Alive demonstration
 grub/                         GRUB configurations
 cmake/                        Toolchain and binary-header helpers
+configurations/config.h       Generated target-computer hardware profile
 CMakeLists.txt                Universal i386 build definition
 build.sh                      Build entry point
 BUILD.md                      Extended toolchain instructions
@@ -246,4 +291,4 @@ inteiliDOS is open-source software. You may study, modify, use, and distribute
 the source and compiled images. Redistributed versions must clearly credit
 Inteilix Software Corporation as the original author.
 
-See inteiliDOS for 1990s computers/for_developers.md for development details.
+See for_developers.md for development details.
