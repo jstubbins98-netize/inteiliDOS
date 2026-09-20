@@ -1,4 +1,4 @@
-# inteiliDOS for 1990s Computers
+# inteiliDOS
 
 > “The future still has a blinking cursor.”
 
