@@ -91,3 +91,14 @@ unhandled overflow. A test-only linker wrapper forces a GP trap on the
 non-overflowing case, because successful native execution under QEMU alone
 does not exercise that monitor path. The wrapper is not part of the OS build
 and never changes supplied EXEs.
+
+### System Health
+
+```bash
+python3 tests/run_health_test.py
+```
+
+See `../SYSTEM_HEALTH.md` for the tabs, read-only checks and limitations.
+This runner includes focused real-i386 SMART/heap/alert tests and complete-OS
+keyboard/UI tests with absent, normal, multiple and read-failing HDDs. It
+checks live updates and compares full disk-image hashes before/after.

@@ -58,6 +58,22 @@ typedef struct {
  *   Returns total number of drives found.
  */
 int  ata_detect(ata_drive_t out[ATA_MAX_DRIVES]);
+/* Snapshot the boot-time inventory without resetting/probing controllers. */
+int ata_get_drive(uint8_t index, ata_drive_t *out);
+
+enum {
+    ATA_HEALTH_UNSUPPORTED, ATA_HEALTH_DISABLED, ATA_HEALTH_OK,
+    ATA_HEALTH_FAIL, ATA_HEALTH_IO_ERROR, ATA_HEALTH_BAD_DATA,
+    ATA_HEALTH_INTERFACE
+};
+typedef struct {
+    uint8_t status, attributes_valid, temperature_valid, temperature_c;
+    uint8_t reallocated_valid, pending_valid, uncorrectable_valid;
+    uint32_t reallocated, pending, uncorrectable;
+} ata_health_t;
+/* Read-only SMART; never enable monitoring, start self-tests, or write data. */
+void ata_read_health(uint8_t index, ata_health_t *out);
+int ata_parse_smart(const uint8_t data[512], ata_health_t *out);
 
 /*
  * ata_read_sector  — read one 512-byte sector.

@@ -67,6 +67,7 @@ static inline void outw(uint16_t port, uint16_t val) {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 static ata_drive_t g_drives[ATA_MAX_DRIVES];
+static uint8_t smart_flags[4];
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * PATA/IDE — legacy port I/O path
@@ -134,6 +135,9 @@ static void pata_select(uint8_t d, uint8_t lba_hi4) {
 
 /* Extract model string and sector count from a 256-word IDENTIFY buffer. */
 static void pata_parse_identify(uint16_t *id, ata_drive_t *out) {
+    if (out->drive_index < 4)
+        smart_flags[out->drive_index] = id[82] != 0xFFFF && (id[82]&1) ?
+                                       (uint8_t)(1 | ((id[85]&1) ? 2 : 0)) : 0;
     /* Model string: words 27-46, byte-swapped */
     int mi = 0;
     for (int w = ID_MODEL_FIRST; w <= ID_MODEL_LAST; w++) {
@@ -748,7 +752,87 @@ static int ahci_detect(int first_free_slot) {
  * Public API
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+int ata_get_drive(uint8_t index, ata_drive_t *out) {
+    if (!out || index >= ATA_MAX_DRIVES || !g_drives[index].present) return -1;
+    *out = g_drives[index];
+    return 0;
+}
+
+int ata_parse_smart(const uint8_t data[512], ata_health_t *out) {
+    if (!data || !out) return -1;
+    out->attributes_valid = out->temperature_valid = 0;
+    out->reallocated_valid = out->pending_valid = out->uncorrectable_valid = 0;
+    unsigned sum = 0;
+    for (unsigned i = 0; i < 512; i++) sum += data[i];
+    if ((sum&255) || (!data[0] && !data[1])) return -1;
+    out->attributes_valid = 1;
+    for (unsigned i = 2; i < 362; i += 12) {
+        unsigned id = data[i];
+        uint32_t raw = (uint32_t)data[i+5] | ((uint32_t)data[i+6]<<8) |
+                       ((uint32_t)data[i+7]<<16) | ((uint32_t)data[i+8]<<24);
+        if (data[i+9] || data[i+10]) raw = 0xFFFFFFFFu;
+        if (id == 5) { out->reallocated_valid = 1; out->reallocated = raw; }
+        if (id == 197) { out->pending_valid = 1; out->pending = raw; }
+        if (id == 198) { out->uncorrectable_valid = 1; out->uncorrectable = raw; }
+        if ((id == 194 || (id == 190 && !out->temperature_valid)) &&
+            data[i+5] > 0 && data[i+5] <= 125) {
+            out->temperature_valid = 1; out->temperature_c = data[i+5];
+        }
+    }
+    return 0;
+}
+
+static int pata_smart_command(uint8_t d, uint8_t feature) {
+    if (pata_wait_busy(d) < 0) return -1;
+    pata_select(d, 0);
+    if (pata_wait_busy(d) < 0) return -1;
+    uint16_t base = g_ata_base[d];
+    outb(base+1, feature);
+    outb(base+2, 1); outb(base+3, 0);
+    outb(base+4, 0x4F); outb(base+5, 0xC2);
+    outb(base+7, 0xB0); pata_delay(d);
+    if (pata_wait_busy(d) < 0 || (inb(base+7)&(ATA_SR_ERR|ATA_SR_DF))) return -1;
+    return 0;
+}
+
+void ata_read_health(uint8_t index, ata_health_t *out) {
+    if (!out) return;
+    *out = (ata_health_t){0};
+    if (index >= ATA_MAX_DRIVES || !g_drives[index].present) {
+        out->status = ATA_HEALTH_IO_ERROR; return;
+    }
+    if (g_drives[index].drive_type != ATA_TYPE_PATA) {
+        out->status = ATA_HEALTH_INTERFACE; return;
+    }
+    if (!(smart_flags[index]&1)) return;
+    if (!(smart_flags[index]&2)) { out->status = ATA_HEALTH_DISABLED; return; }
+    uint16_t base = g_ata_base[index];
+    if (pata_smart_command(index, 0xDA) < 0) {
+        out->status = ATA_HEALTH_IO_ERROR; return;
+    }
+    uint8_t mid = inb(base+4), hi = inb(base+5);
+    if (mid == 0x4F && hi == 0xC2) out->status = ATA_HEALTH_OK;
+    else if (mid == 0xF4 && hi == 0x2C) out->status = ATA_HEALTH_FAIL;
+    else { out->status = ATA_HEALTH_BAD_DATA; return; }
+    uint8_t data[512];
+    if (pata_smart_command(index, 0xD0) < 0 || pata_wait_drq(index) < 0) {
+        if (out->status != ATA_HEALTH_FAIL) out->status = ATA_HEALTH_IO_ERROR;
+        return;
+    }
+    for (unsigned i = 0; i < 256; i++) {
+        uint16_t word = inw(base);
+        data[i*2] = word; data[i*2+1] = word>>8;
+    }
+    pata_delay(index);
+    if (pata_wait_busy(index) < 0 || (inb(base+7)&(ATA_SR_ERR|ATA_SR_DF)) ||
+        ata_parse_smart(data, out) < 0) {
+        out->attributes_valid = 0;
+        if (out->status != ATA_HEALTH_FAIL) out->status = ATA_HEALTH_BAD_DATA;
+    }
+}
+
 int ata_detect(ata_drive_t out[ATA_MAX_DRIVES]) {
+    for (unsigned i = 0; i < 4; i++) smart_flags[i] = 0;
 #if !CONFIG_ENABLE_ATA
     for (int i = 0; i < ATA_MAX_DRIVES; i++) {
         out[i].present = ATA_NOT_PRESENT;

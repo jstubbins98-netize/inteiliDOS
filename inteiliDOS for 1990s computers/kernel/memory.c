@@ -182,6 +182,27 @@ void memory_init(uint32_t mb_info_phys) {
 
 size_t memory_total_kb(void) { return total_mem_kb; }
 size_t memory_free_kb(void)  { return (size_t)free_pages * PAGE_SIZE / 1024u; }
+int memory_heap_snapshot(memory_heap_stats_t *out) {
+    if (!out) return -1;
+    *out = (memory_heap_stats_t){.total_bytes = HEAP_SIZE};
+    uintptr_t start = (uintptr_t)heap_storage, end = start+HEAP_SIZE, expected = start;
+    heap_block_t *prev = NULL;
+    for (heap_block_t *b = heap_head; b;) {
+        uintptr_t addr = (uintptr_t)b;
+        if (addr != expected || addr < start || addr > end-sizeof(*b)) return -1;
+        if (b->magic != HEAP_MAGIC || b->prev != prev || b->free > 1 ||
+            b->size > end-addr-sizeof(*b)) return -1;
+        out->blocks++;
+        if (b->free) {
+            out->free_bytes += b->size;
+            if (b->size > out->largest_free) out->largest_free = b->size;
+        } else out->used_bytes += b->size;
+        expected = addr+sizeof(*b)+b->size;
+        prev = b;
+        b = b->next;
+    }
+    return expected == end ? 0 : -1;
+}
 
 /* ---- String / memory helpers ---- */
 void *kmemset(void *dst, int c, size_t n) {

@@ -14,6 +14,7 @@
 #include "filemanager.h"
 #include "launchpad.h"
 #include "setup.h"
+#include "health.h"
 #include "../still_alive_easter_egg/stillalive.h"
 #include "../daisy_bell_easter_egg/daisy.h"
 #include "../kernel/vga.h"
@@ -168,6 +169,7 @@ static int cmd_help(int argc, const char *argv[]) {
     println("  TALK <text>    - Speak text via PC speaker (SAM TTS)");
     println("  VOLUME [0-100%%] - Get or set PC speaker volume (default 50%%)");
     println("  DEMO     - inteiliDOS feature showcase");
+    println("  HEALTH   - Live System Health / Disk Health / System Info");
 
     /* Games */
     vga_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
@@ -1325,6 +1327,7 @@ int command_dispatch(const char *cmd, int argc, const char *argv[]) {
                                         return cmd_help(argc, argv);
     if (kstrcmp(cmd, "MEM")      == 0) return cmd_mem(argc, argv);
     if (kstrcmp(cmd, "SYSINFO")  == 0) return cmd_sysinfo(argc, argv);
+    if (kstrcmp(cmd, "HEALTH") == 0) { health_run(); return 0; }
     if (kstrcmp(cmd, "ABOUT")    == 0) return cmd_about(argc, argv);
     if (kstrcmp(cmd, "HELLO")    == 0) return cmd_hello(argc, argv);
     if (kstrcmp(cmd, "SETUP")      == 0 ||

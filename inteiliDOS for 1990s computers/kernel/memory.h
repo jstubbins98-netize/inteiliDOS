@@ -17,6 +17,11 @@ void  *kmemcpy(void *dst, const void *src, size_t n);
 int    kmemcmp(const void *a, const void *b, size_t n);
 size_t memory_total_kb(void);
 size_t memory_free_kb(void);
+typedef struct {
+    uint32_t total_bytes, used_bytes, free_bytes, largest_free, blocks;
+} memory_heap_stats_t;
+/* Read-only, bounds-checked heap inspection; -1 means invalid metadata. */
+int memory_heap_snapshot(memory_heap_stats_t *out);
 
 /* Simple string helpers used by the kernel before libc */
 size_t kstrlen(const char *s);
