@@ -4,5 +4,4 @@ this folder contains the MS-DOS EXE files that the inteiliDOS LaunchPad supports
 
 this folder also contains the EXEs packaged into ISOs for burning to a disk and running on actual hardware.
 
-credit: these were NOT created by me these two EXE files were coded by Hudson Green (for theSTILLALI.EXE) and jon-hyland (for the CREATURE.EXE). 
-Go check their projects out on github I know they are very good.
+credit: these were NOT created by me these two EXE files were coded by Hudson Green (for theSTILLALI.EXE) and jon-hyland (for the CREATURE.EXE) Go check their projects out on github I know they are very good.
