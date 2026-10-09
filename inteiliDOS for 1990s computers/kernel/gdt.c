@@ -62,8 +62,16 @@ static void write_tss(int num, uint16_t ss0, uint32_t esp0) {
     __builtin_memset(&tss, 0, sizeof(tss));
     tss.ss0  = ss0;
     tss.esp0 = esp0;
+    /* No I/O bitmap: ports are denied to v86 tasks with IOPL=0. */
+    tss.iomap_base = sizeof(tss);
     tss.cs   = GDT_SEG_KCODE | 0x3;
     tss.ss = tss.ds = tss.es = tss.fs = tss.gs = GDT_SEG_KDATA | 0x3;
+}
+
+uint32_t gdt_set_kernel_stack(uint32_t esp0) {
+    uint32_t previous = tss.esp0;
+    tss.esp0 = esp0;
+    return previous;
 }
 
 void gdt_init(void) {

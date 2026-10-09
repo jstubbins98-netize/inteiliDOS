@@ -6,6 +6,7 @@
 #include "isr.h"
 #include "idt.h"
 #include "vga.h"
+#include "dos.h"
 #include <stdint.h>
 
 /* ---- Port I/O ---- */
@@ -52,6 +53,7 @@ void isr_register_handler(int num, isr_handler_t handler) {
 
 /* Called from isr_stubs.asm */
 void isr_dispatch(registers_t *regs) {
+    if (dos_exception(regs)) return;
     if (isr_handlers[regs->int_no]) {
         isr_handlers[regs->int_no](regs);
     } else {
@@ -145,6 +147,7 @@ void irq_dispatch(registers_t *regs) {
 
     if (isr_handlers[regs->int_no])
         isr_handlers[regs->int_no](regs);
+    dos_irq(regs);
 }
 
 /* ---- Initialise ISRs ---- */

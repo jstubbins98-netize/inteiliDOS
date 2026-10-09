@@ -4,6 +4,24 @@ This edition favors standardized legacy PC interfaces over machine-specific
 drivers. Willburd the Setup Wizard generates `configurations/config.h` so each
 build enables only the compatible optional paths selected for its target.
 
+## 86Box CD-ROM configuration
+
+Use an **IDE/ATAPI** CD-ROM on one of the primary or secondary IDE positions
+(master or slave) and enable ATAPI CD-ROM support in Willburd's hardware
+profile. For PCI-native IDE channels, also enable PCI IDE support. This driver
+does not support SCSI, proprietary Panasonic/Mitsumi/Sony interfaces, or
+tertiary/quaternary IDE channels.
+
+Drive detection uses the returned IDENTIFY PACKET DEVICE data rather than
+assuming the reset signature remains in the cylinder registers after BIOS CD
+reads. Empty trays still count as detected drives; insert a disc and use
+LaunchPad's F3 rescan to refresh its capacity.
+
+After updating the driver, rebuild the OS and replace the old boot image in
+the emulator. The driver regression tests are documented in
+[`tests/README.md`](tests/README.md); their emulator coverage is QEMU, not a
+claim of testing every 86Box machine/controller combination.
+
 ## Required baseline
 
 | Area | Baseline |

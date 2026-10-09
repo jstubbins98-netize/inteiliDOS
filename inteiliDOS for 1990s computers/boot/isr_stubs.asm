@@ -112,7 +112,11 @@ isr_common_stub:
     ; Stack layout here (after pusha + push ds/es/fs/gs, before push esp):
     ;   [ESP+ 0] GS     [ESP+16] EDI … [ESP+44] EAX
     ;   [ESP+48] int_no [ESP+52] err   [ESP+56] EIP  [ESP+60] CS  [ESP+64] EFLAGS
+    test dword [esp + 64], 0x20000 ; preserve the real-mode CS in v86 frames
+    jnz .v86_cs
     mov  dword [esp + 60], 0x08
+.v86_cs:
+    cld                          ; C handlers require a clear direction flag
     ; ─────────────────────────────────────────────────────────────────────
     push esp           ; pointer to registers_t
     call isr_dispatch
@@ -142,7 +146,11 @@ irq_common_stub:
     mov fs, ax
     mov gs, ax
     ; Same CS patch as isr_common_stub — IRQ iret frames need the same fix.
+    test dword [esp + 64], 0x20000
+    jnz .v86_cs
     mov  dword [esp + 60], 0x08
+.v86_cs:
+    cld
     push esp
     call irq_dispatch
     add esp, 4

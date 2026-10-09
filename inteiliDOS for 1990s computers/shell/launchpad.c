@@ -7,8 +7,9 @@
  *   Floppy sources  — FAT12 root directory via kernel/fat12.c
  *
  * Programs are loaded into RAM at IPGM_LOAD_ADDR (0x00500000) and
- * executed via kernel/loader.c.  Programs must begin with a 16-byte
- * IPGM header (see loader.h).
+ * executed via kernel/loader.c (IPGM/ELF), or kernel/dos.c (16-bit DOS
+ * COM/MZ EXE in v86 compatibility mode). DOS uses the selected medium
+ * for read-only data files and returns to the same LaunchPad session.
  *
  * Screen layout (80×25 VGA text mode):
  *   Row  0    Title bar                  (black on cyan)
@@ -37,6 +38,7 @@
  */
 
 #include "launchpad.h"
+#include "launchpad_dos.h"
 #include "../kernel/iso9660.h"
 #include "../kernel/fat12.h"
 #include "../kernel/loader.h"
@@ -307,9 +309,9 @@ static const char *lp_ext(const char *name) {
     return dot ? dot + 1 : "";
 }
 
-/* Case-insensitive 3-char extension compare. */
+/* Case-insensitive complete extension compare (COM must not match COMX). */
 static int lp_ext_eq(const char *ext, const char *cmp) {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; ; i++) {
         int a = (unsigned char)ext[i];
         int b = (unsigned char)cmp[i];
         if (a >= 'a' && a <= 'z') a -= 32;
@@ -317,7 +319,6 @@ static int lp_ext_eq(const char *ext, const char *cmp) {
         if (a != b) return 0;
         if (!a)     return 1;
     }
-    return 1;
 }
 
 static const char *lp_ext_type(const char *name) {
@@ -342,8 +343,8 @@ static const char *lp_ext_info(const char *name, uint8_t is_dir) {
     if (!e[0])               return "";
     if (lp_ext_eq(e,"IPGM")) return "inteiliDOS executable -- press Enter to run";
     if (lp_ext_eq(e,"ELF"))  return "ELF executable -- press Enter to run";
-    if (lp_ext_eq(e,"COM"))  return "Program -- press Enter to run";
-    if (lp_ext_eq(e,"EXE"))  return "Program -- press Enter to run";
+    if (lp_ext_eq(e,"COM"))  return "16-bit DOS COM -- Enter to run; F8 stops";
+    if (lp_ext_eq(e,"EXE"))  return "DOS MZ EXE -- Enter to run; F8 stops";
     if (lp_ext_eq(e,"BAS"))  return "InteiliBASIC source -- load with BASIC";
     if (lp_ext_eq(e,"TXT"))  return "Text file -- view with READER or IEDIT";
     if (lp_ext_eq(e,"WAV"))  return "Audio file -- play with TALK";
@@ -583,6 +584,7 @@ static void lp_dlg_line(int r, int indent, const char *s,
 static uint8_t *const lp_load_buf = (uint8_t *)IPGM_LOAD_ADDR;
 
 static void lp_do_load(int src, int sel, const cdrom_drive_t *drives) {
+    (void)drives; /* may be unused when floppy-specific error hints are disabled */
     if (!lp_listing_ok || sel < 0 || sel >= lp_file_count) return;
     lp_file_t *f = &lp_files[sel];
 
@@ -689,6 +691,13 @@ static void lp_do_load(int src, int sel, const cdrom_drive_t *drives) {
     }
 
     /* ── Try to execute ── */
+    if ((uint32_t)bytes != f->size) {
+        lp_dlg_line(DLG_R0 + 12, 1, "Incomplete file read -- program not launched.",
+                    VGA_COLOR_LIGHT_RED, 65);
+        lp_dlg_line(DLG_R0 + 14, 1, "Press any key.", VGA_COLOR_DARK_GREY, 30);
+        keyboard_getchar();
+        return;
+    }
     lp_dlg_line(DLG_R0 + 9,  1, "Loaded successfully.", VGA_COLOR_LIGHT_GREEN, 40);
     lp_put_uint_r(DLG_R0 + 10, DLG_C0 + 2, (uint32_t)bytes, 7,
                   VGA_COLOR_WHITE, VGA_COLOR_BLACK);
@@ -708,12 +717,16 @@ static void lp_do_load(int src, int sel, const cdrom_drive_t *drives) {
                    && lp_load_buf[2] == 'L'
                    && lp_load_buf[3] == 'F');
 
-    if (!is_ipgm && !is_elf) {
+    int is_mz = bytes >= 2 && lp_load_buf[0] == 'M' && lp_load_buf[1] == 'Z';
+    int is_com = !is_ipgm && !is_elf && !is_mz && lp_ext_eq(lp_ext(f->name), "COM");
+    int is_dos = !is_ipgm && !is_elf && (is_com || is_mz);
+
+    if (!is_ipgm && !is_elf && !is_dos) {
         lp_dlg_line(DLG_R0 + 12, 1,
-                    "Not an IPGM or ELF executable -- file is in RAM but",
+                    "Not an IPGM, ELF, DOS COM, or DOS MZ executable.",
                     VGA_COLOR_DARK_GREY, 65);
         lp_dlg_line(DLG_R0 + 13, 1,
-                    "cannot be launched without a recognised header.",
+                    "Windows EXE and DOS extenders are not supported.",
                     VGA_COLOR_DARK_GREY, 65);
         lp_dlg_line(DLG_R0 + 15, 1, "Press any key to return.",
                     VGA_COLOR_DARK_GREY, 40);
@@ -724,9 +737,14 @@ static void lp_do_load(int src, int sel, const cdrom_drive_t *drives) {
     if (is_ipgm) {
         lp_dlg_line(DLG_R0 + 12, 1, "IPGM header valid.  Launching...",
                     VGA_COLOR_LIGHT_GREEN, 50);
-    } else {
+    } else if (is_elf) {
         lp_dlg_line(DLG_R0 + 12, 1, "ELF32 header valid.  Launching...",
                     VGA_COLOR_LIGHT_GREEN, 50);
+    } else {
+        lp_dlg_line(DLG_R0 + 12, 1, "DOS program: v86 compatibility mode (read-only files).",
+                    VGA_COLOR_LIGHT_GREEN, 65);
+        lp_dlg_line(DLG_R0 + 16, 1, "Console/text BIOS only. F8 stops the DOS program.",
+                    VGA_COLOR_DARK_GREY, 65);
     }
     lp_dlg_line(DLG_R0 + 13, 1,
                 "The shell will resume when the program returns.",
@@ -740,13 +758,27 @@ static void lp_do_load(int src, int sel, const cdrom_drive_t *drives) {
     int rc;
     if (is_ipgm) {
         rc = loader_exec(lp_load_buf, (uint32_t)bytes);
-    } else {
+    } else if (is_elf) {
         rc = loader_exec_elf(lp_load_buf, (uint32_t)bytes);
+    } else {
+        char directory[LP_DIR_DEPTH*(ISO9660_NAME_MAX+1)+2];
+        lp_build_path(directory, sizeof(directory));
+        rc = dos_exec(lp_load_buf, (uint32_t)bytes, is_com,
+                      launchpad_dos_source(src, directory));
+        if (!rc) {
+            vga_printf("\nDOS program ended (exit code %u). Press any key.\n",
+                       (unsigned)dos_exit_code());
+            keyboard_getchar();
+        }
     }
 
     /* Program has returned — redraw will happen in the main loop. */
     if (rc != 0) {
-        if (is_elf) {
+        if (is_dos) {
+            vga_puts("\nLaunchPad DOS: ");
+            vga_puts(dos_error());
+            vga_putchar('\n');
+        } else if (is_elf) {
             vga_puts("LaunchPad: ELF loader error (bad header or segment).\n");
         } else {
             vga_puts("LaunchPad: loader_exec rejected the IPGM header.\n");

@@ -11,10 +11,10 @@
  *   6. For data-IN transfers: wait for DRQ again, read back the data.
  *   7. Wait for BSY to clear before issuing the next command.
  *
- * ATAPI identification signature (left in LBA-mid / LBA-high after
- * IDENTIFY PACKET DEVICE):
- *   mid=0x14, high=0xEB  — the canonical ATAPI signature
- *   mid=0xEB, high=0x14  — some drives report the bytes swapped; we accept both
+ * IDENTIFY PACKET DEVICE returns the device type in identify word 0.
+ * The 0x14/0xEB cylinder signature belongs to reset/aborted ATA IDENTIFY,
+ * not successful packet identification; it may already have been overwritten
+ * by BIOS CD reads (notably on 86Box).
  *
  * All I/O is 16-bit PIO.  No DMA, no IRQ — purely polling.
  * The driver is self-contained: it re-declares the port-I/O inlines rather
@@ -22,12 +22,13 @@
  */
 
 #include "cdrom.h"
+#include "ata.h"
 #include "vga.h"
 #include <stdint.h>
 
 /* ── IDE port bases (indexed 0..3 = pri-master, pri-slave, sec-master, sec-slave) */
-static const uint16_t BASE[4] = { 0x1F0, 0x1F0, 0x170, 0x170 };
-static const uint16_t CTRL[4] = { 0x3F6, 0x3F6, 0x376, 0x376 };
+static uint16_t BASE[4] = { 0x1F0, 0x1F0, 0x170, 0x170 };
+static uint16_t CTRL[4] = { 0x3F6, 0x3F6, 0x376, 0x376 };
 static const uint8_t  SLAV[4] = { 0,     1,     0,     1     };
 
 /* ATA / ATAPI status register bits */
@@ -42,6 +43,7 @@ static const uint8_t  SLAV[4] = { 0,     1,     0,     1     };
 
 /* SCSI/MMC Command Descriptor Block opcodes (12-byte format) */
 #define CDB_TEST_UNIT_READY  0x00
+#define CDB_REQUEST_SENSE    0x03
 #define CDB_READ_CAPACITY10  0x25   /* READ CAPACITY (10)       */
 #define CDB_READ10           0x28   /* READ (10)                */
 #define CDB_START_STOP_UNIT  0x1B   /* START STOP UNIT          */
@@ -52,6 +54,9 @@ static int           cdrom_cnt = 0;
 
 /* ── Inline port I/O helpers ──────────────────────────────────────────────── */
 
+#ifdef CDROM_TEST_IO
+#include "cdrom_test_io.h"
+#else
 static inline void outb(uint16_t port, uint8_t val) {
     __asm__ volatile ("outb %0,%1" :: "a"(val), "Nd"(port));
 }
@@ -68,6 +73,7 @@ static inline uint16_t inw(uint16_t port) {
 static inline void outw(uint16_t port, uint16_t val) {
     __asm__ volatile ("outw %0,%1" :: "a"(val), "Nd"(port));
 }
+#endif
 
 /*
  * atapi_delay — read the alt-status register 4× to produce a ≥ 400 ns delay.
@@ -99,6 +105,8 @@ static int wait_drq(uint8_t d) {
     uint32_t t = 5000000;
     while (t--) {
         uint8_t s = inb(BASE[d] + 7);
+        /* Other status bits are undefined while BSY is asserted. */
+        if (s & SR_BSY) continue;
         if (s & SR_ERR) return -1;
         if (s & SR_DF)  return -1;
         if (!(s & SR_BSY) && (s & SR_DRQ)) return 0;
@@ -125,7 +133,7 @@ static int wait_drq(uint8_t d) {
  */
 static int atapi_packet(uint8_t d, const uint8_t *cdb,
                          uint8_t *buf, uint16_t max_bytes) {
-    if (wait_not_busy(d) < 0) return -1;
+    if (d >= CDROM_MAX_DRIVES) return -1;
 
     /* Drive select: bit7=1, bit6=0 (LBA), bit5=1, bit4=slave, bits3-0=0 */
     outb(BASE[d] + 6, (uint8_t)(0xA0 | (SLAV[d] << 4)));
@@ -135,47 +143,68 @@ static int atapi_packet(uint8_t d, const uint8_t *cdb,
 
     /* Set up transfer */
     outb(BASE[d] + 1, 0x00);                             /* Features = 0 (PIO) */
-    outb(BASE[d] + 4, (uint8_t)( max_bytes       & 0xFF)); /* Byte Count Low  */
-    outb(BASE[d] + 5, (uint8_t)((max_bytes >> 8) & 0xFF)); /* Byte Count High */
+    uint16_t limit = max_bytes ? max_bytes : CDROM_SECTOR_SIZE;
+    outb(BASE[d] + 4, (uint8_t)(limit & 0xFF));
+    outb(BASE[d] + 5, (uint8_t)(limit >> 8));
     outb(BASE[d] + 7, ATA_PACKET);                       /* PACKET command     */
 
     /* Device asserts DRQ when ready for the CDB */
     if (wait_drq(d) < 0) return -1;
+    /* CoD=1, IO=0: the DRQ is for a command packet, not leftover data. */
+    if ((inb(BASE[d] + 2) & 3) != 1) return -1;
 
     /* Write the 12-byte CDB as 6 × 16-bit words (low byte first) */
     for (int i = 0; i < 6; i++)
         outw(BASE[d], (uint16_t)((uint16_t)cdb[i * 2]
                                | ((uint16_t)cdb[i * 2 + 1] << 8)));
 
-    /* For commands that transfer no data (e.g. START STOP UNIT), we are done */
-    if (buf == (uint8_t *)0 || max_bytes == 0)
-        return 0;
+    atapi_delay(d);
+    uint32_t received = 0;
+    /* Bound the entire command, including controllers stuck in DRQ. */
+    for (uint32_t polls = 0; polls < 5000000; polls++) {
+        uint8_t status = inb(BASE[d] + 7);
+        if (status & SR_BSY) continue;
+        if (status & (SR_ERR | SR_DF)) return -1;
+        uint8_t reason = inb(BASE[d] + 2) & 3;
+        if (!(status & SR_DRQ)) {
+            /* CoD=1, IO=1 indicates command completion. DRQ may be
+             * temporarily clear between data phases, so don't stop early. */
+            if (reason != 3) continue;
+            return received == max_bytes ? 0 : -1;
+        }
+        if (reason == 1) continue; /* delayed transition after writing CDB */
+        if (reason != 2) return -1; /* unexpected data-OUT phase */
 
-    /* ---- Data-IN phase ---- */
+        uint32_t actual = (uint16_t)((uint16_t)inb(BASE[d] + 4)
+                                  | ((uint16_t)inb(BASE[d] + 5) << 8));
+        if (actual == 0) actual = 65536; /* ATAPI zero count means 64 KiB */
+        for (uint32_t i = 0; i < actual; i += 2) {
+            uint16_t word = inw(BASE[d]);
+            /* Drain the complete phase even if it exceeds the buffer. */
+            if (buf && received + i < max_bytes)
+                buf[received + i] = (uint8_t)word;
+            if (buf && i + 1 < actual && received + i + 1 < max_bytes)
+                buf[received + i + 1] = (uint8_t)(word >> 8);
+        }
+        received += actual;
+        atapi_delay(d);
+        if (received > 65536) return -1;
+    }
+    return -1;
+}
 
-    /* Wait for the device to supply data (DRQ set, IO=1 in base+2) */
-    if (wait_drq(d) < 0) return -1;
-
-    /* Read actual transfer size from the device; it may be less than max_bytes */
-    uint16_t actual = (uint16_t)((uint16_t)inb(BASE[d] + 4)
-                                | ((uint16_t)inb(BASE[d] + 5) << 8));
-    if (actual == 0) actual = max_bytes;   /* some drives skip updating these */
-
-    /* Clamp to buffer size */
-    if (actual > max_bytes) actual = max_bytes;
-
-    /* Read words.  ATA/ATAPI always transfers in 16-bit units. */
-    uint16_t words = actual / 2;
-    uint16_t *w = (uint16_t *)(void *)buf;
-    for (uint16_t i = 0; i < words; i++)
-        w[i] = inw(BASE[d]);
-
-    /* Odd-byte residual: consume but discard the high byte */
-    if (actual & 1) inw(BASE[d]);
-
-    /* Let the controller settle before the next command */
-    wait_not_busy(d);
-    return 0;
+/* Disc insertion/boot can leave UNIT ATTENTION pending. Clear it with
+ * REQUEST SENSE and retry capacity, without treating an empty tray as absent. */
+static int read_capacity(uint8_t d, uint8_t cap[8]) {
+    const uint8_t cdb[12] = { CDB_READ_CAPACITY10 };
+    const uint8_t sense_cdb[12] = { CDB_REQUEST_SENSE, 0, 0, 0, 18 };
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (atapi_packet(d, cdb, cap, 8) == 0) return 0;
+        uint8_t sense[18] = {0};
+        if (atapi_packet(d, sense_cdb, sense, 18) < 0) return -1;
+        if ((sense[2] & 0x0F) != 6) return -1; /* not UNIT ATTENTION */
+    }
+    return -1;
 }
 
 /* ── Public API ───────────────────────────────────────────────────────────── */
@@ -189,6 +218,7 @@ int cdrom_detect(cdrom_drive_t out[CDROM_MAX_DRIVES]) {
         out[d].drive_index = d;
         out[d].last_lba    = 0;
         out[d].block_size  = CDROM_SECTOR_SIZE;
+        if (ata_get_pata_ports(d, &BASE[d], &CTRL[d]) < 0) continue;
 
         /* Select drive */
         outb(BASE[d] + 6, (uint8_t)(0xA0 | (SLAV[d] << 4)));
@@ -197,9 +227,7 @@ int cdrom_detect(cdrom_drive_t out[CDROM_MAX_DRIVES]) {
         /*
          * Wait for BSY=0 before sending any command.
          *
-         * cdrom_detect() is called immediately after ata_detect(), which
-         * issues a software reset (SRST) to both IDE channels.  On HDD
-         * boot the drives can still be finishing their post-SRST internal
+         * On boot the drives can still be finishing their internal
          * diagnostics by the time we reach here.  Without this wait,
          * IDENTIFY PACKET DEVICE is sent while BSY=1 and silently ignored;
          * the subsequent wait_not_busy then times out and the CD-ROM goes
@@ -228,23 +256,15 @@ int cdrom_detect(cdrom_drive_t out[CDROM_MAX_DRIVES]) {
         /* Wait for BSY to clear after the command */
         if (wait_not_busy(d) < 0) continue;
 
-        /*
-         * Check the ATAPI signature left in the cylinder (LBA-mid/high) regs.
-         * A plain ATA hard drive leaves these at 0x00/0x00 (or random on error).
-         * An ATAPI device leaves 0x14/0xEB (some drives swap the bytes).
-         */
-        uint8_t mid  = inb(BASE[d] + 4);
-        uint8_t high = inb(BASE[d] + 5);
-        if (!((mid == 0x14 && high == 0xEB) ||
-              (mid == 0xEB && high == 0x14)))
-            continue;   /* ATA hard disk or no device */
-
-        /* Read and discard the IDENTIFY data to clear the DRQ */
-        if (wait_drq(d) == 0) {
-            for (int i = 0; i < 256; i++)
-                id_buf[i] = inw(BASE[d]);
-        }
-        (void)id_buf;   /* silence -Wunused-variable */
+        /* Successful A1 returns identity data, not a reset signature.
+         * Read all 512 bytes to clear DRQ before issuing PACKET. */
+        if (wait_drq(d) < 0) continue;
+        for (int i = 0; i < 256; i++)
+            id_buf[i] = inw(BASE[d]);
+        atapi_delay(d);
+        /* Word 0: packet device (bits 15:14=10), CD/DVD type (12:8=5),
+         * 12-byte packets (1:0=0). Don't count failed identifies or HDDs. */
+        if ((id_buf[0] & 0xDF03) != 0x8500) continue;
 
         out[d].present = CDROM_PRESENT;
         count++;
@@ -256,17 +276,8 @@ int cdrom_detect(cdrom_drive_t out[CDROM_MAX_DRIVES]) {
          *   bytes 4-7 : block length in bytes (big-endian; should be 2048)
          */
         uint8_t cap_buf[8] = {0};
-        uint8_t cap_cdb[12] = {
-            CDB_READ_CAPACITY10,    /* 0x25 */
-            0x00,                   /* LUN=0, RelAdr=0 */
-            0x00, 0x00, 0x00, 0x00, /* LBA (used only with RelAdr=1) */
-            0x00,                   /* reserved */
-            0x00, 0x00,             /* reserved */
-            0x00,                   /* PMI=0 (return full capacity) */
-            0x00, 0x00              /* padding to 12 bytes */
-        };
 
-        if (atapi_packet(d, cap_cdb, cap_buf, 8) == 0) {
+        if (read_capacity(d, cap_buf) == 0) {
             out[d].last_lba =
                 ((uint32_t)cap_buf[0] << 24) | ((uint32_t)cap_buf[1] << 16) |
                 ((uint32_t)cap_buf[2] <<  8) |  (uint32_t)cap_buf[3];
@@ -358,17 +369,7 @@ uint32_t cdrom_rescan_media(uint8_t drive_index) {
     cdrom_tbl[drive_index].block_size = CDROM_SECTOR_SIZE;
 
     uint8_t cap_buf[8] = {0};
-    uint8_t cap_cdb[12] = {
-        CDB_READ_CAPACITY10,
-        0x00,
-        0x00, 0x00, 0x00, 0x00,
-        0x00,
-        0x00, 0x00,
-        0x00,
-        0x00, 0x00
-    };
-
-    if (atapi_packet(drive_index, cap_cdb, cap_buf, 8) == 0) {
+    if (read_capacity(drive_index, cap_buf) == 0) {
         uint32_t lba =
             ((uint32_t)cap_buf[0] << 24) | ((uint32_t)cap_buf[1] << 16) |
             ((uint32_t)cap_buf[2] <<  8) |  (uint32_t)cap_buf[3];

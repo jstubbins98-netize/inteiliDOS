@@ -69,6 +69,8 @@ space.
 - InteiliSheets spreadsheet
 - InteiliTalk text-to-speech through the PC speaker
 - LaunchPad program manager
+- Initial 16-bit DOS COM/MZ EXE compatibility in LaunchPad (floppy/CD-ROM;
+  console/text BIOS and read-only files — see [DOS_COMPATIBILITY.md](DOS_COMPATIBILITY.md))
 - InteiliFile Manager
 - SETUP disk installation utility
 - Tetris

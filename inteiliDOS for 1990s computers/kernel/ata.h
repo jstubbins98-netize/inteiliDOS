@@ -22,6 +22,11 @@
 
 #include <stdint.h>
 
+/* Legacy or PCI-native PATA command/alternate-status ports for slots 0-3.
+ * Shared with ATAPI so HDD and CD drivers never disagree about controller
+ * addresses. Returns -1 for invalid arguments. */
+int ata_get_pata_ports(uint8_t drive_index, uint16_t *base, uint16_t *ctrl);
+
 /* Maximum number of drives tracked (4 PATA + 4 AHCI) */
 #define ATA_MAX_DRIVES  8
 

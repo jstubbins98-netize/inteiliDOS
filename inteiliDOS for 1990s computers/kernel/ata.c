@@ -200,6 +200,18 @@ static void pata_probe_pci_ports(void) {
     }
 }
 
+/* ATAPI must use the same native-mode PCI ports as the HDD driver,
+ * including when ATA HDD detection is disabled in the hardware profile. */
+int ata_get_pata_ports(uint8_t d, uint16_t *base, uint16_t *ctrl) {
+    if (d >= 4 || !base || !ctrl) return -1;
+#if CONFIG_ENABLE_PCI_IDE
+    pata_probe_pci_ports();
+#endif
+    *base = g_ata_base[d];
+    *ctrl = g_ata_ctrl[d];
+    return 0;
+}
+
 /* Probe all four PATA positions.  Fills g_drives[0..3]. */
 static int pata_detect(void) {
     uint16_t id_buf[256];

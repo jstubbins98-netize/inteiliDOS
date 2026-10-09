@@ -12,5 +12,7 @@
 #define GDT_SEG_TSS    0x28
 
 void gdt_init(void);
+/* Set the ring-0 stack used on entry from v86; returns the previous stack. */
+uint32_t gdt_set_kernel_stack(uint32_t esp0);
 
 #endif /* GDT_H */

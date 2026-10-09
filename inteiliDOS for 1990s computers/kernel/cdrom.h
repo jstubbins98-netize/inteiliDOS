@@ -3,18 +3,19 @@
  * ATAPI CD-ROM / DVD-ROM driver (PIO, no DMA)
  *
  * Works on top of the same IDE port pair as the ATA driver.  ATAPI devices
- * are identified by the signature bytes they leave in the LBA-mid / LBA-high
- * registers after IDENTIFY PACKET DEVICE: 0x14/0xEB (or 0xEB/0x14).
+ * are identified using word 0 returned by IDENTIFY PACKET DEVICE. Reset
+ * signature registers are not reliable after BIOS CD-ROM reads.
  *
  * Data is transferred in 2048-byte chunks (Mode 1 / Mode 2 Form 1 sectors).
  * Commands are issued as 12-byte SCSI Command Descriptor Blocks (CDBs)
  * tunnelled through the ATA PACKET command (0xA0).
  *
  * Drive indices match those used by ata.h:
- *   0 = Primary   Master   (base 0x1F0)
- *   1 = Primary   Slave    (base 0x1F0)
- *   2 = Secondary Master   (base 0x170)
- *   3 = Secondary Slave    (base 0x170)
+ *   0 = Primary   Master   (legacy base 0x1F0)
+ *   1 = Primary   Slave    (legacy base 0x1F0)
+ *   2 = Secondary Master   (legacy base 0x170)
+ *   3 = Secondary Slave    (legacy base 0x170)
+ * PCI-native port mappings are shared with the ATA driver when enabled.
  */
 
 #ifndef CDROM_H
@@ -56,8 +57,7 @@ typedef struct {
  *
  * Note: the ATA driver (ata_detect) deliberately skips ATAPI devices
  * by checking for non-zero LBA mid/high.  cdrom_detect checks for the
- * specific ATAPI signature values instead, so the two drivers do not
- * conflict.
+ * packet identification response instead, so the two drivers do not conflict.
  */
 int cdrom_detect(cdrom_drive_t out[CDROM_MAX_DRIVES]);
 

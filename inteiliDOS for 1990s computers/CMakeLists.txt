@@ -101,6 +101,7 @@ set(BOOT_ASM_SOURCES
     boot/gdt_flush.asm
     boot/idt_load.asm
     boot/isr_stubs.asm
+    boot/v86.asm
 )
 
 set(KERNEL_C_SOURCES
@@ -123,6 +124,8 @@ set(KERNEL_C_SOURCES
     kernel/fdc.c
     kernel/fat12.c
     kernel/loader.c
+    kernel/dos.c
+    kernel/dos_services.c
 )
 
 set(SHELL_C_SOURCES
@@ -136,6 +139,7 @@ set(SHELL_C_SOURCES
     shell/talk.c
     shell/filemanager.c
     shell/launchpad.c
+    shell/launchpad_dos.c
     shell/setup.c
     still_alive_easter_egg/stillalive.c
     daisy_bell_easter_egg/daisy.c
