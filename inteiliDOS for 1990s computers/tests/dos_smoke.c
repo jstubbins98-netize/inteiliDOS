@@ -1,6 +1,7 @@
 /* Boot the actual monitor, ISR trampolines, text/keyboard/timer drivers and
  * ISO9660/FAT12 bridge. Test-only debug ports report results to the runner. */
 #include "../kernel/dos.h"
+#include "../kernel/dos_internal.h"
 #include "../kernel/gdt.h"
 #include "../kernel/idt.h"
 #include "../kernel/isr.h"
@@ -15,6 +16,23 @@
 #include "../kernel/loader.h"
 #include "../shell/launchpad_dos.h"
 #include <stddef.h>
+static int force_into_nop, into_nop_traps;
+int __real_dos_exception(registers_t *r);
+int __wrap_dos_exception(registers_t *r) {
+    /* Test-only linker wrapper: reproduce a v86 GP fault on INTO with OF=0.
+     * QEMU normally executes that case without entering the monitor. */
+    if (force_into_nop && r->int_no == 13 && (r->eflags&DOS_VM) && r->cs == DOS_PSP) {
+        uint8_t *code = dos_pointer(r->cs, (uint16_t)r->eip, 3, 1);
+        if (code && code[0] == 0xFA && code[1] == 0x90 && code[2] == 0x90) {
+            code[0] = 0xCE;
+            int handled = __real_dos_exception(r);
+            code[0] = 0xFA;
+            into_nop_traps++;
+            return handled;
+        }
+    }
+    return __real_dos_exception(r);
+}
 static inline void outb(uint16_t p, uint8_t v) {
     __asm__ volatile("outb %0,%1" :: "a"(v), "Nd"(p));
 }
@@ -32,6 +50,14 @@ int ata_get_pata_ports(uint8_t drive, uint16_t *io, uint16_t *ctrl) {
     return 0;
 }
 static void log(const char *s) { while (*s) outb(0xE9, *s++); }
+static int contains(const char *text, const char *needle) {
+    for (; *text; text++) {
+        unsigned i = 0;
+        while (needle[i] && text[i] == needle[i]) i++;
+        if (!needle[i]) return 1;
+    }
+    return 0;
+}
 static inline void put32(uint8_t *p, uint32_t n) {
     for (unsigned i=0; i<4; i++) p[i]=n>>(i*8);
 }
@@ -64,7 +90,13 @@ static int execute(const char *name, int com, int expected, int status) {
     __asm__ volatile("mov %%cr0,%0; mov %%cr3,%1; pushfl; popl %2"
                      :"=r"(cr0),"=r"(cr3),"=r"(flags));
     log(name); log(": RUN\n");
+    force_into_nop = name[0]=='I' && name[4]=='.';
+    into_nop_traps = 0;
     int rc=dos_exec(buf, bytes, com, launchpad_dos_source(DOS_FLOPPY ? 4 : 0, "/"));
+    if (force_into_nop && into_nop_traps != 1) {
+        log("INTO no-overflow GP path was not exercised\n"); return 0;
+    }
+    force_into_nop = 0;
     uint32_t after0, after3, afterflags;
     __asm__ volatile("mov %%cr0,%0; mov %%cr3,%1; pushfl; popl %2"
                      :"=r"(after0),"=r"(after3),"=r"(afterflags));
@@ -75,8 +107,25 @@ static int execute(const char *name, int com, int expected, int status) {
         outb(0xE9,hex[dos_exit_code()>>4]); outb(0xE9,hex[dos_exit_code()&15]);
         log(": "); log(dos_error()); log("\n"); return 0;
     }
+    /* Errors must identify the missing service, not just say unsupported. */
+    if (expected == -2) {
+        const char *detail = name[0]=='P' ? "PORT=0020" :
+                             name[0]=='F' ? "PORT=0040" :
+                             name[0]=='T' ? "PORT=03D4" :
+                             name[0]=='E' ? "INT 21h AX=4B00" :
+                                            "INT 10h AX=0013";
+        if (!contains(dos_error(), detail) || !contains(dos_error(), " at 2000:")) {
+            log("missing diagnostic: "); log(dos_error()); log("\n"); return 0;
+        }
+    }
+    if (expected == -3 && (name[0]=='I' ?
+                          !contains(dos_error(), "overflow interrupt 04h") :
+                          (!contains(dos_error(), "DOS CPU fault 0Eh") ||
+                           !contains(dos_error(), " ADDR=")))) {
+        log("missing fault address: "); log(dos_error()); log("\n"); return 0;
+    }
     if (cr0!=after0 || cr3!=after3 || ((flags^afterflags)&0x200) ||
-        pic1!=inb(0x21) || pic2!=inb(0xA1)) {
+        pic1!=inb(0x21) || pic2!=inb(0xA1) || (inb(0x61)&3)) {
         log("host state not restored\n"); return 0;
     }
     return 1;
@@ -98,7 +147,11 @@ void test_main(void) {
         !execute("PORT.COM",1,-2,0) || !execute("FAULT.COM",1,-3,0) ||
         !execute("EXEC.COM",1,-2,0) || !execute("VIDEO.COM",1,-2,0) ||
         !execute("RET.COM",1,0,0) || !execute("KERNEL.COM",1,-3,0) ||
-        !execute("BDA.COM",1,0,0) || !execute("TEST.COM",1,0,42)) finish(0);
+        !execute("BDA.COM",1,0,0) || !execute("CRT.COM",1,0,42) ||
+        !execute("TIMING.COM",1,-2,0) || !execute("VIRT.COM",1,0,42) ||
+        !execute("FAST.COM",1,-2,0) || !execute("TEST.COM",1,0,42)) finish(0);
+    if (!execute("INTO.COM",1,0,42) || !execute("INTOBAD.COM",1,-3,0) ||
+        !execute("TEST.COM",1,0,42)) finish(0);
     /* Reject bad images before entering v86. */
     uint8_t bad[32]={0};
     if (dos_exec(bad, sizeof(bad),0,NULL)!=-1 || dos_exec(bad,65537,1,NULL)!=-1) finish(0);

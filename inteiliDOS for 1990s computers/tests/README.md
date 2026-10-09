@@ -49,3 +49,45 @@ MZ programs from both media through its actual UI, and returns to the shell.
 Requires ELF GCC/binutils, NASM, QEMU i386, and xorriso. These are QEMU checks,
 not 86Box certification. See [DOS compatibility](../DOS_COMPATIBILITY.md)
 for the current API boundaries.
+
+### Creature / Turbo Pascal CRT
+
+```bash
+python3 tests/run_creature_dos_test.py /path/to/CREATURE.EXE /tmp/inteilidos-test-build/inteilidOS.elf
+```
+
+Uses the supplied EXE without copying it into the test sources. From both
+CD-ROM and floppy, it checks actual title/track coordinates and colors,
+enters a bet, completes a race, exits normally back to a functioning shell,
+then relaunches and tests F8 during Pascal CRT keyboard input.
+
+This test uses bounded QEMU instruction timing. Unrestricted modern-speed
+execution can trigger the executable's Turbo Pascal delay-calibration
+overflow, even when QEMU is configured with `-cpu 486`. No guest EXE is
+patched and no divide exception is suppressed. The synthetic DOS suite also
+checks font queries, BIOS/BDA/cursor coherence, bounded virtual cursor ports,
+and continued denial of VGA timing/PIC port writes.
+
+### Still Alive / QuickBASIC-era timer and sound
+
+```bash
+python3 tests/run_stillalive_dos_test.py /path/to/STILLALI.EXE /tmp/inteilidos-test-build/inteilidOS.elf --full
+```
+
+Runs the supplied EXE from CD and floppy in parallel. It checks lyric
+progression, natural completion with DOS exit code 0, rejects BASIC runtime
+errors, records an actual QEMU PC-speaker waveform after excluding the boot
+chime, then relaunches for F8 and returns to a working shell. Omit `--full`
+for a shorter startup/audio/abort check. No third-party EXE or WAV is kept.
+
+The synthetic suite also checks guest-private PIC mask readback, actual
+virtual timer interrupt delivery/EOI, VGA capability queries, speaker cleanup
+on normal return and F8 during masked/CLI execution, continued denial of PIC
+initialization, and rejection of timer requests beyond the host-tick limit.
+
+The synthetic suite covers `INTO` with and without overflow, the INT 04h
+handler's saved flags/CS/return IP, virtual IF and stack restoration, and an
+unhandled overflow. A test-only linker wrapper forces a GP trap on the
+non-overflowing case, because successful native execution under QEMU alone
+does not exercise that monitor path. The wrapper is not part of the OS build
+and never changes supplied EXEs.

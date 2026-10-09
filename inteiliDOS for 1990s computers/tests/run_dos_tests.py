@@ -83,7 +83,9 @@ def main():
         disc = tmp/"disc"
         disc.mkdir()
         cases = ("TEST.COM", "TEST.EXE", "PORT.COM", "FAULT.COM", "EXEC.COM",
-                 "VIDEO.COM", "RET.COM", "KEY.COM", "LOOP.COM", "KERNEL.COM", "BDA.COM")
+                 "VIDEO.COM", "RET.COM", "KEY.COM", "LOOP.COM", "KERNEL.COM", "BDA.COM",
+                 "CRT.COM", "TIMING.COM", "VIRT.COM", "FAST.COM",
+                 "INTO.COM", "INTOBAD.COM")
         files = {"DATA.TXT": b"WXYZ"}
         for case, name in enumerate(cases):
             run(tools["nasm"], "-f", "bin", "-DCASE="+str(case),
@@ -99,7 +101,7 @@ def main():
                  "-Wall", "-Wextra", "-Werror", "-DCONFIG_ENABLE_FLOPPY=1"]
         objects = []
         sources = ["kernel/"+n+".c" for n in
-                   ("dos", "dos_services", "gdt", "idt", "isr", "timer", "keyboard",
+                   ("dos", "dos_services", "dos_hardware", "gdt", "idt", "isr", "timer", "keyboard",
                     "vga", "cdrom", "iso9660", "fdc", "fat12", "loader")]
         sources += ["shell/launchpad_dos.c"]
         for src in sources:
@@ -121,11 +123,11 @@ def main():
                     "-DDOS_INTERACTIVE="+str(interactive),
                     "-c", TESTS/"dos_smoke.c", "-o", tmp/"smoke.o")
                 run(tools["ld"], "-m", "elf_i386", "-T", TESTS/"cdrom_host.ld",
-                    "-o", tmp/"host.elf", tmp/"smoke.o", *objects)
+                    "--wrap=dos_exception", "-o", tmp/"host.elf", tmp/"smoke.o", *objects)
                 log, qmp = tmp/"debug.log", tmp/"qmp.sock"
                 log.unlink(missing_ok=True)
                 qmp.unlink(missing_ok=True)
-                command = [tools["qemu-system-i386"], "-nodefaults", "-machine", "pc",
+                command = [tools["qemu-system-i386"], "-nodefaults", "-device", "VGA", "-machine", "pc",
                            "-cpu", "486", "-m", "16", "-kernel", str(tmp/"host.elf"),
                            "-display", "none", "-no-reboot",
                            "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",

@@ -78,6 +78,13 @@ int speaker_get_volume(void) {
 void speaker_on(uint32_t freq_hz) {
     if (freq_hz == 0) return;
     uint32_t divisor = PIT_BASE_HZ / freq_hz;
+    if (!divisor) divisor = 1;
+    if (divisor > 65536) divisor = 65536;
+    speaker_on_divisor(divisor);
+}
+
+void speaker_on_divisor(uint32_t divisor) {
+    if (!divisor || divisor > 65536) return;
 
     /* Programme PIT channel 2: lo/hi byte, mode 3 (square wave) */
     outb(PIT_CMD, 0xB6);

@@ -16,7 +16,7 @@ from run_dos_tests import fat12_image, run, TESTS
 
 
 class Guest:
-    def __init__(self, kernel, media, floppy, folder):
+    def __init__(self, kernel, media, floppy, folder, extra_args=()):
         self.folder = folder
         self.snapshot = folder/"vga.bin"
         qmp = folder/"qmp.sock"
@@ -25,6 +25,7 @@ class Guest:
                "-machine", "pc", "-cpu", "486", "-m", "16",
                "-kernel", str(kernel), "-display", "none", "-no-reboot",
                "-qmp", "unix:"+str(qmp)+",server=on,wait=off"]
+        cmd.extend(extra_args)
         # Keep default emulated VGA and PS/2; do not introduce a default CD
         # when testing floppy-only LaunchPad source selection.
         cmd += ["-drive", "file="+str(media)+(",if=floppy,format=raw" if floppy

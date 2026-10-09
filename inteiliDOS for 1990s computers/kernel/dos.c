@@ -22,12 +22,37 @@ static unsigned used_tables;
 static uint32_t old_cr0, old_cr3, old_stack;
 static int active, result, virtual_if;
 static const char *error;
+static char diagnostic[160];
+static char *diagnostic_text(char *out, const char *text) {
+    while (*text) *out++ = *text++;
+    return out;
+}
+static char *diagnostic_hex(char *out, uint32_t value, unsigned digits) {
+    static const char hex[] = "0123456789ABCDEF";
+    while (digits--) *out++ = hex[(value >> (digits*4)) & 15];
+    return out;
+}
+static void diagnostic_location(char *out, uint16_t cs, uint16_t ip) {
+    out = diagnostic_text(out, " at ");
+    out = diagnostic_hex(out, cs, 4);
+    *out++ = ':';
+    out = diagnostic_hex(out, ip, 4);
+    *out = 0;
+}
 uint8_t dos_status;
 int dos_cancelled;
 static uint8_t keys[32];
 static unsigned key_head, key_tail;
 static int held_key;
 static uint32_t ticks;
+static uint16_t font_seg[2], font_off[2];
+int dos_font_info(unsigned which, uint16_t *seg, uint16_t *off) {
+    if (which > 1) return 0;
+    uint32_t address = (uint32_t)font_seg[which]*16u + font_off[which];
+    if (address < 0xC0000u || address > 0x100000u-4096u) return 0;
+    *seg = font_seg[which]; *off = font_off[which];
+    return 1;
+}
 uint16_t dos_virtual_flags(registers_t *r) {
     return (r->eflags & ~(0x3000u | 0x200u)) | (virtual_if ? 0x200u : 0);
 }
@@ -62,6 +87,12 @@ static int map_region(uint32_t index) {
     return 1;
 }
 static void paging_begin(void) {
+    /* Capture BIOS font pointers before replacing the host IVT with the
+     * guest-private page. Expose ROM data, never execute the BIOS handler. */
+    __asm__ volatile("movw 0x10c, %0; movw 0x10e, %1"
+                     : "=r"(font_off[0]), "=r"(font_seg[0]));
+    __asm__ volatile("movw 0x7c, %0; movw 0x7e, %1"
+                     : "=r"(font_off[1]), "=r"(font_seg[1]));
     zero(directory, sizeof(directory));
     zero(low_page, sizeof(low_page));
     used_tables = 0;
@@ -77,6 +108,9 @@ static void paging_begin(void) {
     put_word(low_page + 0x44A, 80);
     put_word(low_page + 0x413, 640);
     low_page[0x484] = 24;
+    put_word(low_page + 0x485, 16);
+    put_word(low_page + 0x44C, 4096);
+    put_word(low_page + 0x463, 0x3D4);
     uint32_t cr3 = (uint32_t)(uintptr_t)directory;
     __asm__ volatile("mov %0, %%cr3" :: "r"(cr3) : "memory");
     uint32_t cr0 = old_cr0 | 0x80000000u;
@@ -84,6 +118,7 @@ static void paging_begin(void) {
 }
 void dos_cleanup(void) {
     active = 0;
+    dos_hardware_cleanup();
     __asm__ volatile("mov %0, %%cr0; jmp 1f; 1:" :: "r"(old_cr0) : "memory");
     __asm__ volatile("mov %0, %%cr3" :: "r"(old_cr3) : "memory");
     gdt_set_kernel_stack(old_stack);
@@ -139,6 +174,7 @@ void dos_irq(registers_t *r) {
     if (!active) return;
     if (r->int_no == 32) {
         ticks++;
+        dos_hardware_tick();
         int c = keyboard_poll();
         if (c == KEY_F8) dos_cancelled = 1;
         else if (c >= 0) {
@@ -152,6 +188,8 @@ void dos_irq(registers_t *r) {
     }
     if (dos_cancelled && (r->eflags & DOS_VM))
         dos_stop(r, -4, "Stopped with F8.");
+    else if ((r->eflags & DOS_VM) && virtual_if && dos_hardware_take_timer())
+        dos_inject_interrupt((dos_frame_t *)r, 8);
 }
 
 /* Conventional-memory allocation blocks (paragraphs, initially one process).
@@ -351,7 +389,24 @@ int dos_exception(registers_t *r) {
         return 0; /* do not hide genuine kernel faults */
     }
     if (dos_cancelled) { dos_stop(r, -4, "Stopped with F8."); return 1; }
-    if (r->int_no != 13) { dos_stop(r, -3, "DOS program fault or protected-memory access."); return 1; }
+    /* Some CPUs/emulators deliver the overflow trap directly; others fault
+     * the v86 INTO instruction first because guest IOPL is zero. */
+    if (r->int_no == 4) return dos_interrupt((dos_frame_t *)r, 4);
+    if (r->int_no != 13) {
+        char *out = diagnostic_text(diagnostic, "DOS CPU fault ");
+        out = diagnostic_hex(out, r->int_no, 2);
+        out = diagnostic_text(out, "h ERR=");
+        out = diagnostic_hex(out, r->err_code, 8);
+        if (r->int_no == 14) {
+            uint32_t addr;
+            __asm__ volatile("mov %%cr2, %0" : "=r"(addr));
+            out = diagnostic_text(out, " ADDR=");
+            out = diagnostic_hex(out, addr, 8);
+        }
+        diagnostic_location(out, r->cs, r->eip);
+        dos_stop(r, -3, diagnostic);
+        return 1;
+    }
     dos_frame_t *f = (dos_frame_t *)r;
     uint8_t instruction[3];
     for (unsigned i = 0; i < 3; i++) {
@@ -362,13 +417,39 @@ int dos_exception(registers_t *r) {
     uint8_t *p = instruction;
     unsigned prefix = p[0] == 0x66, width = prefix ? 4 : 2;
     uint8_t op = p[prefix];
+    uint16_t fault_cs = r->cs, fault_ip = r->eip;
     uint32_t value = 0;
     r->eip = (r->eip + prefix + 1) & 0xFFFF;
     switch (op) {
+    case 0xE4: case 0xE5: case 0xE6: case 0xE7:
+    case 0xEC: case 0xED: case 0xEE: case 0xEF: {
+        if (prefix) goto unsupported;
+        uint16_t port = op <= 0xE7 ? p[1] : (uint16_t)r->edx;
+        int output = !!(op&2);
+        unsigned bytes = (op&1) ? 2 : 1;
+        /* Validate both adjacent registers before a word I/O has any effect. */
+        if (bytes == 2 && port != 0x3D4) goto unsupported;
+        uint32_t input = 0;
+        for (unsigned i = 0; i < bytes; i++) {
+            uint8_t byte = r->eax>>(i*8);
+            if (!dos_legacy_port(port+i, output, &byte)) goto unsupported;
+            input |= (uint32_t)byte<<(i*8);
+        }
+        if (!output) {
+            uint32_t mask = bytes == 1 ? 0xFFu : 0xFFFFu;
+            r->eax = (r->eax&~mask)|input;
+        }
+        if (op <= 0xE7) r->eip = (r->eip+1)&0xFFFF;
+        break;
+    }
     case 0xCD:
         if (prefix) goto unsupported;
         r->eip = (r->eip + 1) & 0xFFFF;
         if (!dos_interrupt(f, p[1])) goto unsupported;
+        break;
+    case 0xCE:
+        if (prefix) goto unsupported; /* only the 16-bit guest frame is supported */
+        if ((r->eflags & 0x800u) && !dos_interrupt(f, 4)) goto unsupported;
         break;
     case 0xFA: virtual_if = 0; break;
     case 0xFB: virtual_if = 1; break;
@@ -393,11 +474,40 @@ int dos_exception(registers_t *r) {
     default: goto unsupported;
     }
     if (dos_cancelled && (r->eflags & DOS_VM)) dos_stop(r, -4, "Stopped with F8.");
+    else if ((r->eflags & DOS_VM) && virtual_if && dos_hardware_take_timer())
+        dos_inject_interrupt(f, 8);
     return 1;
 bad_stack:
     dos_stop(r, -3, "Invalid DOS stack.");
     return 1;
 unsupported:
-    dos_stop(r, -2, "Unsupported DOS/BIOS service or direct hardware instruction.");
+    {
+        char *out;
+        if (op == 0xCD && !prefix) {
+            out = diagnostic_text(diagnostic, "Unsupported INT ");
+            out = diagnostic_hex(out, p[1], 2);
+            out = diagnostic_text(out, "h");
+        } else {
+            out = diagnostic_text(diagnostic, "Unsupported opcode ");
+            for (unsigned i = 0; i < sizeof(instruction); i++) {
+                if (i) *out++ = ' ';
+                out = diagnostic_hex(out, instruction[i], 2);
+            }
+            if ((op >= 0xE4 && op <= 0xE7) || (op >= 0xEC && op <= 0xEF)) {
+                out = diagnostic_text(out, " PORT=");
+                out = diagnostic_hex(out, op <= 0xE7 ? p[prefix+1] : (uint16_t)r->edx, 4);
+            }
+        }
+        out = diagnostic_text(out, " AX=");
+        out = diagnostic_hex(out, r->eax, 4);
+        out = diagnostic_text(out, " BX=");
+        out = diagnostic_hex(out, r->ebx, 4);
+        out = diagnostic_text(out, " CX=");
+        out = diagnostic_hex(out, r->ecx, 4);
+        out = diagnostic_text(out, " DX=");
+        out = diagnostic_hex(out, r->edx, 4);
+        diagnostic_location(out, fault_cs, fault_ip);
+        dos_stop(r, -2, diagnostic);
+    }
     return 1;
 }

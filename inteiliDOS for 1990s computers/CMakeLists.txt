@@ -126,6 +126,7 @@ set(KERNEL_C_SOURCES
     kernel/loader.c
     kernel/dos.c
     kernel/dos_services.c
+    kernel/dos_hardware.c
 )
 
 set(SHELL_C_SOURCES

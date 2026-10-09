@@ -12,6 +12,47 @@ static uint16_t dta_seg, dta_off;
 static uint8_t pending_scan;
 static int lookahead;
 static uint32_t clock_base;
+static uint8_t crtc_index, cursor_shape[2], cursor_address[2], retrace_phase;
+static void text_cursor(unsigned row, unsigned col) {
+    vga_set_cursor(row, col);
+    unsigned position = row*80+col;
+    cursor_address[0] = position>>8; cursor_address[1] = position;
+    uint8_t *bda = dos_pointer(0x40, 0x50, 2, 1);
+    if (bda) { bda[0] = col; bda[1] = row; }
+}
+/* Some DOS CRT libraries program the text cursor instead of calling INT 10h.
+ * These are virtual registers, not permission to access physical VGA ports. */
+int dos_video_port(uint16_t port, int write, uint8_t *value) {
+    if (port == 0x3DA && !write) {
+        retrace_phase ^= 9;
+        *value = retrace_phase;
+        return 1;
+    }
+    if (port == 0x3D4) {
+        if (!write) { *value = crtc_index; return 1; }
+        if (*value != 0x0A && *value != 0x0B &&
+            *value != 0x0E && *value != 0x0F) return 0;
+        crtc_index = *value; return 1;
+    }
+    if (port != 0x3D5) return 0;
+    if (crtc_index == 0x0A || crtc_index == 0x0B) {
+        if (write) cursor_shape[crtc_index-0x0A] = *value;
+        else *value = cursor_shape[crtc_index-0x0A];
+        return 1;
+    }
+    if (crtc_index != 0x0E && crtc_index != 0x0F) return 0;
+    if (!write) {
+        int row, col;
+        vga_get_cursor(&row, &col);
+        unsigned position = row*80+col;
+        *value = crtc_index == 0x0E ? position>>8 : position;
+        return 1;
+    }
+    cursor_address[crtc_index-0x0E] = *value;
+    unsigned position = ((unsigned)cursor_address[0]<<8)|cursor_address[1];
+    if (position < 2000) text_cursor(position/80, position%80);
+    return 1;
+}
 static void set_ax(registers_t *r, uint16_t v) { r->eax = (r->eax & 0xFFFF0000u) | v; }
 static void set_al(registers_t *r, uint8_t v) { r->eax = (r->eax & 0xFFFFFF00u) | v; }
 static void set_dx(registers_t *r, uint16_t v) { r->edx = (r->edx & 0xFFFF0000u) | v; }
@@ -23,6 +64,13 @@ static uint16_t rd16(const uint8_t *p) { return p[0] | ((uint16_t)p[1]<<8); }
 static void wr16(uint8_t *p, uint16_t v) { p[0] = v; p[1] = v >> 8; }
 
 void dos_services_init(const dos_filesystem_t *fs) {
+    dos_hardware_init();
+    crtc_index = retrace_phase = 0;
+    cursor_shape[0] = 6; cursor_shape[1] = 7;
+    int row, col;
+    vga_get_cursor(&row, &col);
+    unsigned position = row*80+col;
+    cursor_address[0] = position>>8; cursor_address[1] = position;
     filesystem = fs ? *fs : (dos_filesystem_t){0, 0, 'D'};
     for (unsigned i = 0; i < 8; i++) files[i].used = 0;
     dta_seg = DOS_PSP; dta_off = 0x80; pending_scan = 0;
@@ -41,6 +89,12 @@ void dos_services_init(const dos_filesystem_t *fs) {
         stubs[n*4] = 0xCD; stubs[n*4+1] = n;
         stubs[n*4+2] = 0xCF; stubs[n*4+3] = 0x90;
     }
+    uint8_t *video_caps = dos_pointer(0x1000, 0x800, 16, 1);
+    for (unsigned n = 0; n < 16; n++) video_caps[n] = 0;
+    video_caps[0] = 8; /* only mode 3, not the host's graphics capabilities */
+    video_caps[7] = 4; /* 400 text scan lines */
+    video_caps[8] = video_caps[9] = 1;
+    video_caps[11] = 8; /* display combination query */
 }
 static uint8_t scan(int c) {
     switch (c) {
@@ -76,8 +130,11 @@ static int handle_index(registers_t *r) {
     return h >= 5 && h < 13 && files[h-5].used ? (int)h-5 : -1;
 }
 static void output(uint8_t c) {
-    if (c == 13) { int row, col; vga_get_cursor(&row, &col); vga_set_cursor(row, 0); }
+    if (c == 13) { int row, col; vga_get_cursor(&row, &col); text_cursor(row, 0); }
     else vga_putchar(c);
+    int row, col;
+    vga_get_cursor(&row, &col);
+    text_cursor(row, col);
 }
 static inline void outb(uint16_t p, uint8_t v) {
     __asm__ volatile("outb %0,%1" :: "a"(v), "Nd"(p));
@@ -315,7 +372,7 @@ static int int10(dos_frame_t *f) {
     case 1: return 1; /* cursor shape: retain the kernel's text cursor */
     case 2:
         if ((r->ebx&0xFF00) || ((r->edx>>8)&255)>=25 || (r->edx&255)>=80) return 0;
-        vga_set_cursor((r->edx>>8)&255, r->edx&255); return 1;
+        text_cursor((r->edx>>8)&255, r->edx&255); return 1;
     case 3:
         if (r->ebx&0xFF00) return 0;
         r->edx = (row<<8)|col; r->ecx = 0x0607; return 1;
@@ -345,27 +402,59 @@ static int int10(dos_frame_t *f) {
         return 1;
     case 14: output(al); return 1;
     case 15: set_ax(r, 0x5003); r->ebx &= 255; return 1;
+    case 0x11: {
+        uint16_t seg, off;
+        if (al != 0x30 || !dos_font_info((r->ebx>>8)&255, &seg, &off)) return 0;
+        f->ves = seg; r->ebp = off;
+        r->ecx = 16; /* BIOS reports the current text-mode character height */
+        r->edx = (r->edx&~255u)|24;
+        return 1;
+    }
+    case 0x1A:
+        if (al) { set_al(r, 0); return 1; }
+        set_al(r, 0x1A); r->ebx = 8; return 1; /* VGA color, no second display */
+    case 0x1B: {
+        if ((uint16_t)r->ebx) { set_al(r, 0); return 1; }
+        uint8_t *state = dos_pointer(f->ves, r->edi, 64, 1);
+        if (!state) { dos_stop(r, -3, "Invalid VGA state buffer."); return 1; }
+        for (unsigned i = 0; i < 64; i++) state[i] = 0;
+        wr16(state, 0x800); wr16(state+2, 0x1000);
+        state[4] = 3; wr16(state+5, 80); wr16(state+7, 4096);
+        state[11] = col; state[12] = row;
+        state[27] = cursor_shape[1]; state[28] = cursor_shape[0];
+        wr16(state+30, 0x3D4); state[34] = 25; wr16(state+35, 16);
+        state[37] = 8; wr16(state+39, 16); state[41] = 1; state[42] = 2;
+        set_al(r, 0x1B); return 1;
+    }
+    case 0xEF:
+        /* Hercules vendor probe: leave DX=FFFFh (no extension installed).
+         * Reporting VGA does not imply this optional Hercules BIOS exists. */
+        return (uint16_t)r->edx == 0xFFFF;
     default: return 0;
     }
 }
 static int dispatch_interrupt(dos_frame_t *f, uint8_t number);
+int dos_inject_interrupt(dos_frame_t *f, uint8_t number) {
+    registers_t *r = &f->r;
+    uint8_t *vector = dos_pointer(0, number*4, 4, 0);
+    uint16_t sp = (uint16_t)(r->useresp-6);
+    uint8_t *stack = sp <= 0xFFFA ? dos_pointer(r->ss, sp, 6, 1) : NULL;
+    if (!vector || !stack || !dos_pointer(rd16(vector+2), rd16(vector), 1, 0)) {
+        dos_stop(r, -3, "Invalid virtual interrupt vector or stack."); return 1;
+    }
+    wr16(stack, r->eip); wr16(stack+2, r->cs); wr16(stack+4, dos_virtual_flags(r));
+    dos_virtual_interrupts(0);
+    r->useresp = sp; r->eip = rd16(vector); r->cs = rd16(vector+2);
+    r->eflags &= ~0x100u;
+    return 1;
+}
 int dos_interrupt(dos_frame_t *f, uint8_t number) {
     registers_t *r = &f->r;
     uint8_t *vector = dos_pointer(0, number*4, 4, 0);
     uint16_t default_off = 0x200+number*4;
     if (vector && (rd16(vector) != default_off || rd16(vector+2) != 0x1000) &&
         !(r->cs == 0x1000 && r->eip == (uint32_t)default_off+2)) {
-        uint16_t sp = r->useresp;
-        if (sp < 6) { dos_stop(r, -3, "Invalid DOS interrupt stack."); return 1; }
-        uint8_t *stack = dos_pointer(r->ss, sp-6, 6, 1);
-        if (!stack || !dos_pointer(rd16(vector+2), rd16(vector), 1, 0)) {
-            dos_stop(r, -3, "Invalid DOS interrupt vector."); return 1;
-        }
-        wr16(stack, r->eip); wr16(stack+2, r->cs); wr16(stack+4, dos_virtual_flags(r));
-        dos_virtual_interrupts(0);
-        r->useresp = sp-6; r->eip = rd16(vector); r->cs = rd16(vector+2);
-        r->eflags &= ~0x100u; /* clear guest trap flag */
-        return 1;
+        return dos_inject_interrupt(f, number);
     }
     int chained = r->cs == 0x1000 && r->eip == (uint32_t)default_off+2;
     int handled = dispatch_interrupt(f, number);
@@ -384,6 +473,13 @@ int dos_interrupt(dos_frame_t *f, uint8_t number) {
 static int dispatch_interrupt(dos_frame_t *f, uint8_t number) {
     registers_t *r = &f->r;
     switch (number) {
+    case 4:
+        dos_stop(r, -3, "Unhandled DOS overflow interrupt 04h.");
+        return 1;
+    case 8:
+        dos_hardware_eoi();
+        return dos_inject_interrupt(f, 0x1C); /* BIOS timer callback */
+    case 0x1C: return 1;
     case 0x20: dos_status = 0; dos_stop(r, 0, ""); return 1;
     case 0x21: return int21(f);
     case 0x10: return int10(f);
@@ -421,6 +517,11 @@ static int dispatch_interrupt(dos_frame_t *f, uint8_t number) {
         carry(r, 0); return 1;
     }
     case 0x28: return 1; /* DOS idle */
+    case 0x2A:
+        if (((r->eax>>8)&255) == 0) {
+            r->eax &= ~0xFF00u; return 1; /* no DOS network installed */
+        }
+        return 0;
     case 0x29: output(r->eax); return 1;
     case 0x2F: /* conventional absence probes, not a DOS extender */
         if ((uint16_t)r->eax == 0x1687) { set_ax(r, 1); return 1; } /* no DPMI */
