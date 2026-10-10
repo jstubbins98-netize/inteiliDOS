@@ -143,7 +143,7 @@ set(SHELL_C_SOURCES
     shell/launchpad_dos.c
     shell/setup.c
     shell/health.c
-    still_alive_easter_egg/stillalive.c
+    want_you_gone_easter_egg/glados.c
     daisy_bell_easter_egg/daisy.c
     shell/sam/sam_phoneme.c
     shell/sam/sam_reciter.c

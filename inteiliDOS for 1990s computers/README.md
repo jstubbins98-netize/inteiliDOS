@@ -262,7 +262,7 @@ shell/                        IntelliShell and built-in applications
 shell/sam/                    SAM speech synthesizer
 tetris/                       Tetris game
 daisy_bell_easter_egg/        Daisy Bell demonstration
-still_alive_easter_egg/       Still Alive demonstration
+want_you_gone_easter_egg/     GLADOS: Want You Gone, amber-screen lyrics + MIDI
 grub/                         GRUB configurations
 cmake/                        Toolchain and binary-header helpers
 configurations/config.h       Generated target-computer hardware profile

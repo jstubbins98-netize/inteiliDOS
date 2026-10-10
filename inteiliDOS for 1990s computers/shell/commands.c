@@ -15,7 +15,7 @@
 #include "launchpad.h"
 #include "setup.h"
 #include "health.h"
-#include "../still_alive_easter_egg/stillalive.h"
+#include "../want_you_gone_easter_egg/glados.h"
 #include "../daisy_bell_easter_egg/daisy.h"
 #include "../kernel/vga.h"
 #include "../kernel/keyboard.h"
@@ -461,10 +461,10 @@ static int cmd_daisy(int argc, const char *argv[]) {
     return 0;
 }
 
-/* STILL ALIVE -- Easter egg: plays "Still Alive" through the PC speaker */
-static int cmd_stillalive(int argc, const char *argv[]) {
+/* GLADOS -- Want You Gone, black lyrics on a solid amber screen. */
+static int cmd_glados(int argc, const char *argv[]) {
     (void)argc; (void)argv;
-    stillalive_play();
+    glados_play();
     return 0;
 }
 
@@ -1362,7 +1362,7 @@ int command_dispatch(const char *cmd, int argc, const char *argv[]) {
                                         return cmd_quit(argc, argv);
     if (kstrcmp(cmd, "SHEETS")   == 0 || kstrcmp(cmd, "ISHEETS") == 0)
                                         return cmd_sheets(argc, argv);
-    if (kstrcmp(cmd, "ALIVE")    == 0) return cmd_stillalive(argc, argv);
+    if (kstrcmp(cmd, "GLADOS")   == 0) return cmd_glados(argc, argv);
     if (kstrcmp(cmd, "DAISY")    == 0) return cmd_daisy(argc, argv);
     if (kstrcmp(cmd, "VOLUME")   == 0 || kstrcmp(cmd, "VOL")   == 0)
                                         return cmd_volume(argc, argv);
