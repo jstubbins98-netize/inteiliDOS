@@ -9,7 +9,19 @@
  */
 
 #include "loader.h"
+#include "native_api.h"
 #include <stdint.h>
+/* Optional in standalone loader fixtures; complete OS builds bind all
+ * functions. Clients validate capabilities before using this table. */
+extern int keyboard_poll(void) __attribute__((weak));
+extern uint32_t timer_get_ticks(void) __attribute__((weak));
+extern void speaker_on(uint32_t) __attribute__((weak));
+extern void speaker_off(void) __attribute__((weak));
+extern int speaker_get_volume(void) __attribute__((weak));
+static const native_api_t native_api = {
+    INTEILIDOS_API_MAGIC, INTEILIDOS_API_VERSION, sizeof(native_api_t),
+    keyboard_poll, timer_get_ticks, speaker_on, speaker_off, speaker_get_volume
+};
 
 /* =========================================================================
  * IPGM loader
@@ -55,9 +67,9 @@ int loader_exec(const uint8_t *src_buf, uint32_t size) {
      * the kernel (CS=0x08, DS/SS=0x10, no paging).  It returns here when
      * it exits.
      */
-    typedef void (*entry_fn_t)(void);
+    typedef void (*entry_fn_t)(const native_api_t *);
     entry_fn_t entry = (entry_fn_t)(void *)entry_phys;
-    entry();
+    entry(&native_api);
 
     return 0;
 }
@@ -165,8 +177,8 @@ int loader_exec_elf(const uint8_t *file_buf, uint32_t size) {
     }
 
     /* ── Transfer control to e_entry ───────────────────────────────────── */
-    typedef void (*entry_fn_t)(void);
+    typedef void (*entry_fn_t)(const native_api_t *);
     entry_fn_t fn = (entry_fn_t)(void *)(uintptr_t)entry;
-    fn();
+    fn(&native_api);
     return 0;
 }

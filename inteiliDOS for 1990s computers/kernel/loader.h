@@ -26,7 +26,8 @@
  *   are therefore identical.  Link programs at 0x00500000 or above to stay
  *   clear of the kernel.
  *
- * Entry convention (both formats): void entry(void)
+ * Entry convention: void entry(const native_api_t *api), see native_api.h.
+ * Legacy void entry(void) remains compatible (the argument is ignored).
  *   Returns to LaunchPad when done.
  */
 
