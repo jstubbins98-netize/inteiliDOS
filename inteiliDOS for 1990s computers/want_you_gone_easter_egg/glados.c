@@ -71,7 +71,8 @@ void glados_play(void) {
             unsigned wanted=age>=s->typing_ms ? s->len :
                 (age*s->len)/s->typing_ms+1;
             if (wanted>s->len) wanted=s->len;
-            while (printed<wanted) {
+            /* Metadata bounds the schedule; the terminator bounds the text. */
+            while (printed<wanted && s->text[printed]!='\0') {
                 char c=s->text[printed++];
                 if (c=='\n') { row++;col=s->col; }
                 else SCREEN[row*80+col++]=AMBER|(uint8_t)c;
