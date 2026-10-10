@@ -141,7 +141,7 @@ image.
 ### Build command
 
 ```bash
-cd "inteiliDOS for 1990s computers"
+# Run from the inteiliDOS source directory.
 ./build.sh
 ```
 
@@ -226,9 +226,9 @@ low speed.
 The GRUB menu contains:
 
 ```text
-inteiliDOS for 1990s Computers
-inteiliDOS for 1990s Computers — Recovery
-inteiliDOS for 1990s Computers — Install to IDE HDD
+inteiliDOS
+inteiliDOS — Recovery
+inteiliDOS — Install to IDE HDD
 ```
 
 ## Boot and memory behavior
