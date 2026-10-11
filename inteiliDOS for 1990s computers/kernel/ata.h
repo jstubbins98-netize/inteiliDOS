@@ -92,5 +92,9 @@ int  ata_read_sector(uint8_t drive_index, uint32_t lba, uint8_t *buf);
  *   Returns 0 on success, -1 on error.
  */
 int  ata_write_sector(uint8_t drive_index, uint32_t lba, const uint8_t *buf);
+/* Diagnostic for the last failed write; meaningful when a write returned -1. */
+const char *ata_last_write_failure(void);
+/* Zero a bounds-checked extent; batch PATA transfers/flushes for image setup. */
+int ata_zero_sectors(uint8_t drive_index, uint32_t lba, uint32_t count);
 
 #endif /* ATA_H */

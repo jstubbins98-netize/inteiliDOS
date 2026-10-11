@@ -721,6 +721,19 @@ static void lp_do_load(int src, int sel, const cdrom_drive_t *drives) {
     int is_com = !is_ipgm && !is_elf && !is_mz && lp_ext_eq(lp_ext(f->name), "COM");
     int is_dos = !is_ipgm && !is_elf && (is_com || is_mz);
 
+    if (is_dos) {
+        lp_dlg_line(DLG_R0 + 12, 1, "DOS programs now run inside the MS-DOS 6.22 emulator.",
+                    VGA_COLOR_LIGHT_GREEN, 65);
+        lp_dlg_line(DLG_R0 + 13, 1, "Return to inteiliShell and type MS-DOS.",
+                    VGA_COLOR_WHITE, 65);
+        lp_dlg_line(DLG_R0 + 14, 1, "F7 mounts the real floppy as A:; install onto virtual C:.",
+                    VGA_COLOR_DARK_GREY, 65);
+        lp_dlg_line(DLG_R0 + 15, 1, "F8 exits DOS. Press any key to return.",
+                    VGA_COLOR_DARK_GREY, 65);
+        keyboard_getchar();
+        return;
+    }
+
     if (!is_ipgm && !is_elf && !is_dos) {
         lp_dlg_line(DLG_R0 + 12, 1,
                     "Not an IPGM, ELF, DOS COM, or DOS MZ executable.",
@@ -761,15 +774,7 @@ static void lp_do_load(int src, int sel, const cdrom_drive_t *drives) {
     } else if (is_elf) {
         rc = loader_exec_elf(lp_load_buf, (uint32_t)bytes);
     } else {
-        char directory[LP_DIR_DEPTH*(ISO9660_NAME_MAX+1)+2];
-        lp_build_path(directory, sizeof(directory));
-        rc = dos_exec(lp_load_buf, (uint32_t)bytes, is_com,
-                      launchpad_dos_source(src, directory));
-        if (!rc) {
-            vga_printf("\nDOS program ended (exit code %u). Press any key.\n",
-                       (unsigned)dos_exit_code());
-            keyboard_getchar();
-        }
+        rc = -1; /* DOS formats are redirected above; never invoke old v86. */
     }
 
     /* Program has returned — redraw will happen in the main loop. */

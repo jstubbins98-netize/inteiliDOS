@@ -23,6 +23,7 @@
 #include "../kernel/timer.h"
 #include "../kernel/cdrom.h"
 #include "../kernel/ata.h"
+#include "../kernel/msdos/msdos.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -170,6 +171,7 @@ static int cmd_help(int argc, const char *argv[]) {
     println("  VOLUME [0-100%%] - Get or set PC speaker volume (default 50%%)");
     println("  DEMO     - inteiliDOS feature showcase");
     println("  HEALTH   - Live System Health / Disk Health / System Info");
+    println("  MS-DOS   - MS-DOS 6.22 emulator; persistent C: drive; F8 returns here");
 
     /* Games */
     vga_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
@@ -1049,8 +1051,10 @@ static int cmd_run(int argc, const char *argv[]) {
     if (argc < 1) { println("Usage: RUN [/DOS] <program>"); return 1; }
     int dos_compat = (kstrcmp(argv[0], "/DOS") == 0 || kstrcmp(argv[0], "/dos") == 0);
     const char *prog = dos_compat && argc > 1 ? argv[1] : argv[0];
-    if (dos_compat)
-        vga_printf("Launching '%s' in DOS compatibility layer...\n", prog);
+    if (dos_compat) {
+        println("DOS programs now run inside MS-DOS. Type MS-DOS to enter.");
+        return 1;
+    }
     else
         vga_printf("Launching '%s'...\n", prog);
     println("(Process management requires scheduler)");
@@ -1317,6 +1321,7 @@ int nlp_translate(const char *input, char *out, int out_len) {
  * Command dispatcher
  * ========================================================================= */
 int command_dispatch(const char *cmd, int argc, const char *argv[]) {
+    if (kstrcmp(cmd, "MS-DOS") == 0) return msdos_run(argc,argv);
     if (kstrcmp(cmd, "DIR")      == 0) return cmd_dir(argc, argv);
     if (kstrcmp(cmd, "LS")       == 0) return cmd_dir(argc, argv);
     if (kstrcmp(cmd, "CD")       == 0) return cmd_cd(argc, argv);

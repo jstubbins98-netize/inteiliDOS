@@ -1316,7 +1316,7 @@ static void do_save(void) {
     basic_ensure_txt(fn, (int)sizeof(fn));
 
     /* Step 2 — device */
-    bputs("Save to: [1] Internal HDD (C:\\)  [2] External device (D:\\)  [Esc] Cancel: ");
+    bputs("Save to: [1] Internal HDD (C:\\)  [2] Other native HDD (D:\\)  [Esc] Cancel: ");
     int choice = 0;
     for (;;) {
         int c = keyboard_getchar();
@@ -1348,9 +1348,9 @@ static void do_save(void) {
         if (bp < BASIC_SAVE_BUF - 1) basic_save_buf[bp++] = '\n';
     }
 
-    /* Step 4 — write to ATA drive */
+    /* Step 4 — write to logical native volume */
     uint8_t drv = (uint8_t)(choice - 1);
-    int rc = fs_write(drv, fn, basic_save_buf, bp);
+    int rc = fs_volume_write(drv, fn, basic_save_buf, bp);
 
     /* Step 5 — result */
     vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
@@ -1368,7 +1368,9 @@ static void do_save(void) {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         bputs("Save failed: ");
         bputs((rc == FS_ERR_NODRV) ? "no drive found." :
-              (rc == FS_ERR_FULL)  ? "disk directory full." :
+              (rc == FS_ERR_FULL)  ? "native storage full." :
+              (rc == FS_ERR_LAYOUT) ? "unsafe disk layout; back up first." :
+              (rc == FS_ERR_NODIR) ? "no native directory; disk unchanged." :
               (rc == FS_ERR_BIG)   ? "file too large." :
                                      "disk I/O error.");
         bputc('\n');
@@ -1392,7 +1394,7 @@ static void do_load(void) {
     basic_ensure_txt(fn, (int)sizeof(fn));
 
     /* Step 2 — device */
-    bputs("Load from: [1] Internal HDD (C:\\)  [2] External device (D:\\)  [Esc] Cancel: ");
+    bputs("Load from: [1] Internal HDD (C:\\)  [2] Other native HDD (D:\\)  [Esc] Cancel: ");
     int choice = 0;
     for (;;) {
         int c = keyboard_getchar();
@@ -1405,7 +1407,7 @@ static void do_load(void) {
     /* Step 3 — read from ATA */
     uint8_t drv = (uint8_t)(choice - 1);
     uint32_t read_len = 0;
-    int rc = fs_read(drv, fn, basic_save_buf, BASIC_SAVE_BUF - 1, &read_len);
+    int rc = fs_volume_read(drv, fn, basic_save_buf, BASIC_SAVE_BUF - 1, &read_len);
 
     if (rc != FS_OK) {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
@@ -1630,11 +1632,14 @@ static void do_csave(void) {
 
     /* ── Step 3: write WAV to C:\CASSETTE.WAV ───────────────────────── */
     if (wav_ok) {
-        rc = fs_write(0u, "CASSETTE.WAV", g_cass_wav, g_cass_pos);
+        rc = fs_volume_write(0u, "CASSETTE.WAV", g_cass_wav, g_cass_pos);
         if (rc != FS_OK) {
             vga_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
             bputs("  [warn] Could not write CASSETTE.WAV to HDD (");
-            bputs((rc == FS_ERR_FULL) ? "dir full" :
+            bputs((rc == FS_ERR_NODRV) ? "no native drive found" :
+                  (rc == FS_ERR_FULL) ? "native storage full" :
+                  (rc == FS_ERR_LAYOUT) ? "unsafe layout; back up first" :
+                  (rc == FS_ERR_NODIR) ? "no native directory; disk unchanged" :
                   (rc == FS_ERR_BIG)  ? "file too large" : "I/O error");
             bputs(") -- speaker playback will continue.\n");
             vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
@@ -1709,7 +1714,7 @@ static void do_csave(void) {
          * This frees the logical entry; the next write to the same name
          * will overwrite it.                                              */
         uint8_t zero = 0u;
-        fs_write(0u, "CASSETTE.WAV", &zero, 1u);
+        fs_volume_write(0u, "CASSETTE.WAV", &zero, 1u);
         bputs("  CASSETTE.WAV erased.\n");
     }
 

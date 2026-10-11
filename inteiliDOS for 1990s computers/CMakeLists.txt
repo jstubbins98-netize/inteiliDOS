@@ -127,6 +127,9 @@ set(KERNEL_C_SOURCES
     kernel/dos.c
     kernel/dos_services.c
     kernel/dos_hardware.c
+    kernel/msdos/tiny.c
+    kernel/msdos/platform.c
+    kernel/msdos/devices.c
 )
 
 set(SHELL_C_SOURCES
@@ -342,12 +345,28 @@ else() # BUILD_TARGET == "universal"
     set(GRUB_DIR_LEG ${ISO_DIR_LEG}/boot/grub)
     set(KERNEL_ISO   ${CMAKE_CURRENT_BINARY_DIR}/inteiliDOS_1990s.iso)
 
+    # DOS media stay out of the linked kernel (and LaunchPad staging memory).
+    # A downloaded source folder can point this at its own licensed DOS disks.
+    set(MSDOS_DISK_DIR "${CMAKE_SOURCE_DIR}/../attached_assets" CACHE PATH
+        "Folder containing user-supplied MS-DOS 6.22 Disk1/2/3/Suppdisk images")
+    file(GLOB MSDOS_DISKS "${MSDOS_DISK_DIR}/*.img" "${MSDOS_DISK_DIR}/*.IMG")
+    set(MSDOS_MEDIA_COMMAND)
+    if(MSDOS_DISKS)
+        set(MSDOS_MEDIA_COMMAND
+            COMMAND python3
+                "${CMAKE_SOURCE_DIR}/cmake/prepare_msdos622.py"
+                "${MSDOS_DISK_DIR}" "${ISO_DIR_LEG}")
+    else()
+        message(WARNING "No DOS disk images found. MS-DOS first-run setup requires -DMSDOS_DISK_DIR=/path/to/disks.")
+    endif()
+
     add_custom_command(
         OUTPUT  ${KERNEL_ISO}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${GRUB_DIR_LEG}
         COMMAND ${CMAKE_COMMAND} -E copy ${KERNEL_ELF} ${ISO_DIR_LEG}/boot/inteilidOS.elf
         COMMAND ${CMAKE_COMMAND} -E copy
                     ${CMAKE_SOURCE_DIR}/grub/grub_legacy.cfg ${GRUB_DIR_LEG}/grub.cfg
+        ${MSDOS_MEDIA_COMMAND}
         # Use only i386-pc modules — skip EFI / VESA to keep the GRUB core small
         # and compatible with old BIOSes.  biosdisk + multiboot are all we need.
         COMMAND ${GRUB_MKRESCUE}
@@ -356,6 +375,8 @@ else() # BUILD_TARGET == "universal"
                     ${ISO_DIR_LEG}
         DEPENDS ${KERNEL_ELF}
                 ${CMAKE_SOURCE_DIR}/grub/grub_legacy.cfg
+                ${CMAKE_SOURCE_DIR}/cmake/prepare_msdos622.py
+                ${MSDOS_DISKS}
         COMMENT "Building universal 1990s GRUB2 ISO: inteiliDOS_1990s.iso"
         VERBATIM
     )

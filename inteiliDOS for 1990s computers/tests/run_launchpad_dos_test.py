@@ -23,13 +23,19 @@ class Guest:
         qmp.unlink(missing_ok=True)
         cmd = ["qemu-system-i386", "-nodefaults", "-device", "VGA",
                "-machine", "pc", "-cpu", "486", "-m", "16",
-               "-kernel", str(kernel), "-display", "none", "-no-reboot",
+               "-display", "none", "-no-reboot",
                "-qmp", "unix:"+str(qmp)+",server=on,wait=off"]
+        # None deliberately exercises BIOS -> installed MBR/VBR, without the
+        # QEMU Multiboot loader. Existing callers retain their direct loader.
+        if kernel is not None:
+            cmd += ["-kernel", str(kernel)]
         cmd.extend(extra_args)
         # Keep default emulated VGA and PS/2; do not introduce a default CD
         # when testing floppy-only LaunchPad source selection.
-        cmd += ["-drive", "file="+str(media)+(",if=floppy,format=raw" if floppy
-                                             else ",if=ide,index=0,media=cdrom")]
+        if media is not None:
+            cmd += ["-drive", "file="+str(media)+(",if=floppy,format=raw" if floppy
+                                                 else ",if=ide,index=0,media=cdrom")]
+        self.argv = tuple(cmd)
         self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         self.sock = socket.socket(socket.AF_UNIX)
         deadline = time.monotonic()+10

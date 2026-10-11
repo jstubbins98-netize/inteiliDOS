@@ -1,0 +1,192 @@
+inteiliDOS SYSTEM REQUIREMENTS
+============================
+
+This file separates the requirements for:
+  1. Running inteiliDOS and its native applications.
+  2. Running inteiliDOS with the built-in MS-DOS 6.22 emulator.
+
+These are requirements for the target computer, not the computer used to compile the source. MiB means 1,048,576 bytes.
+
+
+1. inteiliDOS WITHOUT THE MS-DOS EMULATOR
+----------------------------------------
+
+CPU
+  Intel 80386-compatible or newer, with 32-bit protected mode.
+  A 486 or Pentium-class PC is recommended for a more comfortable experience.
+  An 8086, 80186, or 80286 cannot run the native operating system.
+  CPUID, MMX, SSE, hardware virtualization, and a floating-point unit are not
+  required for the core OS.
+
+RAM
+  Configure at least 8 MiB for the current full build.
+  Recommended: 16 MiB or more.
+  Individual native games, demos, and other programs may need additional RAM.
+
+  Older compatibility documents list a 4 MiB architectural baseline. The
+  current full kernel includes static buffers and a heap extending above
+  the 4 MiB boundary, so do not assume that the current full image will run
+  on a 4 MiB machine. Exact memory use depends on the build/profile.
+
+Firmware and motherboard
+  PC-compatible legacy BIOS, dual 8259 interrupt controllers, an 8253/8254
+  programmable interval timer, and a standard PC-compatible keyboard controller.
+  UEFI-only machines without legacy BIOS compatibility are not a supported
+  boot target.
+
+Display
+  VGA-compatible display adapter and monitor.
+  The core interface uses 80-column by 25-row color text mode.
+  Some native games/demos have their own graphics requirements.
+
+Keyboard
+  AT/PS/2-compatible keyboard through an 8042-compatible controller.
+  Do not rely on a USB-only keyboard unless the machine provides compatible
+  legacy keyboard support.
+
+Boot media
+  Either a BIOS-bootable CD-ROM using the inteiliDOS/GRUB ISO, or the raw
+  standard 1.44 MB floppy boot image with a compatible controller and drive.
+  Booting the ISO does not, by itself, require a writable HDD.
+
+  Booting an installed HDD additionally requires the BIOS extended INT 13h
+  disk-read services used by the current MBR and volume boot loader. Native
+  CHS IDE support does not remove this separate boot-loader requirement.
+
+HDD and persistent storage
+  A supported, writable ATA/IDE HDD is needed for HDD installation and
+  persistent native files. Standard primary/secondary IDE ports are supported;
+  PCI-native IDE and AHCI require the appropriate enabled hardware profile.
+  Small CHS-only IDE disks are supported, as are supported LBA IDE disks.
+  SCSI and proprietary storage interfaces are not native HDD requirements
+  that can simply be substituted for IDE.
+
+  A 10 MiB IDE HDD can hold a clean native installation and small native files.
+  Recommended: 32 MiB or larger for useful room for native files/programs.
+  Setup needs space for alignment, boot code, the reserved kernel/configuration
+  area, directory, and file data. A dual-boot installation needs an empty
+  primary partition slot and enough unallocated space after existing partitions;
+  free space inside another OS's filesystem is not sufficient.
+
+  Runtime writes require a valid, safely bounded native storage layout.
+  Older installed layouts may need a separately approved, backup-safe migration.
+  "Erase drive and install" is destructive and removes the selected disk's
+  existing partitions/files.
+
+Optional hardware
+  A PC speaker is needed to hear speaker-based music and speech.
+  A sound card and network adapter are not required to boot the core OS.
+  Network, recording, and other hardware-dependent features need their own
+  supported controllers and enabled build options.
+
+
+2. inteiliDOS WITH THE MS-DOS 6.22 EMULATOR
+-----------------------------------------
+
+All native requirements above still apply. The emulator is a program inside
+inteiliDOS; it does not replace the native OS or boot the physical PC into DOS.
+
+Host CPU
+  The same 80386-compatible baseline applies.
+  Recommended: a 486, Pentium, or faster compatible CPU.
+  Software interpretation can be slow on early processors. Historical timing
+  and full-speed playback are not guaranteed merely by selecting a CPU model.
+  No VM86 hardware execution or hardware virtualization is required.
+
+Host RAM
+  Meet the native full-build requirements and leave about 1.1 MiB of the
+  kernel heap available for private guest RAM, plus emulator working space.
+  Practical recommended configuration: 16 MiB or more.
+  32 MiB is a comfortable starting point for an emulator PC profile.
+  Extra physical RAM does not provide the DOS guest with EMS or XMS.
+
+Host HDD space
+  The persistent virtual DOS HDD requires exactly 32,760 sectors of 512 bytes:
+    16,773,120 bytes, or approximately 16 MiB.
+  This much allocatable space must be available in a safe native filesystem,
+  in addition to native boot/kernel/configuration storage and existing files.
+  One free native directory entry is also required.
+
+  Recommended total physical/virtual IDE HDD size: at least 32 MiB.
+  A 64 MiB or larger disk leaves more room for native files and applications.
+  A 10 MiB HDD is too small for the DOS virtual HDD, even though native
+  inteiliDOS itself can be installed on it.
+
+  DOS C: is stored in the native file MSDOS622.HDD. It is not a physical DOS
+  partition and does not require formatting the physical HDD as FAT16.
+  A larger host HDD does not automatically enlarge the approximately 16 MiB
+  DOS C: volume. DOS programs and their data must fit inside that volume.
+  Files installed there persist across emulator sessions and host reboots.
+
+DOS installation media
+  First-time creation requires a valid MS-DOS 6.22 Disk 1 image on the OS CD.
+  Build the ISO with the supplied Disk 1, Disk 2, Disk 3, and supplemental
+  images. Their ISO-root names are:
+    D6221.IMG    Disk 1
+    D6222.IMG    Disk 2
+    D6223.IMG    Disk 3
+    D622S.IMG    Supplemental disk
+
+  Keep that CD inserted for first launch and whenever using its floppy images.
+  An already initialized DOS HDD can boot without the installation CD.
+  MS-DOS 4.0 source is not a substitute for these MS-DOS 6.22 system files.
+
+Requirements for DOS programs
+  Programs must be compatible with an 8086/80186-class DOS guest and its
+  640 KiB conventional memory.
+  Supported output includes text, CGA/Hercules graphics, and PC-speaker sound.
+  A host PC speaker is needed for audible guest speaker output.
+  The native VGA adapter renders supported guest graphics.
+
+  Currently unsupported:
+    - 286/386 protected-mode programs, DOS extenders, and DPMI.
+    - EMS/XMS memory managers and x87 floating-point instructions.
+    - EGA/VGA-specific graphics and Sound Blaster/other sound-card audio.
+    - DOS networking and DOS CD-ROM/MSCDEX drivers.
+    - Windows NE/LE/LX/PE executables.
+
+  A faster host CPU, more host RAM, or a modern host video/sound card does not
+  add these missing emulated features. Check each DOS game's requirements.
+
+Program media and controls
+  Start from inteiliShell with: MS-DOS
+  Mount a CD-root floppy image with: MS-DOS /IMAGE GAME.IMG
+  Supported game floppy-image sizes: 720 KiB or standard 1.44 MB.
+  A "1.44 MB" floppy image contains 1,474,560 bytes (1,440 KiB).
+  The CD used by /IMAGE must also contain D6221.IMG for current CD discovery.
+
+  DOS A: is read-only. Supply programs through mounted floppy images or a
+  physical 1.44 MB floppy, then copy/install them onto DOS C:.
+  DOS does not see the host CD as a DOS D: drive.
+  F6 cycles the supplied DOS disks; F7 selects the physical floppy as A:.
+  F8 stops the emulator and returns to inteiliShell.
+  Save and close files first: F8 is not a DOS application save command, and
+  interrupting pending writes can damage the private DOS filesystem.
+
+
+3. SUGGESTED 86Box CONFIGURATIONS
+--------------------------------
+
+Native inteiliDOS
+  386/486 PC-compatible machine; preferably a 486.
+  16 MiB RAM, VGA, compatible keyboard, and a 32 MiB or larger IDE HDD.
+  IDE/ATAPI CD-ROM with the newly rebuilt boot ISO, or supported floppy boot.
+
+inteiliDOS plus MS-DOS
+  486/Pentium-class machine, 32 MiB RAM, VGA, compatible keyboard,
+  PC speaker enabled, and a 32 MiB or larger IDE HDD (64 MiB recommended).
+  IDE/ATAPI CD-ROM containing the rebuilt ISO and DOS installation images.
+  Remember that the software guest remains an 8086/80186-class PC.
+
+Match Willburd's build-time hardware profile to the selected emulator machine.
+Select an IDE/ATAPI CD-ROM, not a SCSI or proprietary CD-ROM interface.
+After a driver/source update, rebuild the ISO and replace the old boot image.
+Different 86Box BIOS/controller combinations may behave differently; these
+profiles are recommendations, not a claim that every combination was tested.
+
+
+Further details
+  COMPATIBILITY.md       Native hardware interfaces and boundaries
+  NATIVE_STORAGE.md      Disk layout, persistence, and migration safety
+  DOS_COMPATIBILITY.md  DOS setup, controls, and software compatibility
+  for_developers.md      Implementation details

@@ -16,9 +16,9 @@
  *   Our polling loop (pata_wait_busy / pata_wait_drq) with the 400 ns
  *   I/O delay (pata_delay reads alt-status 4×) is sufficient for any
  *   UDMA/PIO-capable drive of the era (IBM Deskstar, Seagate Medalist, etc.).
- *   Each ata_write_sector call issues ATA_CMD_FLUSH (0xE7) and waits for
- *   BSY to clear before returning, ensuring data is committed to platter
- *   media before the installer reports success.
+ *   Writes use FLUSH CACHE only when advertised by IDENTIFY. Legacy drives
+ *   without it must have their write cache disabled before writing; rejected
+ *   cache-disable commands are errors, not permission to claim durability.
  *
  * PATA path  — polling PIO via legacy I/O ports 0x1F0 / 0x170.
  *              Drives 0-3 (primary master/slave, secondary master/slave).
@@ -38,12 +38,16 @@
 
 #include "ata.h"
 #include "pci.h"
+#include "timer.h"
 #include <stdint.h>
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Shared I/O helpers
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+#ifdef ATA_TEST_IO
+#include "../tests/ata_test_io.h"
+#else
 static inline void outb(uint16_t port, uint8_t val) {
     __asm__ volatile ("outb %0,%1" :: "a"(val), "Nd"(port));
 }
@@ -60,6 +64,7 @@ static inline uint16_t inw(uint16_t port) {
 static inline void outw(uint16_t port, uint16_t val) {
     __asm__ volatile ("outw %0,%1" :: "a"(val), "Nd"(port));
 }
+#endif
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Module-level drive table
@@ -68,6 +73,9 @@ static inline void outw(uint16_t port, uint16_t val) {
 
 static ata_drive_t g_drives[ATA_MAX_DRIVES];
 static uint8_t smart_flags[4];
+static uint8_t flush_command[4], cache_needs_disable[4];
+static const char *write_failure = "Disk unavailable or address invalid.";
+const char *ata_last_write_failure(void) { return write_failure; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * PATA/IDE — legacy port I/O path
@@ -82,6 +90,8 @@ static uint8_t smart_flags[4];
 static uint16_t g_ata_base[4] = { 0x1F0, 0x1F0, 0x170, 0x170 };
 static uint16_t g_ata_ctrl[4] = { 0x3F6, 0x3F6, 0x376, 0x376 };
 static const uint8_t ATA_SLAVE[4] = { 0, 1, 0, 1 };
+static uint16_t chs_cylinders[4];
+static uint8_t chs_heads[4], chs_sectors[4], chs_only[4];
 
 /* ATA status bits */
 #define ATA_SR_BSY  0x80
@@ -93,6 +103,8 @@ static const uint8_t ATA_SLAVE[4] = { 0, 1, 0, 1 };
 #define ATA_CMD_READ     0x20
 #define ATA_CMD_WRITE    0x30
 #define ATA_CMD_FLUSH    0xE7
+#define ATA_CMD_FLUSH_EXT 0xEA
+#define ATA_CMD_SET_FEATURES 0xEF
 #define ATA_CMD_IDENTIFY 0xEC
 
 /* IDENTIFY word offsets */
@@ -111,17 +123,26 @@ static inline void pata_delay(uint8_t d) {
 
 /* Wait for BSY to clear.  Returns 0 OK, -1 timeout. */
 static int pata_wait_busy(uint8_t d) {
-    for (uint32_t t = 0; t < 100000; t++)
+    uint32_t start = timer_get_ticks();
+    /* A loop count alone is not a disk deadline, especially during thousands
+     * of cache flushes. Keep a spin cap for pre-timer/interrupt-disabled calls. */
+    for (uint32_t t = 0; t < 20000000; t++) {
         if (!(inb(g_ata_base[d] + 7) & ATA_SR_BSY)) return 0;
+        if ((uint32_t)(timer_get_ticks() - start) >= 1000) break;
+    }
     return -1;
 }
 
 /* Wait for DRQ (BSY clear, DRQ set).  Returns 0 OK, -1 error/timeout. */
 static int pata_wait_drq(uint8_t d) {
-    for (uint32_t t = 0; t < 100000; t++) {
+    uint32_t start = timer_get_ticks();
+    for (uint32_t t = 0; t < 20000000; t++) {
         uint8_t s = inb(g_ata_base[d] + 7);
-        if (s & (ATA_SR_ERR | ATA_SR_DF)) return -1;
-        if (!(s & ATA_SR_BSY) && (s & ATA_SR_DRQ)) return 0;
+        if (!(s & ATA_SR_BSY)) {
+            if (s & (ATA_SR_ERR | ATA_SR_DF)) return -1;
+            if (s & ATA_SR_DRQ) return 0;
+        }
+        if ((uint32_t)(timer_get_ticks() - start) >= 1000) break;
     }
     return -1;
 }
@@ -129,12 +150,61 @@ static int pata_wait_drq(uint8_t d) {
 /* Select drive and load LBA[27:24] into drive/head register. */
 static void pata_select(uint8_t d, uint8_t lba_hi4) {
     outb(g_ata_base[d] + 6,
-         (uint8_t)(0xE0 | (ATA_SLAVE[d] << 4) | (lba_hi4 & 0x0F)));
+         (uint8_t)((chs_only[d] ? 0xA0 : 0xE0) |
+                   (ATA_SLAVE[d] << 4) | (lba_hi4 & 0x0F)));
     pata_delay(d);
+}
+
+/* The public API uses sector indices for both addressing modes. A CHS drive
+ * must receive one-based sector numbers and the head/cylinder task file,
+ * not an LBA-mode command with its capacity merely guessed from geometry. */
+static int pata_address(uint8_t d, uint32_t sector, uint8_t count) {
+    if (!count || sector >= g_drives[d].total_sectors ||
+        count > g_drives[d].total_sectors-sector) return -1;
+    uint8_t number, low, high, head;
+    if (chs_only[d]) {
+        if (!chs_heads[d] || !chs_sectors[d]) return -1;
+        uint32_t track=sector/chs_sectors[d];
+        uint32_t cylinder=track/chs_heads[d];
+        if (cylinder>=chs_cylinders[d]) return -1;
+        head=(uint8_t)(track%chs_heads[d]);
+        number=(uint8_t)(sector%chs_sectors[d]+1);
+        low=(uint8_t)cylinder; high=(uint8_t)(cylinder>>8);
+    } else {
+        if (sector>=0x10000000u || count>0x10000000u-sector) return -1;
+        head=(uint8_t)(sector>>24);
+        number=(uint8_t)sector;low=(uint8_t)(sector>>8);high=(uint8_t)(sector>>16);
+    }
+    if (pata_wait_busy(d)) return -1;
+    pata_select(d,head);
+    if (pata_wait_busy(d)) return -1;
+    outb(g_ata_base[d]+1,0);
+    outb(g_ata_base[d]+2,count);
+    outb(g_ata_base[d]+3,number);
+    outb(g_ata_base[d]+4,low);
+    outb(g_ata_base[d]+5,high);
+    return 0;
+}
+
+static int pata_geometry_valid(uint16_t cylinders, uint16_t heads, uint16_t sectors) {
+    return cylinders && heads && heads<=16 && sectors && sectors<=255;
 }
 
 /* Extract model string and sector count from a 256-word IDENTIFY buffer. */
 static void pata_parse_identify(uint16_t *id, ata_drive_t *out) {
+    if (out->drive_index < 4) {
+        unsigned d=out->drive_index;
+        /* Words 82/83 are only valid when word 83 bits 15:14 are 01.
+         * Older ATA IDENTIFY blocks often leave these words zero. Do not
+         * interpret reserved/FFFF words as advertised flush support. */
+        int valid=(id[83]&0xc000)==0x4000;
+        flush_command[d]=valid && (id[83]&(1u<<12)) ? ATA_CMD_FLUSH :
+                         valid && (id[83]&(1u<<13)) ? ATA_CMD_FLUSH_EXT : 0;
+        /* For legacy/unknown capability blocks, explicitly request uncached
+         * writes too. Never assume a zero/reserved enabled word proves safety. */
+        cache_needs_disable[d]=!flush_command[d] &&
+            (!valid || (id[87]&0xc000)!=0x4000 || (id[85]&(1u<<5)));
+    }
     if (out->drive_index < 4)
         smart_flags[out->drive_index] = id[82] != 0xFFFF && (id[82]&1) ?
                                        (uint8_t)(1 | ((id[85]&1) ? 2 : 0)) : 0;
@@ -148,12 +218,38 @@ static void pata_parse_identify(uint16_t *id, ata_drive_t *out) {
     for (int i = 39; i >= 0 && out->model[i] == ' '; i--)
         out->model[i] = '\0';
 
-    /* Prefer LBA48 sector count; fall back to LBA28 */
-    uint32_t lba48_lo = (uint32_t)id[ID_LBA48_SECTS_0]
-                      | ((uint32_t)id[ID_LBA48_SECTS_1] << 16);
-    uint32_t lba28    = (uint32_t)id[ID_LBA28_SECTS_LO]
-                      | ((uint32_t)id[ID_LBA28_SECTS_HI] << 16);
-    out->total_sectors = (lba48_lo > lba28) ? lba48_lo : lba28;
+    /* Reserved capacity words on older ATA devices are not LBA counts.
+     * Prefer advertised LBA48/LBA28, bounded to our actual command width. */
+    /* Both PATA and AHCI issue 28-bit READ/WRITE SECTORS commands. */
+    uint32_t limit=0x10000000u;
+    uint32_t lba28=(uint32_t)id[60] | ((uint32_t)id[61]<<16);
+    uint64_t lba48=(uint64_t)id[100] | ((uint64_t)id[101]<<16) |
+                   ((uint64_t)id[102]<<32);
+    out->total_sectors=0;
+    if ((id[49]&(1u<<9)) && (id[83]&0xc400)==0x4400 && !id[103] && lba48)
+        out->total_sectors=lba48>limit ? limit : (uint32_t)lba48;
+    else if ((id[49]&(1u<<9)) && lba28 && lba28<=0x10000000u)
+        out->total_sectors=lba28;
+
+    if (out->drive_index<4) {
+        unsigned d=out->drive_index;
+        chs_only[d]=!out->total_sectors;
+        chs_cylinders[d]=0;chs_heads[d]=chs_sectors[d]=0;
+        if (chs_only[d]) {
+            uint16_t c=id[1],h=id[3],s=id[6];
+            if ((id[53]&1) && pata_geometry_valid(id[54],id[55],id[56])) {
+                c=id[54];h=id[55];s=id[56];
+            }
+            if (pata_geometry_valid(c,h,s)) {
+                chs_cylinders[d]=c;chs_heads[d]=(uint8_t)h;chs_sectors[d]=(uint8_t)s;
+                out->total_sectors=(uint32_t)c*h*s;
+                /* Respect a smaller advertised current-translation capacity. */
+                uint32_t current=(uint32_t)id[57] | ((uint32_t)id[58]<<16);
+                if ((id[53]&1) && c==id[54] && h==id[55] && s==id[56] &&
+                    current && current<out->total_sectors) out->total_sectors=current;
+            }
+        }
+    }
 }
 
 /*
@@ -329,14 +425,7 @@ static int pata_detect(void) {
 
 /* PATA read — called from ata_read_sector when drive_type == ATA_TYPE_PATA */
 static int pata_read(uint8_t d, uint32_t lba, uint8_t *buf) {
-    if (pata_wait_busy(d) < 0) return -1;
-    pata_select(d, (uint8_t)(lba >> 24));
-    if (pata_wait_busy(d) < 0) return -1;   /* wait again after drive select */
-    outb(g_ata_base[d] + 1, 0x00);
-    outb(g_ata_base[d] + 2, 1);
-    outb(g_ata_base[d] + 3, (uint8_t)(lba & 0xFF));
-    outb(g_ata_base[d] + 4, (uint8_t)((lba >>  8) & 0xFF));
-    outb(g_ata_base[d] + 5, (uint8_t)((lba >> 16) & 0xFF));
+    if (pata_address(d,lba,1)) return -1;
     outb(g_ata_base[d] + 7, ATA_CMD_READ);
     if (pata_wait_drq(d) < 0) return -1;
     uint16_t *w = (uint16_t *)buf;
@@ -345,22 +434,61 @@ static int pata_read(uint8_t d, uint32_t lba, uint8_t *buf) {
 }
 
 /* PATA write — called from ata_write_sector when drive_type == ATA_TYPE_PATA */
-static int pata_write(uint8_t d, uint32_t lba, const uint8_t *buf) {
+static int pata_prepare_write(uint8_t d) {
+    write_failure="ATA drive-select timeout.";
     if (pata_wait_busy(d) < 0) return -1;
-    pata_select(d, (uint8_t)(lba >> 24));
-    if (pata_wait_busy(d) < 0) return -1;   /* wait again after drive select */
-    outb(g_ata_base[d] + 1, 0x00);
-    outb(g_ata_base[d] + 2, 1);
-    outb(g_ata_base[d] + 3, (uint8_t)(lba & 0xFF));
-    outb(g_ata_base[d] + 4, (uint8_t)((lba >>  8) & 0xFF));
-    outb(g_ata_base[d] + 5, (uint8_t)((lba >> 16) & 0xFF));
+    pata_select(d,0);
+    if (pata_wait_busy(d) < 0) return -1;
+    if (!cache_needs_disable[d]) return 0;
+    /* ATA SET FEATURES/82h predates FLUSH CACHE. Do this before writing the
+     * MBR (or any other data), not as a fallback after a failed flush. */
+    write_failure="Drive rejected uncached writes; no data written.";
+    outb(g_ata_base[d]+1,0x82);
+    outb(g_ata_base[d]+7,ATA_CMD_SET_FEATURES);
+    pata_delay(d);
+    if (pata_wait_busy(d) < 0 ||
+        (inb(g_ata_base[d]+7)&(ATA_SR_ERR|ATA_SR_DF|ATA_SR_DRQ))) return -1;
+    cache_needs_disable[d]=0;
+    return 0;
+}
+
+static int pata_finish_write(uint8_t d) {
+    write_failure="ATA data-write completion failed.";
+    pata_delay(d);
+    if (pata_wait_busy(d) < 0 ||
+        (inb(g_ata_base[d]+7)&(ATA_SR_ERR|ATA_SR_DF|ATA_SR_DRQ))) return -1;
+    if (!flush_command[d]) return 0;
+    write_failure="ATA cache flush failed; disk durability uncertain.";
+    outb(g_ata_base[d]+7,flush_command[d]);
+    pata_delay(d);
+    if (pata_wait_busy(d) < 0 ||
+        (inb(g_ata_base[d]+7)&(ATA_SR_ERR|ATA_SR_DF|ATA_SR_DRQ))) return -1;
+    return 0;
+}
+
+static int pata_write(uint8_t d, uint32_t lba, const uint8_t *buf) {
+    if (pata_prepare_write(d)) return -1;
+    write_failure="ATA write command/data transfer failed.";
+    if (pata_address(d,lba,1)) return -1;
     outb(g_ata_base[d] + 7, ATA_CMD_WRITE);
     if (pata_wait_drq(d) < 0) return -1;
     const uint16_t *w = (const uint16_t *)buf;
     for (int i = 0; i < 256; i++) outw(g_ata_base[d], w[i]);
-    outb(g_ata_base[d] + 7, ATA_CMD_FLUSH);
-    if (pata_wait_busy(d) < 0) return -1;
-    return 0;
+    return pata_finish_write(d);
+}
+
+static int pata_zero_batch(uint8_t d, uint32_t lba, uint8_t count) {
+    if (pata_prepare_write(d)) return -1;
+    write_failure="ATA batch-write command/data transfer failed.";
+    if (pata_address(d,lba,count)) return -1;
+    outb(g_ata_base[d]+7,ATA_CMD_WRITE);
+    pata_delay(d);
+    for (unsigned s=0;s<count;s++) {
+        if (pata_wait_drq(d)) return -1;
+        for (unsigned i=0;i<256;i++) outw(g_ata_base[d],0);
+        pata_delay(d);
+    }
+    return pata_finish_write(d);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -876,6 +1004,7 @@ int ata_read_sector(uint8_t drv, uint32_t lba, uint8_t *buf) {
 #endif
     if (drv >= ATA_MAX_DRIVES)                return -1;
     if (!g_drives[drv].present)               return -1;
+    if (!buf || lba>=g_drives[drv].total_sectors) return -1;
 
     if (g_drives[drv].drive_type == ATA_TYPE_AHCI) {
         uint8_t  bidx = drv - 4;
@@ -888,12 +1017,14 @@ int ata_read_sector(uint8_t drv, uint32_t lba, uint8_t *buf) {
 }
 
 int ata_write_sector(uint8_t drv, uint32_t lba, const uint8_t *buf) {
+    write_failure="Disk unavailable, invalid address, or controller I/O error.";
 #if !CONFIG_ENABLE_ATA
     (void)drv; (void)lba; (void)buf;
     return -1;
 #endif
     if (drv >= ATA_MAX_DRIVES)                return -1;
     if (!g_drives[drv].present)               return -1;
+    if (!buf || lba>=g_drives[drv].total_sectors) return -1;
 
     if (g_drives[drv].drive_type == ATA_TYPE_AHCI) {
         uint8_t  bidx = drv - 4;
@@ -905,4 +1036,22 @@ int ata_write_sector(uint8_t drv, uint32_t lba, const uint8_t *buf) {
     }
 
     return pata_write(drv, lba, buf);
+}
+
+int ata_zero_sectors(uint8_t drv, uint32_t lba, uint32_t count) {
+    if (drv>=ATA_MAX_DRIVES || !g_drives[drv].present || !count ||
+        lba>=g_drives[drv].total_sectors ||
+        count>g_drives[drv].total_sectors-lba ||
+        lba>=0x10000000u || count>0x10000000u-lba) return -1;
+    if (g_drives[drv].drive_type==ATA_TYPE_PATA) {
+        while (count) {
+            uint8_t chunk=count>128?128:count;
+            if (pata_zero_batch(drv,lba,chunk)) return -1;
+            lba+=chunk;count-=chunk;
+        }
+        return 0;
+    }
+    uint8_t zero[512]={0};
+    while (count--) if (ata_write_sector(drv,lba++,zero)) return -1;
+    return 0;
 }

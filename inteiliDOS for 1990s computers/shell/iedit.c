@@ -342,7 +342,7 @@ static void op_save_file(void) {
     iedit_ensure_txt(fn, (int)sizeof(fn));
 
     /* Step 2 — device */
-    set_msg("Save to: [1] Internal HDD (C:\\)  [2] External device (D:\\)  [Esc] Cancel");
+    set_msg("Save to: [1] Internal HDD (C:\\)  [2] Other native HDD (D:\\)  [Esc] Cancel");
     draw_msg();
     int choice = 0;
     for (;;) {
@@ -373,9 +373,9 @@ static void op_save_file(void) {
             iedit_save_buf[bp++] = '\n';
     }
 
-    /* Step 4 — write to ATA drive */
-    uint8_t drv = (uint8_t)(choice - 1);   /* choice 1 → drive 0, 2 → drive 1 */
-    int rc = fs_write(drv, fn, iedit_save_buf, bp);
+    /* Step 4 — write to logical native volume */
+    uint8_t drv = (uint8_t)(choice - 1);   /* choice 1 → C:, 2 → D: */
+    int rc = fs_volume_write(drv, fn, iedit_save_buf, bp);
 
     /* Update editor state only on success */
     if (rc == FS_OK) {
@@ -405,7 +405,9 @@ static void op_save_file(void) {
     } else {
         const char *err =
             (rc == FS_ERR_NODRV) ? "Save failed: no drive found." :
-            (rc == FS_ERR_FULL)  ? "Save failed: disk directory full." :
+            (rc == FS_ERR_FULL)  ? "Save failed: native storage full." :
+            (rc == FS_ERR_LAYOUT) ? "Save blocked: unsafe disk layout; back up first." :
+            (rc == FS_ERR_NODIR) ? "Save blocked: no native directory; disk unchanged." :
             (rc == FS_ERR_BIG)   ? "Save failed: file too large." :
                                    "Save failed: disk I/O error.";
         for (int i = 0; err[i] && ml < SCR_COLS - 1; i++) msg[ml++] = err[i];
@@ -447,11 +449,11 @@ static void iedit_parse_buf(uint32_t read_len) {
 static void op_open_file(void) {
     /* Warn if there are unsaved changes */
     if (dirty) {
-        set_msg("Unsaved changes! Ctrl+O again to discard and open.");
+        set_msg("Unsaved changes! Y or Ctrl+O to discard and open.");
         draw_msg();
         /* Wait for confirmation */
         int c = keyboard_getchar();
-        if (c != 0x0F) {        /* anything other than Ctrl+O = abort */
+        if (c != 0x0F && c != 'y' && c != 'Y') {
             set_msg("Open cancelled.");
             return;
         }
@@ -466,7 +468,7 @@ static void op_open_file(void) {
     iedit_ensure_txt(fn, (int)sizeof(fn));
 
     /* Step 2 — device */
-    set_msg("Load from: [1] Internal HDD (C:\\)  [2] External device (D:\\)  [Esc] Cancel");
+    set_msg("Load from: [1] Internal HDD (C:\\)  [2] Other native HDD (D:\\)  [Esc] Cancel");
     draw_msg();
     int choice = 0;
     for (;;) {
@@ -483,7 +485,7 @@ static void op_open_file(void) {
     /* Step 3 — read from ATA */
     uint8_t drv = (uint8_t)(choice - 1);
     uint32_t read_len = 0;
-    int rc = fs_read(drv, fn, iedit_save_buf, IEDIT_SAVE_BUF - 1, &read_len);
+    int rc = fs_volume_read(drv, fn, iedit_save_buf, IEDIT_SAVE_BUF - 1, &read_len);
 
     if (rc != FS_OK) {
         const char *err =
@@ -613,6 +615,7 @@ void iedit_run(const char *name) {
                 (ln[2]=='v'||ln[2]=='V') &&
                 (ln[3]=='e'||ln[3]=='E')) {
                 tlen[cur_row] = 0; ln[0] = '\0';
+                cur_col = 0;
                 op_save_file();
                 scroll_view(); redraw(); continue;
             }
@@ -624,6 +627,7 @@ void iedit_run(const char *name) {
                 (ln[2]=='a'||ln[2]=='A') &&
                 (ln[3]=='d'||ln[3]=='D')) {
                 tlen[cur_row] = 0; ln[0] = '\0';
+                cur_col = 0;
                 op_open_file();
                 scroll_view(); redraw(); continue;
             }

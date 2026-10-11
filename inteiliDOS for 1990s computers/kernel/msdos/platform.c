@@ -1,0 +1,459 @@
+/* Native platform adapter for the software-only 8086 PC.
+ * No guest port accesses reach host hardware. Only bounded speaker tones,
+ * text output, keyboard events and private-file disk sectors are exported. */
+#include "msdos.h"
+#include "mbr.h"
+#include "../fs.h"
+#include "../memory.h"
+#include "../timer.h"
+#include "../keyboard.h"
+#include "../vga.h"
+#include "../iso9660.h"
+#include "../fdc.h"
+#include "../cdrom.h"
+#include "../ata.h"
+
+#define DISK_SECTORS (520u * 63u)
+#define FLOPPY_BYTES 1474560u
+#define IMAGE_NAME "MSDOS622.HDD"
+#define SEED_CANCELLED (-100)
+#define SEED_NOMEM     (-101)
+#define SCREEN ((volatile uint16_t *)0xb8000)
+static fs_image_t hard;
+static uint32_t floppy_size;
+static iso9660_dirent_t floppy_entry;
+static uint8_t media_cache[2048];
+static uint32_t media_cached_lba;
+static int disc = -1, media_index, physical, pending = -1, io_failed;
+static int media_changed;
+static uint16_t screen[2000], saved[2000];
+static int row, col, save_row, save_col, region_top, region_bottom;
+static uint8_t attr, ansi, bright;
+static unsigned parameters[8], parameter;
+static uint32_t last_refresh, started;
+static const char *media_names[] = {"D6221.IMG", "D6222.IMG", "D6223.IMG", "D622S.IMG"};
+
+static uint16_t u16(const uint8_t *p) { return p[0] | ((uint16_t)p[1] << 8); }
+static uint32_t u32(const uint8_t *p) { return u16(p) | ((uint32_t)u16(p+2) << 16); }
+static void w16(uint8_t *p, uint16_t n) { p[0]=n; p[1]=n>>8; }
+static void w32(uint8_t *p, uint32_t n) { w16(p,n); w16(p+2,n>>16); }
+static void blank(int first, int end) {
+    for (int i=first; i<end; ++i) screen[i]=((uint16_t)attr<<8)|' ';
+}
+static void scroll_up(int top, int bottom, int count) {
+    if (top<0 || bottom>24 || top>bottom) return;
+    if (count>bottom-top+1) count=bottom-top+1;
+    kmemcpy(screen+top*80, screen+(top+count)*80,
+            (bottom-top+1-count)*160);
+    blank((bottom-count+1)*80,(bottom+1)*80);
+}
+static void newline(void) {
+    if (row==region_bottom) scroll_up(region_top,region_bottom,1);
+    else if (row<24) ++row;
+}
+static unsigned param(unsigned i, unsigned fallback) {
+    return i<=parameter && parameters[i] ? parameters[i] : fallback;
+}
+static void ansi_finish(uint8_t c) {
+    static const uint8_t colors[8]={0,4,2,6,1,5,3,7};
+    unsigned n=param(0,1);
+    switch (c) {
+    case 'H': case 'f': row=(int)param(0,1)-1; col=(int)param(1,1)-1; break;
+    case 'A': row-=n; break;
+    case 'B': row+=n; break;
+    case 'C': col+=n; break;
+    case 'D': col-=n; break;
+    case 'G': col=n-1; break;
+    case 'J':
+        if (parameters[0]==2 || parameters[0]==3) blank(0,2000);
+        else if (parameters[0]==1) blank(0,row*80+col+1);
+        else blank(row*80+col,2000);
+        break;
+    case 'K':
+        if (parameters[0]==2) blank(row*80,(row+1)*80);
+        else if (parameters[0]==1) blank(row*80,row*80+col+1);
+        else blank(row*80+col,(row+1)*80);
+        break;
+    case 'M': scroll_up(row,region_bottom,n); break;
+    case 'L':
+        if ((int)n>region_bottom-row+1) n=region_bottom-row+1;
+        for (int i=(region_bottom+1)*80-1; i>=(row+(int)n)*80; --i)
+            screen[i]=screen[i-n*80];
+        blank(row*80,(row+n)*80);
+        break;
+    case 'r':
+        region_top=(int)param(0,1)-1; region_bottom=(int)param(1,25)-1;
+        if (region_top<0 || region_bottom>24 || region_top>=region_bottom) {
+            region_top=0; region_bottom=24;
+        }
+        break;
+    case 's': save_row=row; save_col=col; break;
+    case 'u': row=save_row; col=save_col; break;
+    case 'm':
+        for (unsigned i=0;i<=parameter;i++) {
+            n=parameters[i];
+            if (!n) {attr=7; bright=0;}
+            else if (n==1) {bright=8; attr|=8;}
+            else if (n==22) {bright=0; attr&=0xf7;}
+            else if (n>=30 && n<=37) attr=(attr&0xf0)|colors[n-30]|bright;
+            else if (n>=40 && n<=47) attr=(attr&15)|(colors[n-40]<<4);
+            else if (n==39) attr=(attr&0xf0)|7|bright;
+            else if (n==49) attr&=15;
+        }
+        break;
+    }
+    if (row<0) row=0;
+    if (row>24) row=24;
+    if (col<0) col=0;
+    if (col>79) col=79;
+}
+void msdos_pc_putchar(uint8_t c) {
+    if (ansi==1) {
+        ansi=c=='[' ? 2 : 0;
+        kmemset(parameters,0,sizeof(parameters)); parameter=0;
+        return;
+    }
+    if (ansi==2) {
+        if (c>='0' && c<='9') {
+            if (parameters[parameter]<1000)
+                parameters[parameter]=parameters[parameter]*10+c-'0';
+        } else if (c==';') { if (parameter<7) ++parameter; }
+        else if (c!='?') { ansi_finish(c); ansi=0; }
+        return;
+    }
+    if (c==27) {ansi=1;return;}
+    if (c==13) {col=0;return;}
+    if (c==10) {newline();return;}
+    if (c==8) {if (col) --col;return;}
+    if (c==7) return;
+    if (c==9) {do {msdos_pc_putchar(' ');} while (col%8);return;}
+    screen[row*80+col]=((uint16_t)attr<<8)|c;
+    if (++col==80) {col=0;newline();}
+}
+/* The BIOS expects nine 32-bit struct-tm fields followed by milliseconds.
+ * Seed from CMOS once; subsequent time comes from the host monotonic timer.
+ * CMOS reads do not modify RTC configuration or interrupt masks. */
+static uint32_t rtc_base;
+static unsigned rtc_year, rtc_month, rtc_day;
+static uint8_t cmos(uint8_t reg) {
+    uint8_t previous, value;
+    __asm__ volatile("inb $0x70,%0":"=a"(previous));
+    __asm__ volatile("outb %0,$0x70"::"a"((uint8_t)((previous&0x80)|reg)));
+    __asm__ volatile("inb $0x71,%0":"=a"(value));
+    __asm__ volatile("outb %0,$0x70"::"a"(previous));
+    return value;
+}
+static unsigned rtc_value(uint8_t reg, int binary) {
+    unsigned x=cmos(reg);
+    return binary ? x : (x>>4)*10+(x&15);
+}
+static void rtc_init(void) {
+    int binary=!!(cmos(11)&4);
+    rtc_base=rtc_value(0,binary)+60*rtc_value(2,binary);
+    unsigned hour=cmos(4), pm=hour&128;
+    hour&=127; if (!binary) hour=(hour>>4)*10+(hour&15);
+    if (!(cmos(11)&2)) hour=(hour%12)+(pm?12:0);
+    rtc_base+=3600*hour;
+    unsigned yy=rtc_value(9,binary), century=rtc_value(0x32,binary);
+    rtc_year=(century==19 || century==20 ? century*100 : yy>=80?1900:2000)+yy;
+    rtc_month=rtc_value(8,binary); rtc_day=rtc_value(7,binary);
+    if (!rtc_month || rtc_month>12) rtc_month=1;
+    if (!rtc_day || rtc_day>31) rtc_day=1;
+    started=timer_get_ticks();
+}
+void msdos_pc_rtc(uint8_t *p) {
+    uint32_t ticks=timer_get_ticks()-started, seconds=rtc_base+ticks/1000;
+    unsigned year=rtc_year, month=rtc_month, day=rtc_day+seconds/86400;
+    static const uint8_t days[]={31,28,31,30,31,30,31,31,30,31,30,31};
+    for (;;) {
+        unsigned d=days[month-1]+(month==2 && !(year%4) && (year%100 || !(year%400)));
+        if (day<=d) break;
+        day-=d; if (++month==13) {month=1;++year;}
+    }
+    kmemset(p,0,38);
+    w32(p,seconds%60); w32(p+4,(seconds/60)%60); w32(p+8,(seconds/3600)%24);
+    w32(p+12,day); w32(p+16,month-1); w32(p+20,year-1900);
+    unsigned yday=day-1;
+    for (unsigned m=1;m<month;m++)
+        yday+=days[m-1]+(m==2 && !(year%4) && (year%100 || !(year%400)));
+    unsigned previous_year=year-1;
+    w32(p+24,(1+365*previous_year+previous_year/4-previous_year/100+
+              previous_year/400+yday)%7);
+    w32(p+28,yday);
+    w16(p+36,ticks%1000);
+}
+
+static int load_media(int index, const char *name) {
+    if (disc<0) return -1;
+    iso9660_dirent_t e;
+    if (iso9660_find_file(disc,name,&e)!=1 || e.is_dir ||
+        (e.size!=1474560 && e.size!=737280)) return -1;
+    uint8_t boot[512];
+    if (iso9660_read_file(disc,&e,boot,512)!=512 || boot[510]!=0x55 ||
+        boot[511]!=0xaa || u16(boot+11)!=512) return -1;
+    floppy_entry=e; floppy_size=e.size; media_cached_lba=0xffffffff;
+    media_index=index; physical=0;
+    media_changed=1;
+    return 0;
+}
+int msdos_media_changed(void) {
+    int changed=media_changed;media_changed=0;return changed;
+}
+static int read_floppy(uint32_t offset, uint8_t *data, uint32_t length) {
+    if (!floppy_size || offset>=floppy_size || length>floppy_size-offset) return -1;
+    while (length) {
+        uint32_t lba=floppy_entry.lba+offset/2048, in=offset%2048;
+        if (media_cached_lba!=lba) {
+            if (cdrom_read_sector(disc,lba,media_cache)) return -1;
+            media_cached_lba=lba;
+        }
+        uint32_t count=2048-in;
+        if (count>length) count=length;
+        kmemcpy(data,media_cache+in,count);
+        length-=count;data+=count;offset+=count;
+    }
+    return 0;
+}
+int msdos_pc_disk(int drive, uint32_t offset, uint8_t *data,
+                  uint32_t length, int write) {
+    if (!length || length%512 || offset%512) return 0;
+    if (drive==1) {
+        if (write) return 0; /* supplied images and physical floppy read-only */
+        if (physical) {
+            if (offset>=FLOPPY_BYTES || length>FLOPPY_BYTES-offset) return 0;
+            for (uint32_t i=0;i<length;i+=512)
+                if (fdc_read_sector(0,(offset+i)/512,data+i)) return 0;
+            return 1;
+        }
+        return !read_floppy(offset,data,length);
+    }
+    if (drive!=0 || offset/512>=hard.sectors ||
+        length/512>hard.sectors-offset/512) return 0;
+    for (uint32_t i=0;i<length;i+=512) {
+        if (fs_image_sector(&hard,(offset+i)/512,data+i,write)) {
+            io_failed=1; return 0;
+        }
+    }
+    return 1;
+}
+/* Encode SDL-style BIOS key events; no guest access to the host IRQ queue. */
+int msdos_pc_key(void) {int k=pending;pending=-1;return k;}
+int msdos_pc_poll(const uint8_t *ram, const uint8_t *ports) {
+    int key=keyboard_poll();
+    if (key==KEY_F8 || io_failed) return 1;
+    if (key==KEY_F1+5) {
+        int next=(media_index+1)%4;
+        if (load_media(next,media_names[next])) {
+            vga_puts("MS-DOS: could not load next installation disk.\n");
+            io_failed=1; return 1;
+        }
+    } else if (key==KEY_F1+6) {physical=1; media_changed=1; pending=-1;}
+    else if (key>=0 && pending<0) {
+        int symbol=key;
+        if (key>=KEY_UP && key<=KEY_RIGHT) {
+            static const unsigned s[]={273,274,276,275};
+            symbol=s[key-KEY_UP];
+        } else if (key>=KEY_F1 && key<KEY_F8) symbol=282+key-KEY_F1;
+        pending=0x400|symbol; /* key down, no SDL modifier flags */
+    }
+    uint32_t now=timer_get_ticks();
+    if (now-last_refresh>=16) {
+        msdos_devices_update(ram,ports);
+        if (!msdos_devices_graphics()) {
+            for (int i=0;i<2000;i++) SCREEN[i]=screen[i];
+            vga_set_cursor(row,col);
+        }
+        last_refresh=now;
+    }
+    return 0;
+}
+static int put_sector(uint32_t n, uint8_t *buf) {
+    return fs_image_sector(&hard,n,buf,1);
+}
+static int disk_failure(int rc) {
+    if (rc==FS_ERR_FULL)
+        vga_puts("MS-DOS: native file directory is full (15 entries).\n"
+                 "A free directory entry is needed for MSDOS622.HDD.\n");
+    else if (rc==SEED_CANCELLED)
+        vga_puts("MS-DOS: DOS HDD creation cancelled with F8.\n");
+    else if (rc==SEED_NOMEM)
+        vga_puts("MS-DOS: not enough memory to create the DOS HDD.\n");
+    else if (rc==FS_ERR_IO)
+        vga_puts("MS-DOS: disk I/O failure; cannot read or write the DOS HDD/media.\n");
+    else
+        vga_puts("MS-DOS needs safe native storage.\n"
+                 "Older installs need backup and approved migration first.\n");
+    vga_puts("Existing native files kept; no physical disk was formatted.\n");
+    return 1;
+}
+/* Refuse before reading installation media or initializing any image sectors.
+ * reserve revalidates the same layout/directory; the query is read-only. */
+static int reserve_disk(uint8_t drive) {
+    fs_image_space_t space;
+    int rc=fs_image_space(drive,&space);
+    if (rc) return disk_failure(rc);
+    vga_printf("DOS HDD requires %u KiB; native C: has %u KiB safely available.\n",
+               DISK_SECTORS/2,space.available_sectors/2);
+    if (!space.free_slots) return disk_failure(FS_ERR_FULL);
+    if (space.available_sectors<DISK_SECTORS) {
+        vga_puts("MS-DOS: insufficient disk space; DOS HDD creation not started.\n"
+                 "Use a 32 MiB or larger native disk with the required free space.\n"
+                 "Keep existing files; do not erase this disk to make room.\n");
+        return 1;
+    }
+    rc=fs_image_reserve(drive,DISK_SECTORS,&hard);
+    if (rc==FS_ERR_NOSPC) {
+        vga_puts("MS-DOS: insufficient disk space (available space changed).\n"
+                 "DOS HDD creation not started; existing native files kept.\n"
+                 "Use a 32 MiB or larger native disk with the required free space.\n");
+        return 1;
+    }
+    return rc ? disk_failure(rc) : 0;
+}
+/* Extract FAT12 files directly from the user's boot disk into the private
+ * FAT16 volume. IO.SYS is first, contiguous, and starts at cluster two. */
+static int seed_disk(void) {
+    uint8_t sector[512];
+    uint8_t *fat=kcalloc(1,32*512), *root=kcalloc(1,32*512);
+    uint8_t *source_root=kmalloc(224*32), *source_fat=kmalloc(9*512);
+    if (!fat || !root || !source_root || !source_fat) {
+        kfree(fat);kfree(root);kfree(source_root);kfree(source_fat);return SEED_NOMEM;
+    }
+    int rc=FS_ERR_IO;
+    const char *phase="read system disk";
+    uint32_t progress=0;
+    if (read_floppy(19*512,source_root,224*32) ||
+        read_floppy(512,source_fat,9*512) ||
+        kmemcmp(source_root,"IO      SYS",11) ||
+        kmemcmp(source_root+32,"MSDOS   SYS",11)) goto done;
+    kmemset(sector,0,512);
+    vga_puts("Creating private DOS disk (native files are kept; F8 cancels)...\n");
+    phase="clear private disk";
+    for (uint32_t n=0;n<DISK_SECTORS;n+=128) {
+        progress=n;
+        uint32_t count=DISK_SECTORS-n;
+        if (count>128) count=128;
+        if (fs_image_zero(&hard,n,count)) goto done;
+        if (keyboard_poll()==KEY_F8) {rc=SEED_CANCELLED;goto done;}
+    }
+    phase="boot sectors";
+    kmemcpy(sector,msdos_mbr,msdos_mbr_size);
+    sector[446]=0x80; sector[448]=2; sector[450]=4;
+    sector[451]=0; sector[452]=0xbf; sector[453]=7;
+    w32(sector+454,1); w32(sector+458,DISK_SECTORS-1);
+    sector[510]=0x55; sector[511]=0xaa;
+    if (put_sector(0,sector)) goto done;
+    if (read_floppy(0,sector,512)) goto done;
+    sector[13]=4; w16(sector+14,1); sector[16]=2;
+    w16(sector+17,512); w16(sector+19,DISK_SECTORS-1);
+    sector[21]=0xf8; w16(sector+22,32); w16(sector+24,63);
+    w16(sector+26,1); w32(sector+28,1); w32(sector+32,0);
+    sector[36]=0x80;
+    kmemcpy(sector+43,"DOS622     ",11); kmemcpy(sector+54,"FAT16   ",8);
+    if (put_sector(1,sector)) goto done;
+    w16(fat,0xfff8); w16(fat+2,0xffff);
+    unsigned cluster=2, entry=0;
+    for (unsigned i=0;i<224;i++) {
+        phase="copy system files";progress=i;
+        const uint8_t *e=source_root+i*32;
+        if (!e[0]) break;
+        if (e[0]==0xe5 || e[11]&0x18 || e[11]==15) continue;
+        /* Setup is for real disks; ship a command prompt on virtual C instead. */
+        if (!kmemcmp(e,"AUTOEXECBAT",11) || !kmemcmp(e,"CONFIG  SYS",11) ||
+            !kmemcmp(e,"SETUP   ",8) || !kmemcmp(e,"DRVSPACEBIN",11)) continue;
+        uint32_t size=u32(e+28), left=size, src=u16(e+26);
+        if (!size) continue;
+        uint32_t count=(size+2047)/2048;
+        if (count>8152-cluster+2 || entry>=510) goto done;
+        kmemcpy(root+entry*32,e,32);
+        w16(root+entry*32+26,cluster); ++entry;
+        for (uint32_t c=0;c<count;c++) {
+            w16(fat+cluster*2,c+1==count?0xffff:cluster+1);
+            for (unsigned s=0;s<4;s++) {
+                kmemset(sector,0,512);
+                unsigned chunk=left>512?512:left;
+                if (chunk) {
+                    if (src<2 || src>=2849) goto done;
+                    if (read_floppy((33+src-2)*512,sector,chunk)) goto done;
+                    unsigned previous=src, at=src+src/2;
+                    src=u16(source_fat+at);
+                    src=previous&1 ? src>>4 : src&0xfff;
+                    left-=chunk;
+                }
+                if (put_sector(98+(cluster-2)*4+s,sector)) goto done;
+            }
+            ++cluster;
+        }
+        if (left) goto done;
+    }
+    /* Add a startup file without any 386 memory managers or disk drivers. */
+    phase="startup and FAT";
+    const char *startup="@ECHO OFF\r\nPROMPT $P$G\r\nPATH C:\\\r\nECHO MS-DOS 6.22 - F6 swap disks, F7 floppy, F8 exit\r\n";
+    uint8_t *e=root+entry*32;
+    kmemcpy(e,"AUTOEXECBAT",11); e[11]=32;
+    w16(e+26,cluster); w32(e+28,kstrlen(startup));
+    w16(fat+cluster*2,0xffff); kmemset(sector,0,512);
+    kmemcpy(sector,startup,kstrlen(startup));
+    if (put_sector(98+(cluster-2)*4,sector)) goto done;
+    for (unsigned s=0;s<32;s++) {
+        if (put_sector(2+s,fat+s*512) || put_sector(34+s,fat+s*512) ||
+            put_sector(66+s,root+s*512)) goto done;
+    }
+    phase="publish virtual disk";
+    rc=fs_image_publish(IMAGE_NAME,&hard);
+done:
+    if (rc) vga_printf("DOS disk initialization failed: %s (%u, code %d).\n",phase,progress,rc);
+    kfree(fat);kfree(root);kfree(source_root);kfree(source_fat);return rc;
+}
+
+int msdos_run(int argc, const char *argv[]) {
+    if (argc && kstrcmp(argv[0],"/IMAGE") && kstrcmp(argv[0],"/image")) {
+        vga_puts("Usage: MS-DOS [/IMAGE <720K or 1.44M floppy image on CD>]\n");return 1;
+    }
+    if (argc && argc!=2) {vga_puts("MS-DOS /IMAGE requires a filename.\n");return 1;}
+    floppy_size=0; disc=-1; pending=-1; io_failed=0; media_index=0;physical=0;
+    int existing=-1, candidate=-1;
+    uint8_t native_drive;
+    int storage_rc=fs_volume_drive(0, &native_drive);
+    if (storage_rc) return disk_failure(storage_rc);
+    storage_rc=fs_image_open(native_drive,IMAGE_NAME,&hard);
+    if (!storage_rc) existing=native_drive;
+    else if (storage_rc==FS_ERR_NOTFOUND) candidate=native_drive;
+    else return disk_failure(storage_rc);
+    if (existing>=0 && hard.sectors!=DISK_SECTORS) {
+        vga_puts("MS-DOS: invalid virtual HDD size; refusing to overwrite it.\n");return 1;
+    }
+    if (existing<0 && reserve_disk(candidate)) return 1;
+    for (unsigned d=0;d<4;d++) {
+        iso9660_dirent_t e;
+        if (iso9660_find_file(d,"D6221.IMG",&e)==1) {disc=d;break;}
+    }
+    if (existing<0) {
+        if (load_media(0,media_names[0])) {
+            vga_puts("DOS boot disk missing: rebuild the ISO with the supplied DOS disks.\n");return 1;
+        }
+        int rc=seed_disk();
+        if (rc) return disk_failure(rc);
+    } else if (disc>=0 && load_media(0,media_names[0])) {
+        vga_puts("MS-DOS: installation media could not be read.\n");return 1;
+    }
+    if (argc && load_media(-1,argv[1])) {
+        vga_puts("Cannot read that floppy image from the CD.\n");return 1;
+    }
+    int sr,sc;
+    vga_get_cursor(&sr,&sc);
+    for (int i=0;i<2000;i++) saved[i]=SCREEN[i];
+    row=col=save_row=save_col=ansi=bright=0; attr=7;
+    region_top=0;region_bottom=24;blank(0,2000);
+    rtc_init();last_refresh=timer_get_ticks()-16;media_changed=0;
+    int rc=msdos_cpu_run(hard.sectors);
+    msdos_devices_restore();
+    floppy_size=0;
+    for (int i=0;i<2000;i++) SCREEN[i]=saved[i];
+    vga_set_cursor(sr,sc);
+    vga_puts(io_failed?"MS-DOS stopped: disk I/O failed.\n":
+             rc==-2?"MS-DOS stopped: unsupported CPU instruction (286/386/x87).\n":
+             rc?"MS-DOS: not enough memory for the emulator.\n":
+                "Returned from MS-DOS. Completed disk writes are saved.\n");
+    return rc || io_failed;
+}

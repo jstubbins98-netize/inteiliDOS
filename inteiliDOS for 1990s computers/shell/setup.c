@@ -22,15 +22,18 @@
  *
  * Disk layout written:
  *   LBA 0          Master Boot Record  (446-byte x86 bootstrap + partition table)
- *   LBA 1–2047     Reserved / post-MBR gap (zeroed on clean install)
+ *   LBA 1–2047     Reserved / post-MBR gap (not used by the filesystem)
  *   LBA 2048+      inteiliDOS partition  (type 0x99)
  *   LBA 2048       Volume Boot Record  (INT 13h AH=42h loader, A20 dual-method)
- *   LBA 2049–N     Kernel image (exact size from _kernel_data_end linker symbol,
- *                  max 512 sectors = 256 KB, copied sector-by-sector from RAM)
+ *   Partition +1..+1024   Kernel reserve (up to 512 KB)
+ *   Partition +1025..+1032 Configuration reserve; layout descriptor at +1025
+ *   Partition +1033      Native directory
+ *   Partition +1034..end Bounded file data (ordinary files and DOS image)
+ *   See kernel/disk_layout.h; dual boot may place the partition after 2048.
  *
  * The MBR bootstrap searches for the active partition and uses INT 13h
  * Extended Read (AH=42h) to load the VBR, then jumps to 0x7C00.  The VBR
- * reads 512 sectors (256 KB) from disk to physical 0x8000, switches to
+ * reads the kernel's rounded-up sector count from disk to physical 0x8000, switches to
  * 32-bit protected mode, and copies the image to 0x100000 before jumping
  * to _start.  BIOS INT 13h is used throughout so the boot drive number
  * (DL) is preserved regardless of which IDE channel the HDD is on.
@@ -42,6 +45,7 @@
 #include "../kernel/timer.h"
 #include "../kernel/ata.h"
 #include "../kernel/memory.h"
+#include "../kernel/disk_layout.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -714,15 +718,15 @@ typedef struct {
     uint32_t lba_size;     /* size in 512-byte sectors */
 } __attribute__((packed)) sw_part_t;
 
-#define SW_PART_TYPE_INTEILIDOS  0x99   /* inteiliDOS custom type */
+#define SW_PART_TYPE_INTEILIDOS  NATIVE_PART_TYPE
 #define SW_PART_TABLE_OFF        0x1BE  /* offset in MBR/sector */
 #define SW_BOOT_SIG_OFF          0x1FE
 
 /* First partition sector (1 MB boundary, standard) */
-#define SW_PART_LBA_START  2048u
+#define SW_PART_LBA_START  NATIVE_PART_START
 
 /* Sectors reserved for VBR + kernel after partition start */
-#define SW_KERNEL_SECTORS  1024u        /* 512 KB  — covers any build */
+#define SW_KERNEL_SECTORS  NATIVE_KERNEL_SECTORS
 #define SW_KERNEL_RAM_ADDR 0x00100000u  /* where multiboot loads us */
 
 /* =========================================================================
@@ -1028,13 +1032,49 @@ static int sw_stage_confirm(void) {
  * dual_boot=1 → preserve existing partition entries, splice in a new one.
  * dual_boot=0 → zero all entries, create a single inteiliDOS partition.
  */
+static const char *sw_layout_error;
+static const char *sw_layout_help;
+static int sw_layout_refuse(const char *error, const char *help) {
+    sw_layout_error = error;
+    sw_layout_help = help;
+    return -3;
+}
+
 static int sw_build_mbr(int dual_boot) {
     uint32_t total   = sw_drives[sw_drive].total_sectors;
     uint8_t  drv     = (uint8_t)sw_drive;
+    sw_layout_error = "  ERROR: Generated partition table failed validation.";
+    sw_layout_help = "  Report the mode and target drive shown above.";
+    if (!total)
+        return sw_layout_refuse("  ERROR: The selected drive reports zero capacity.",
+                                "  Check the HDD/controller configuration; no safe size is known.");
+    if (total <= SW_PART_LBA_START ||
+        total - SW_PART_LBA_START <= NATIVE_DATA_OFFSET)
+        return sw_layout_refuse("  ERROR: Selected drive is too small for the reserved OS layout.",
+                                "  Select a larger HDD; boot, kernel and storage must fit.");
 
     if (dual_boot) {
         /* Read existing MBR */
         if (ata_read_sector(drv, 0, sw_sector) != 0) return -1;
+        /* Never splice partitions into unknown boot media or migrate flat
+         * user files. A backup and separately approved migration are needed. */
+        if (sw_sector[510] != 0x55 || sw_sector[511] != 0xaa)
+            return sw_layout_refuse("  ERROR: Alongside mode needs a valid existing partition table.",
+                                    "  For a fresh disk, select clean install (erases selected disk).");
+        int native_slot = native_partition_find(sw_sector, total);
+        if (native_slot == -2)
+            return sw_layout_refuse("  ERROR: Existing partitions overlap or exceed the drive size.",
+                                    "  Preserve mode cannot repair this table; back up first.");
+        if (native_slot >= 0)
+            return sw_layout_refuse("  ERROR: Alongside mode cannot upgrade existing inteiliDOS.",
+                                    "  Use clean install to erase, or back up for a separate migration.");
+        static uint8_t legacy[512];
+        if (ata_read_sector(drv, 2048u, legacy)) return -1;
+        uint32_t magic;
+        kmemcpy(&magic, legacy, 4);
+        if (magic == NATIVE_FS_MAGIC)
+            return sw_layout_refuse("  ERROR: Alongside mode would overwrite legacy native files.",
+                                    "  Back up before migration; clean install deliberately erases.");
     } else {
         /* Zero everything */
         kmemset(sw_sector, 0, 512);
@@ -1091,15 +1131,17 @@ static int sw_build_mbr(int dual_boot) {
         pt[slot].chs_last[1]  = 0xFF;
         pt[slot].chs_last[2]  = 0xFF;
         pt[slot].lba_start = part_start;
-        pt[slot].lba_size  = (total > part_start + 2048)
-                             ? (total - part_start) : 2048;
+        if (part_start >= total || total - part_start <= NATIVE_DATA_OFFSET)
+            return sw_layout_refuse("  ERROR: Not enough unallocated space after existing partitions.",
+                                    "  Free space inside another filesystem is not partition space.");
+        pt[slot].lba_size = total - part_start;
     }
 
     /* Boot signature */
     sw_sector[SW_BOOT_SIG_OFF]     = 0x55;
     sw_sector[SW_BOOT_SIG_OFF + 1] = 0xAA;
 
-    return 0;
+    return native_partition_find(sw_sector, total) >= 0 ? 0 : -3;
 }
 
 /* Get the LBA start of our inteiliDOS partition from sw_sector (which
@@ -1133,6 +1175,7 @@ static int sw_stage_install(void) {
 
     int rc;
     uint32_t part_lba;
+    uint32_t part_sectors;
     uint8_t  sw_vbr_iterations;   /* loop count patched into VBR at install time */
 
     /* Pre-compute how many sectors need loading so the VBR can be patched
@@ -1150,9 +1193,14 @@ static int sw_stage_install(void) {
         uint32_t ke  = (uint32_t)(uintptr_t)&_kernel_data_end;
         uint32_t ksz = (ke > SW_KERNEL_RAM_ADDR) ? (ke - SW_KERNEL_RAM_ADDR) : 512u;
         uint32_t ws  = (ksz + 511u) / 512u;
-        if (ws > SW_KERNEL_SECTORS) ws = SW_KERNEL_SECTORS;
         ws = (ws + 7u) & ~7u;                  /* round up to multiple of 8  */
-        if (ws > SW_KERNEL_SECTORS) ws = SW_KERNEL_SECTORS;
+        if (ws > SW_KERNEL_SECTORS) {
+            sw_content_line(7, "  ERROR: Kernel exceeds reserved boot area. No disk changed.",
+                            VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+            sw_draw_footer("", "Press any key to cancel");
+            keyboard_getchar();
+            return 0;
+        }
         sw_vbr_iterations = (uint8_t)(ws / 8u);
         if (sw_vbr_iterations == 0) sw_vbr_iterations = 1;
     }
@@ -1160,6 +1208,25 @@ static int sw_stage_install(void) {
     /* Step 1 — Prepare MBR */
     STEP(10, "  Preparing partition table...", {
         rc = sw_build_mbr(sw_mode == SW_MODE_DUALBOOT);
+        if (rc == -3) {
+            char target[72];
+            sw_drive_line(sw_drive, target, sizeof(target));
+            sw_content_line(5, sw_mode == SW_MODE_CLEAN ?
+                            "  Mode: Clean install (erase selected disk)" :
+                            "  Mode: Install alongside existing OS (preserve)",
+                            VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            sw_content_line(6, target, VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            sw_content_line(7, sw_layout_error,
+                            VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+            sw_content_line(8, sw_layout_help,
+                            VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+            sw_content_line(9, "  No disk changed. Press any key to cancel.",
+                            VGA_COLOR_DARK_GREY, VGA_COLOR_BLUE);
+            sw_draw_footer("", "Installation stopped - no disk changed");
+            vga_set_cursor(25, 0);
+            keyboard_getchar();
+            return 0;
+        }
         if (rc == -2) {
             sw_content_line(7,
                 "  ERROR: No free partition slot on this drive.",
@@ -1185,12 +1252,17 @@ static int sw_stage_install(void) {
             return 0;
         }
         part_lba = sw_get_part_lba();
+        native_part_t *p = (native_part_t *)(sw_sector + SW_PART_TABLE_OFF);
+        int slot = native_partition_find(sw_sector, sw_drives[sw_drive].total_sectors);
+        part_sectors = p[slot].sectors;
     });
 
     /* Step 2 — Write MBR */
     STEP(25, "  Writing Master Boot Record...", {
         if (ata_write_sector((uint8_t)sw_drive, 0, sw_sector) != 0) {
-            sw_content_line(7, "  ERROR: MBR write failed. Check drive connections.",
+            sw_content_line(7, "  ERROR: MBR write failed.",
+                            VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+            sw_content_line(8, ata_last_write_failure(),
                             VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
             sw_content_line(8, "  Press any key to cancel.",
                             VGA_COLOR_DARK_GREY, VGA_COLOR_BLUE);
@@ -1259,7 +1331,6 @@ static int sw_stage_install(void) {
         uint32_t ksize = (kend > SW_KERNEL_RAM_ADDR)
                          ? (kend - SW_KERNEL_RAM_ADDR) : 512u;
         uint32_t write_sects = (ksize + 511u) / 512u;
-        if (write_sects > SW_KERNEL_SECTORS) write_sects = SW_KERNEL_SECTORS;
 
         {
             /* Display kernel size on the progress screen */
@@ -1308,6 +1379,38 @@ static int sw_stage_install(void) {
                 int pct = 55 + (int)(s * 25 / write_sects);
                 sw_progress_bar(3, pct, "  Copying system kernel to drive...");
             }
+        }
+    });
+
+    /* Initialize ONLY the newly approved install's native filesystem.
+     * Publish its layout descriptor last, so partial initialization cannot
+     * authorize filesystem writes. Old user layouts are never converted. */
+    STEP(82, "  Preparing bounded native storage...", {
+        kmemset(sw_sector, 0, 512);
+        for (uint32_t s = 0; s < NATIVE_CONFIG_SECTORS; ++s) {
+            if (ata_write_sector((uint8_t)sw_drive,
+                                 part_lba + NATIVE_CONFIG_OFFSET + s, sw_sector)) {
+                sw_content_line(7, "  ERROR: Configuration initialization failed.",
+                                VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+                keyboard_getchar();
+                return 0;
+            }
+        }
+        uint32_t magic = NATIVE_FS_MAGIC;
+        kmemcpy(sw_sector, &magic, 4);
+        if (ata_write_sector((uint8_t)sw_drive, part_lba + NATIVE_DIR_OFFSET, sw_sector)) {
+            sw_content_line(7, "  ERROR: Native directory initialization failed.",
+                            VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+            keyboard_getchar();
+            return 0;
+        }
+        kmemset(sw_sector, 0, 512);
+        native_layout_init((native_layout_t *)sw_sector, part_lba, part_sectors);
+        if (ata_write_sector((uint8_t)sw_drive, part_lba + NATIVE_CONFIG_OFFSET, sw_sector)) {
+            sw_content_line(7, "  ERROR: Storage layout write failed.",
+                            VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+            keyboard_getchar();
+            return 0;
         }
     });
 

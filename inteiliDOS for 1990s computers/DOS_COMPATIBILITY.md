@@ -1,172 +1,204 @@
-# DOS programs in LaunchPad
+# MS-DOS 6.22 in inteiliDOS
 
-LaunchPad can now run **16-bit DOS COM and DOS MZ EXE programs** in addition
-to native inteiliDOS IPGM and i386 ELF programs. It reads programs from the
-existing **FAT12 floppy** and **ISO9660 CD-ROM** sources.
+The `MS-DOS` command opens a software-emulated 8086/80186 PC running the real
+MS-DOS 6.22 system files supplied on the installation disks. DOS has its own
+memory, BIOS, command prompt, and persistent virtual hard drive. F8 stops the
+emulator and returns to inteiliShell without rebooting inteiliDOS.
 
-This is an initial compatibility layer, **not a complete MS-DOS implementation
-or a promise that every DOS application/game will work**. It follows the
-Virtual 8086 monitor approach in the supplied guide. No MS-DOS system files
-or third-party DOS kernel are bundled.
+This replaces the earlier LaunchPad Virtual 8086 compatibility path. DOS
+programs are no longer launched directly through LaunchPad or `RUN /DOS`;
+those paths direct users to `MS-DOS`. Native IPGM and ELF applications still
+use LaunchPad as before.
 
-## Using it
+## Build and first launch
 
-1. Rebuild inteiliDOS with `bash build.sh`, then boot the new OS image.
-2. Put a DOS `.COM` or `.EXE` file, and its data files, on a supported floppy
-   or ISO9660 CD-ROM. Names should fit the filesystem's supported naming rules.
-3. Open LaunchPad, select the source with F2, and navigate to the program.
-4. Press Enter, then confirm the launch.
-5. **F8 stops a DOS program**, including a program stuck in a loop or waiting
-   for input. Normal DOS termination returns to LaunchPad after a key
-   acknowledgement.
+1. Build with `bash build.sh` and boot the new inteiliDOS image.
+2. Have a safely bounded native hard-disk filesystem with approximately
+   16 MB of free space and a free native directory entry. A blank physical disk
+   is not automatically formatted by the emulator. New setup installs reserve
+   boot/kernel/configuration sectors before native file storage. Recognized
+   unpartitioned legacy filesystems remain supported in place. Older installed
+   disks without layout metadata are blocked until a backup-safe migration is
+   explicitly approved; see [NATIVE_STORAGE.md](NATIVE_STORAGE.md).
+3. Keep the ISO containing the supplied DOS disks inserted for first launch.
+4. Type `MS-DOS` at inteiliShell. The emulator creates its private DOS HDD,
+   installs the boot files and Disk 1 utilities, and starts the DOS `C:\>` prompt.
 
-The guest sees **A:** for floppy or **D:** for the selected CD-ROM. The directory
-containing the program is the guest's root; relative and absolute guest paths
-resolve underneath it. Subdirectories and `..` inside that root are supported;
-paths cannot escape it or switch to a different physical drive. LaunchPad
-currently supplies an empty command line, not an argument prompt.
+In the repository, the ISO build looks for the four uploaded disk images in
+the adjacent `attached_assets` directory. For a separate source download,
+put your four images in a directory as `Disk1.img`, `Disk2.img`, `Disk3.img`,
+and `Suppdisk.img`, then build with:
 
-## Supported initially
-
-- Real 80386 v86 execution of ordinary 16-bit x86 instructions.
-- Trapped 16-bit `INTO` overflow checks: continue with unchanged flags when
-  OF is clear, or deliver the guest's INT 04h handler when OF is set. An
-  unhandled overflow is reported as an error, not silently skipped.
-- COM loading at PSP:0100, a PSP/environment, and return through INT 20h.
-- MZ EXE headers, segment relocations, initial CS:IP and SS:SP, minimum/maximum
-  extra allocation, and executable/stack/relocation bounds checks.
-- INT 20h and INT 21h/00h/4Ch process termination and DOS exit codes.
-- DOS console character/string output, buffered input, input status,
-  standard input, and standard output/error handles.
-- Eight simultaneous read-only file handles: open, read, seek, close, EOF,
-  and basic handle information. Individual files may be up to 4 MB.
-- Conventional-memory allocation/free/resize. A COM program must shrink
-  its initial allocation before requesting another block.
-- Get/set interrupt vectors and calls through saved monitor vectors.
-- Current drive, session-root current-directory reporting, DTA get/set,
-  PSP queries, basic version/break/switch-character probes, RTC date/time.
-- BIOS VGA mode 3 text services: cursor position, character cells, text
-  scrolling/clearing, and teletype output. Direct text VGA memory is available.
-- INT 10h/1130h font information for the current BIOS ROM font and the
-  upper-128-character ROM font. The current text geometry is 80x25, 16 pixels
-  per character. The private BIOS data area and cursor registers agree with
-  BIOS cursor changes.
-- Virtual text-cursor registers 0Ah/0Bh/0Eh/0Fh at ports 3D4h/3D5h, including
-  byte and index/data word I/O. Writes move the bounded text cursor; cursor
-  shape is retained virtually, not applied to the host display. Read-only
-  3DAh status alternates virtual blank/retrace states for CRT polling loops.
-  This does not permit raw VGA timing, palette, or graphics-register access.
-- BIOS keyboard input/status, conventional-memory/equipment queries,
-  BIOS clock/RTC reads, DOS idle/fast output, absence probes for Windows/DPMI.
-- VGA display-combination and 64-byte functionality/state queries. The
-  capability table advertises only the implemented mode-3 text display.
-  Hercules extension and DOS-network installation probes report absence.
-- Guest-private PIC mask registers (21h/A1h) and nonspecific EOI commands.
-  These never alter the host interrupt controllers.
-- Virtual periodic PIT channel 0 and IRQ0/INT 08h delivery, including hooks,
-  old-vector chaining, and BIOS INT 1Ch callbacks. Guest IF/masks and EOI
-  control virtual delivery while the host timer and F8 continue independently.
-- PC-speaker tones through channel-2 divisor writes and the low two gate bits
-  of port 61h. Kernel speaker routines handle the actual tone; parity/NMI
-  bits are not forwarded. Audio is stopped on normal exit, faults, or F8.
-
-## Not supported
-
-- Windows NE/LE/LX/PE executables, overlays, protected-mode DOS extenders,
-  DPMI, EMS, XMS, or nested EXEC/COMMAND.COM.
-- Graphics BIOS modes, alternate video pages, sound-card APIs, raw BIOS
-  disk services, general hardware port access, or guest IRQ handlers other
-  than the virtual timer. Raw keyboard/controller IRQ support is not provided.
-- PIT modes other than supported periodic modes, channel-1 RAM refresh
-  programming, PIC initialization/remapping, or virtual timer divisors below
-  1194 (about 1 kHz maximum). Device emulation is not cycle-accurate.
-- File creation/writing/deletion/renaming, changing the current directory,
-  directory enumeration (`findfirst`/`findnext`), batch files, or TSR residency.
-- Complete DOS/BIOS API coverage or arbitrary BIOS-ROM execution.
-
-Filesystem writes return DOS access-denied errors; they do not pretend to
-save data. Other unsupported services/instructions terminate the guest with
-an acknowledged diagnostic showing the interrupt and AX/BX/CX/DX, or the
-instruction bytes and I/O port, together with the original CS:IP. CPU faults
-include the exception/error code and the fault address for page faults.
-When reporting a compatibility failure, include this diagnostic **and the
-compiled COM/EXE**: source alone does not reveal compiler/runtime startup
-calls. Malformed/non-DOS MZ files are rejected before
-execution. `.COM` is identified by the complete filename extension because
-COM files have no magic header.
-
-## Host safety and hardware requirements
-
-The monitor temporarily uses ordinary 386 page tables. Guest conventional
-memory and VGA text are accessible; kernel, DMA buffers, and device registers
-are supervisor-only. A private IVT/BIOS-data page prevents guest changes to
-host low-memory metadata. Hardware I/O is denied by the TSS, and host timer
-and keyboard IRQs continue even after a guest CLI. The monitor virtualizes
-PUSHF/POPF/IRET instead of granting IOPL=3.
-PIC masks and PIT channel-0 writes affect only private guest state. The host
-PIT continues at 1000 Hz for scheduling, floppy drivers, and abort handling.
-
-The guest has 512 KB of conventional process memory, plus its environment.
-It does not obtain all of the host's RAM. Native IPGM/ELF execution remains
-unchanged and does not use this compatibility layer.
-
-## Turbo Pascal CRT programs
-
-The supplied Creature EXE was tested through a complete race on both floppy
-and CD-ROM: its title/track positions and colors, keyboard/bet input, delay
-countdown, normal exit back to LaunchPad, and F8 cancellation all passed.
-
-Unpatched Turbo Pascal CRT delay calibration can overflow on fast CPUs
-(commonly called Runtime Error 200). This is independent of the missing
-BIOS/port support: a QEMU `-cpu 486` setting selects CPU features, **not**
-1990s execution speed. The Creature test bounds QEMU's virtual instruction
-speed with `-icount shift=4,align=off,sleep=on`; it does not patch the EXE or
-ignore guest arithmetic faults. Use an appropriately paced 1990s CPU in
-86Box, or a properly CRT-patched/recompiled executable on faster CPUs.
-86Box itself has not been verified here.
-
-This runtime expects the existing non-paged kernel and its normal 1000 Hz
-timer profile. It rejects an already-paged host rather than replacing unknown
-page tables. Use the OS's supported RAM profile; a 16 MB emulated machine is
-used by the regression tests.
-
-## Tests
-
-```bash
-python3 tests/run_dos_tests.py
-python3 tests/build_test_kernel.py /tmp/inteilidos-test-build
-python3 tests/run_launchpad_dos_test.py /tmp/inteilidos-test-build/inteilidOS.elf
+```sh
+bash build.sh "-DMSDOS_DISK_DIR=/absolute/path/to/dos-disks"
 ```
 
-Tests use synthetic, redistributable DOS fixtures, actual v86 execution, the
-real interrupt trampolines, actual ISO9660/FAT12 medium reads, and the real
-LaunchPad filesystem bridge in a QEMU 486 guest. They cover COM/MZ loading,
-relocations, console output, virtual flags and chained interrupt vectors,
-file reads/seeks/EOF/write denial, memory allocation, F8 cancellation during
-blocking input and a CLI loop, invalid/protected-memory accesses, private BDA
-writes, repeated launches, host state restoration, and native IPGM/ELF
-execution afterwards. LaunchPad compiles with floppy support enabled/disabled.
+`MSDOS_DISK_DIR` is a CMake cache setting. The preparation script accepts the
+uploaded filenames with their suffixes as well as the names above. It checks
+the 1.44 MB FAT12 image layout and Disk 1's system files, then copies the
+original images unchanged to the ISO root:
 
-The final test boots the complete OS, opens LaunchPad with normal keyboard
-input, launches COM and MZ programs from each medium, acknowledges completion,
-and returns to a working shell.
+| Supplied disk | ISO filename |
+|---|---|
+| Disk 1 | `D6221.IMG` |
+| Disk 2 | `D6222.IMG` |
+| Disk 3 | `D6223.IMG` |
+| Supplemental disk | `D622S.IMG` |
 
-To test the supplied Creature executable without bundling third-party code:
+The build does not download DOS or require the previously supplied DOS 4
+source. Without installation images, an existing virtual HDD can still boot,
+but first-time creation needs Disk 1. A detected but unreadable installation
+image produces an error rather than silently substituting another disk.
 
-```bash
-python3 tests/run_creature_dos_test.py /path/to/CREATURE.EXE /tmp/inteilidos-test-build/inteilidOS.elf
+## Commands, drives, and controls
+
+At inteiliShell:
+
+```text
+MS-DOS
+MS-DOS /IMAGE GAME.IMG
 ```
 
-These checks do **not** certify arbitrary DOS applications or 86Box itself.
+The second form mounts a 720 KB or 1.44 MB floppy image from the CD's root as
+A:, while still booting DOS from C:. Keep the standard DOS images on that CD
+too: the current CD discovery path looks for `D6221.IMG`.
 
-### Still Alive
+| Drive/key | Meaning |
+|---|---|
+| C: | Writable, persistent private DOS hard drive |
+| A: | Read-only installation/game floppy media |
+| F6 | Cycle Disk 1, Disk 2, Disk 3, and the supplemental image |
+| F7 | Select the real 1.44 MB floppy drive as A: |
+| F8 | Stop the guest and return to inteiliShell |
 
-```bash
-python3 tests/run_stillalive_dos_test.py /path/to/STILLALI.EXE /tmp/inteilidos-test-build/inteilidOS.elf --full
+The emulator reports media changes to DOS so its cached A: directory is
+invalidated after a swap. A missing disk or read error is reported to DOS.
+Writes to either image-backed or physical A: media are rejected.
+
+DOS does **not** see the native ISO filesystem as a D: CD drive. Use floppy
+images on the CD, or a physical floppy, to supply programs and their data.
+ATAPI/MSCDEX CD-ROM drivers are not implemented.
+
+## Install and run programs
+
+Use ordinary DOS commands and compatible installers, choosing a destination
+on C:. For example, if A: contains `GAME.EXE`:
+
+```dos
+MKDIR C:\GAMES
+COPY A:\GAME.EXE C:\GAMES
+CD C:\GAMES
+GAME
 ```
 
-The supplied EXE completed its full playback from both floppy and CD-ROM,
-with advancing text, a captured PC-speaker waveform, and exit code 0.
-The test rejects BASIC runtime errors, relaunches to test F8, and verifies
-that the shell still works. Its WAV captures and disk images are temporary;
-the uploaded EXE is unchanged and is not bundled into the test sources.
+Copy required data files too, or run the program's installer from A: and
+select C: as its destination. F6 switches the supplied DOS installation
+images; F7 selects a physical game floppy. The mounted `/IMAGE` game disk is
+replaced when one of these media-selection keys is used.
+
+Files installed on C: remain available on subsequent visits and after a host
+restart. Exit applications normally and save/close files before pressing F8.
+F8 is an immediate stop, not a program-specific save or DOS shutdown command:
+completed sector writes persist, but unsaved application state and pending
+guest buffers can be lost, and interrupted filesystem operations can leave
+the private DOS volume inconsistent.
+
+## How the emulator works
+
+1. The native command locates an existing `MSDOS622.HDD` on an installed
+   inteiliDOS filesystem, or reserves a new extent on a valid filesystem.
+2. First-time setup initializes a private MBR and FAT16 partition, copies
+   `IO.SYS`, `MSDOS.SYS`, `COMMAND.COM`, and Disk 1 utilities, and writes a small
+   `AUTOEXEC.BAT` with a C: command prompt and path. It does not run Microsoft's
+   physical-machine SETUP program or enable the DriveSpace driver.
+3. A native interpreter executes the companion BIOS in fresh private guest
+   RAM. The BIOS boots the virtual HDD, which then starts the actual DOS kernel
+   and command interpreter. DOS itself handles COM/MZ loading, directories,
+   batch files, nested EXEC, and file operations.
+4. BIOS disk transfers are translated to bounded sectors within the native
+   image file, or to read-only floppy-image/physical-floppy reads.
+5. Guest keyboard, timer, video and speaker state is adapted to native
+   services. F8 is polled independently of the guest's interrupt-enable flag.
+6. On return, guest audio is stopped and the native display is restored.
+   Each later launch resets guest RAM; only the disk contents persist.
+
+The virtual HDD contains 32,760 sectors of 512 bytes (approximately 16 MB)
+with a FAT16 partition starting at virtual LBA 1. It is stored as
+`MSDOS622.HDD` in the native filesystem, not as a physical DOS partition.
+Guest disk operations, including DOS formatting tools, cannot address sectors
+outside that private extent.
+
+## Compatibility and host safety
+
+- The guest is an 8086/80186-class PC with 640 KB conventional memory.
+  The host remains a native protected-mode inteiliDOS machine; this is a
+  software interpreter, not hardware VM86 execution or a host DOS reboot.
+- Text output, CGA/Hercules graphics, and PC-speaker tones are supported.
+  Native VGA renders the guest graphics, with saved font-plane data and DAC
+  palette restored when returning to text mode.
+- Guest port I/O affects private emulated state. It cannot reprogram the
+  host PIC, system PIT channel, or keyboard controller. Speaker output uses
+  bounded native speaker routines and is stopped on exit.
+- DOS disk access is restricted to the private C: image. The emulator does
+  not format an unrecognized physical disk, and refuses a wrongly sized
+  existing image instead of overwriting it.
+- Image creation publishes the native directory entry only after successful
+  initialization. Failed setup or cancellation leaves existing native files
+  intact; ordinary native document saves cannot truncate the large DOS image.
+- The interpreter is not cycle-accurate. Software timing and Turbo Pascal CRT
+  calibration can depend on execution speed; selecting a QEMU 486 CPU is not
+  by itself a guarantee of historical CPU timing.
+
+Not implemented: 286/386 protected-mode software, DOS extenders, DPMI,
+EMS/XMS managers, x87, EGA/VGA-specific graphics, Sound Blaster or other sound
+cards, DOS networking, and native CD-ROM drivers. Windows NE/LE/LX/PE
+executables are not supported. Unsupported CPU instructions stop the emulator
+with an explicit diagnostic. An unimplemented device is not a promise that
+the emulator can run every program probing that device.
+
+For a backup, stop the guest and back up the host disk image using appropriate
+host/emulator tools. Editing or deleting `MSDOS622.HDD` loses the DOS
+installation and its saved files; do not treat it as an editable text document.
+
+## Troubleshooting
+
+| Message/problem | Action |
+|---|---|
+| Needs an installed inteiliDOS HDD | Install the native OS/filesystem on the intended disk first; the DOS command deliberately will not format it |
+| DOS boot disk missing | Rebuild the ISO with the four images using `MSDOS_DISK_DIR`, then insert it |
+| Could not create DOS HDD | Check native free space, directory capacity, disk I/O, and whether initialization was cancelled |
+| Invalid virtual HDD size | Preserve/back up the image and investigate; it will not be automatically replaced |
+| Cannot read that floppy image | Check its supported size, CD-root filename, and the presence of `D6221.IMG` on the same CD |
+| Unsupported CPU instruction | Check whether the program needs a newer CPU, protected mode, or an FPU |
+| A: write failure | A: is deliberately read-only; install programs and store saves on C: |
+| Disk I/O failed | Stop and investigate the underlying native storage rather than assuming writes succeeded |
+
+## Verification and developer reference
+
+From the OS source directory:
+
+```sh
+python3 tests/build_test_kernel.py /tmp/msdos622-build
+python3 tests/run_msdos622_test.py /tmp/msdos622-build/inteilidOS.elf
+```
+
+The integration test needs the supplied images in `../attached_assets` and
+GCC/binutils, NASM, Python 3, xorriso, and QEMU. It checks real DOS 6.22 boot,
+installed/nested COMMAND.COM, DEBUG.EXE, persistence across F8, re-entry and a
+host restart, F8 through guest CLI, 80186 instructions, CGA, speaker register
+handling, CD-hosted game media, physical floppy reads, media swaps, preservation
+of a native file, and byte-for-byte preservation of unformatted/too-small
+physical disks. Native DOS and returned-shell screenshots are written under
+the repository's ignored `generated-artifacts/msdos622` directory.
+
+Older `run_launchpad_dos_test.py`, Creature, and Still Alive v86 tests describe
+the retired LaunchPad DOS path; their historical results do not certify this
+emulator. The current test reuses the QEMU guest helper from the old test file,
+not its old direct-launch assertions. QEMU testing does not certify 86Box or
+physical hardware.
+
+See [for_developers.md](for_developers.md#ms-dos-622-emulator) for implementation
+details and extension rules, and [kernel/msdos/README.md](kernel/msdos/README.md)
+for upstream provenance. The 8086tiny interpreter and companion BIOS are
+MIT-licensed; retain `kernel/msdos/LICENSE.txt`. Microsoft's DOS binaries
+retain their original license, independently of the emulator's license.

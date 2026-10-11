@@ -581,9 +581,7 @@ static int sh_int_to_buf(char *buf, int pos, int maxpos, int32_t v) {
     return pos;
 }
 
-/* CSV export dialog: ask for filename, device, then "export" the grid.
- * Because ATA disk I/O is not yet implemented the data stays in-memory,
- * but the full dialog and CSV generation path are in place for when it is. */
+/* CSV export dialog: ask for filename and native volume, then save the grid. */
 static void sh_save_csv(void) {
     /* Step 1 — filename */
     char fn[56];
@@ -596,7 +594,7 @@ static void sh_save_csv(void) {
 
     /* Step 2 — device */
     sh_fill_row(SH_STAT_ROW, VGA_COLOR_BLACK, VGA_COLOR_LIGHT_GREY);
-    const char *dlabel = "  Save to: [1] Internal HDD (C:\\)  [2] External device (D:\\)  [Esc] Cancel";
+    const char *dlabel = "  Save to: [1] Internal HDD (C:\\)  [2] Other native HDD (D:\\)  [Esc] Cancel";
     for (int i = 0; dlabel[i] && i < 80; i++)
         sh_poke(SH_STAT_ROW, i, dlabel[i], VGA_COLOR_BLACK, VGA_COLOR_LIGHT_GREY);
 
@@ -673,9 +671,9 @@ static void sh_save_csv(void) {
     }
     csv_buf[cp] = '\0';
 
-    /* Step 4 — write CSV bytes to ATA drive */
+    /* Step 4 — write CSV bytes to logical native volume */
     uint8_t drv = (uint8_t)(choice - 1);
-    int rc = fs_write(drv, fn, (const uint8_t *)csv_buf, (uint32_t)cp);
+    int rc = fs_volume_write(drv, fn, (const uint8_t *)csv_buf, (uint32_t)cp);
 
     if (rc == FS_OK) sh_dirty = 0;
 
@@ -694,7 +692,9 @@ static void sh_save_csv(void) {
     } else {
         const char *err =
             (rc == FS_ERR_NODRV) ? "  Save failed: no drive found.  [any key]" :
-            (rc == FS_ERR_FULL)  ? "  Save failed: disk directory full.  [any key]" :
+            (rc == FS_ERR_FULL)  ? "  Save failed: native storage full.  [any key]" :
+            (rc == FS_ERR_LAYOUT) ? "  Unsafe disk layout; back up first.  [any key]" :
+            (rc == FS_ERR_NODIR) ? "  No native directory; disk unchanged.  [any key]" :
             (rc == FS_ERR_BIG)   ? "  Save failed: file too large.  [any key]" :
                                    "  Save failed: disk I/O error.  [any key]";
         for (int i = 0; err[i] && mi < 79; i++) msg[mi++] = err[i];
@@ -736,7 +736,7 @@ static void sh_load_csv(void) {
 
     /* Step 2 — device */
     sh_fill_row(SH_STAT_ROW, VGA_COLOR_BLACK, VGA_COLOR_LIGHT_GREY);
-    const char *dlabel = "  Load from: [1] Internal HDD (C:\\)  [2] External device (D:\\)  [Esc] Cancel";
+    const char *dlabel = "  Load from: [1] Internal HDD (C:\\)  [2] Other native HDD (D:\\)  [Esc] Cancel";
     for (int i = 0; dlabel[i] && i < 80; i++)
         sh_poke(SH_STAT_ROW, i, dlabel[i], VGA_COLOR_BLACK, VGA_COLOR_LIGHT_GREY);
 
@@ -758,7 +758,7 @@ static void sh_load_csv(void) {
     static uint8_t csv_buf[SH_CSV_MAX];
     uint8_t drv = (uint8_t)(choice - 1);
     uint32_t read_len = 0;
-    int rc = fs_read(drv, fn, csv_buf, SH_CSV_MAX - 1, &read_len);
+    int rc = fs_volume_read(drv, fn, csv_buf, SH_CSV_MAX - 1, &read_len);
 
     if (rc != FS_OK) {
         const char *err =
