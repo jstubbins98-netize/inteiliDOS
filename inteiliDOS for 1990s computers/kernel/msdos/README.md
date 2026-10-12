@@ -8,7 +8,9 @@ still launch through LaunchPad.
 ## Build and media
 
 Build normally with `build.sh`; the OS ISO contains no DOS disk images.
-Users supply their DOS media separately.
+Users supply their DOS media separately. Reference images are retained
+outside the OS source folder in `../MS-DOS_disks`, not in the OS distribution.
+No DOS binaries are downloaded.
 
 To make a separate DOS media CD, put your four licensed images in a folder,
 named `Disk1.img`, `Disk2.img`, `Disk3.img`, and `Suppdisk.img`, then run:
@@ -80,4 +82,5 @@ decode entries, bounds disk transfers, separates native device state, and
 resets guest RAM for each session.
 
 Microsoft's supplied DOS binaries retain their original license; the
-emulator's MIT license does not license DOS itself.
+emulator's MIT license does not license DOS itself. The earlier uploaded
+DOS 4 source is not required to build or run this DOS 6.22 environment.
