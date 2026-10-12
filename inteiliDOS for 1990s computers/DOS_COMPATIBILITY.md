@@ -5,11 +5,6 @@ MS-DOS 6.22 system files supplied on the installation disks. DOS has its own
 memory, BIOS, command prompt, and persistent virtual hard drive. F8 stops the
 emulator and returns to inteiliShell without rebooting inteiliDOS.
 
-This replaces the earlier LaunchPad Virtual 8086 compatibility path. DOS
-programs are no longer launched directly through LaunchPad or `RUN /DOS`;
-those paths direct users to `MS-DOS`. Native IPGM and ELF applications still
-use LaunchPad as before.
-
 ## Build and first launch
 
 1. Build with `bash build.sh` and boot the new inteiliDOS image.
