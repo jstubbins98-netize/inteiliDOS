@@ -119,6 +119,8 @@ Host HDD space
   Files installed there persist across emulator sessions and host reboots.
 
 DOS installation media
+  The supplied source images are stored in MS-DOS_disks inside the
+  inteiliDOS source folder, named Disk1.img, Disk2.img, Disk3.img and Suppdisk.img.
   First-time creation requires a valid MS-DOS 6.22 Disk 1 image on the OS CD.
   Build the ISO with the supplied Disk 1, Disk 2, Disk 3, and supplemental
   images. Their ISO-root names are:

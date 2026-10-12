@@ -8,7 +8,7 @@ still launch through LaunchPad.
 ## Build and media
 
 Build normally with `build.sh`. In this repository the build finds the four
-uploaded images in the adjacent `attached_assets` folder and copies them to
+supplied images in the source folder's `MS-DOS_disks` directory and copies them to
 the ISO root as `D6221.IMG`, `D6222.IMG`, `D6223.IMG`, and `D622S.IMG`.
 No DOS binaries are downloaded.
 

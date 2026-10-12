@@ -25,6 +25,7 @@ static iso9660_dirent_t floppy_entry;
 static uint8_t media_cache[2048];
 static uint32_t media_cached_lba;
 static int disc = -1, media_index, physical, pending = -1, io_failed;
+static int auto_media;
 static int media_changed;
 static uint16_t screen[2000], saved[2000];
 static int row, col, save_row, save_col, region_top, region_bottom;
@@ -136,12 +137,16 @@ void msdos_pc_putchar(uint8_t c) {
 static uint32_t rtc_base;
 static unsigned rtc_year, rtc_month, rtc_day;
 static uint8_t cmos(uint8_t reg) {
+#ifdef MSDOS_TEST_CMOS
+    return MSDOS_TEST_CMOS(reg);
+#else
     uint8_t previous, value;
     __asm__ volatile("inb $0x70,%0":"=a"(previous));
     __asm__ volatile("outb %0,$0x70"::"a"((uint8_t)((previous&0x80)|reg)));
     __asm__ volatile("inb $0x71,%0":"=a"(value));
     __asm__ volatile("outb %0,$0x70"::"a"(previous));
     return value;
+#endif
 }
 static unsigned rtc_value(uint8_t reg, int binary) {
     unsigned x=cmos(reg);
@@ -183,6 +188,21 @@ void msdos_pc_rtc(uint8_t *p) {
     w16(p+36,ticks%1000);
 }
 
+static int find_install_cd(void) {
+    disc=-1;
+    const cdrom_drive_t *drives=cdrom_drives();
+    for (unsigned d=0;d<CDROM_MAX_DRIVES;d++) {
+        if (!drives[d].present) continue;
+        cdrom_rescan_media(d);
+        iso9660_dirent_t e;
+        if (iso9660_find_file(d,media_names[0],&e)==1) {
+            disc=(int)d;
+            return 0;
+        }
+    }
+    return -1;
+}
+
 static int load_media(int index, const char *name) {
     if (disc<0) return -1;
     iso9660_dirent_t e;
@@ -200,6 +220,12 @@ int msdos_media_changed(void) {
     int changed=media_changed;media_changed=0;return changed;
 }
 static int read_floppy(uint32_t offset, uint8_t *data, uint32_t length) {
+    /* Existing DOS C: does not depend on the installation CD. Mount optional
+     * A: media only if the guest actually requests a floppy read. */
+    if (auto_media) {
+        auto_media=0;
+        if (!find_install_cd()) load_media(0,media_names[0]);
+    }
     if (!floppy_size || offset>=floppy_size || length>floppy_size-offset) return -1;
     while (length) {
         uint32_t lba=floppy_entry.lba+offset/2048, in=offset%2048;
@@ -242,12 +268,13 @@ int msdos_pc_poll(const uint8_t *ram, const uint8_t *ports) {
     int key=keyboard_poll();
     if (key==KEY_F8 || io_failed) return 1;
     if (key==KEY_F1+5) {
-        int next=(media_index+1)%4;
-        if (load_media(next,media_names[next])) {
+        auto_media=0;
+        int next=(floppy_size || physical) ? (media_index+1)%4 : 0;
+        if ((disc<0 && find_install_cd()) || load_media(next,media_names[next])) {
             vga_puts("MS-DOS: could not load next installation disk.\n");
-            io_failed=1; return 1;
+            /* Optional A: media failure must not stop the saved DOS C:. */
         }
-    } else if (key==KEY_F1+6) {physical=1; media_changed=1; pending=-1;}
+    } else if (key==KEY_F1+6) {auto_media=0;physical=1; media_changed=1; pending=-1;}
     else if (key>=0 && pending<0) {
         int symbol=key;
         if (key>=KEY_UP && key<=KEY_RIGHT) {
@@ -406,40 +433,66 @@ done:
     kfree(fat);kfree(root);kfree(source_root);kfree(source_fat);return rc;
 }
 
-int msdos_run(int argc, const char *argv[]) {
+/* Keep storage/media selection separate from physical VGA/CMOS and CPU entry
+ * so selection, recovery and refusal paths can be tested without host I/O. */
+static int prepare_disk(int argc, const char *argv[]) {
     if (argc && kstrcmp(argv[0],"/IMAGE") && kstrcmp(argv[0],"/image")) {
         vga_puts("Usage: MS-DOS [/IMAGE <720K or 1.44M floppy image on CD>]\n");return 1;
     }
     if (argc && argc!=2) {vga_puts("MS-DOS /IMAGE requires a filename.\n");return 1;}
     floppy_size=0; disc=-1; pending=-1; io_failed=0; media_index=0;physical=0;
+    auto_media=0;
     int existing=-1, candidate=-1;
     uint8_t native_drive;
     int storage_rc=fs_volume_drive(0, &native_drive);
     if (storage_rc) return disk_failure(storage_rc);
     storage_rc=fs_image_open(native_drive,IMAGE_NAME,&hard);
     if (!storage_rc) existing=native_drive;
-    else if (storage_rc==FS_ERR_NOTFOUND) candidate=native_drive;
+    else if (storage_rc==FS_ERR_NOTFOUND) {
+        /* CD and HDD boot can select different native C: volumes. Reopen a
+         * unique saved image rather than creating another on the new C:. */
+        fs_image_t found;
+        int found_drive=-1;
+        for (uint8_t d=0;d<ATA_MAX_DRIVES;d++) {
+            if (d==native_drive) continue;
+            fs_image_t image;
+            int rc=fs_image_open(d,IMAGE_NAME,&image);
+            if (rc==FS_ERR_IO) return disk_failure(rc);
+            if (rc) continue; /* absent/foreign/unsafe volumes are unchanged */
+            if (found_drive>=0) {
+                vga_puts("MS-DOS: multiple saved DOS HDDs found on other native drives.\n"
+                         "Select the intended native C: before launching; no files changed.\n");
+                return 1;
+            }
+            found=image;found_drive=d;
+        }
+        if (found_drive>=0) {hard=found;existing=found_drive;}
+        else candidate=native_drive;
+    }
     else return disk_failure(storage_rc);
     if (existing>=0 && hard.sectors!=DISK_SECTORS) {
         vga_puts("MS-DOS: invalid virtual HDD size; refusing to overwrite it.\n");return 1;
     }
     if (existing<0 && reserve_disk(candidate)) return 1;
-    for (unsigned d=0;d<4;d++) {
-        iso9660_dirent_t e;
-        if (iso9660_find_file(d,"D6221.IMG",&e)==1) {disc=d;break;}
-    }
     if (existing<0) {
-        if (load_media(0,media_names[0])) {
+        if (find_install_cd() || load_media(0,media_names[0])) {
             vga_puts("DOS boot disk missing: rebuild the ISO with the supplied DOS disks.\n");return 1;
         }
         int rc=seed_disk();
         if (rc) return disk_failure(rc);
-    } else if (disc>=0 && load_media(0,media_names[0])) {
-        vga_puts("MS-DOS: installation media could not be read.\n");return 1;
+    } else {
+        vga_printf("Booting saved DOS HDD on native drive %u; installation CD not required.\n",
+                   (unsigned)hard.drive);
+        auto_media=!argc;
     }
-    if (argc && load_media(-1,argv[1])) {
+    if (argc && ((disc<0 && find_install_cd()) || load_media(-1,argv[1]))) {
         vga_puts("Cannot read that floppy image from the CD.\n");return 1;
     }
+    return 0;
+}
+
+int msdos_run(int argc, const char *argv[]) {
+    if (prepare_disk(argc,argv)) return 1;
     int sr,sc;
     vga_get_cursor(&sr,&sc);
     for (int i=0;i<2000;i++) saved[i]=SCREEN[i];

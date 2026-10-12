@@ -5,6 +5,10 @@
 #include "fs_layout_test.c"
 #undef main
 #include <stdarg.h>
+static uint8_t forbidden_cmos(uint8_t reg) {
+    (void)reg;assert(!"storage refusal accessed physical CMOS");return 0;
+}
+#define MSDOS_TEST_CMOS forbidden_cmos
 #include "../kernel/msdos/platform.c"
 
 static char output[8192];
@@ -50,6 +54,11 @@ int cdrom_read_sector(uint8_t d,uint32_t lba,uint8_t *b) {
     if (fail_media || lba>=FLOPPY_BYTES/2048) return -1;
     memcpy(b,floppy+(size_t)lba*2048,2048);return 0;
 }
+const cdrom_drive_t *cdrom_drives(void) {
+    static const cdrom_drive_t drives[CDROM_MAX_DRIVES]={{.present=1}};
+    return drives;
+}
+uint32_t cdrom_rescan_media(uint8_t d) {(void)d;return FLOPPY_BYTES/2048-1;}
 
 static void fixture(uint32_t sectors) {
     total=sectors;

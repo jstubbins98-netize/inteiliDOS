@@ -24,10 +24,10 @@ use LaunchPad as before.
 4. Type `MS-DOS` at inteiliShell. The emulator creates its private DOS HDD,
    installs the boot files and Disk 1 utilities, and starts the DOS `C:\>` prompt.
 
-In the repository, the ISO build looks for the four uploaded disk images in
-the adjacent `attached_assets` directory. For a separate source download,
-put your four images in a directory as `Disk1.img`, `Disk2.img`, `Disk3.img`,
-and `Suppdisk.img`, then build with:
+By default, the ISO build reads the four supplied images from `MS-DOS_disks`
+inside the inteiliDOS source folder: `Disk1.img`, `Disk2.img`, `Disk3.img`,
+and `Suppdisk.img`. Keep this folder with a separate source download.
+To use a different image directory, build with:
 
 ```sh
 bash build.sh "-DMSDOS_DISK_DIR=/absolute/path/to/dos-disks"
@@ -46,9 +46,25 @@ original images unchanged to the ISO root:
 | Supplemental disk | `D622S.IMG` |
 
 The build does not download DOS or require the previously supplied DOS 4
-source. Without installation images, an existing virtual HDD can still boot,
-but first-time creation needs Disk 1. A detected but unreadable installation
-image produces an error rather than silently substituting another disk.
+source. First-time creation needs Disk 1. Once `MSDOS622.HDD` has been
+successfully created, ordinary `MS-DOS` startup uses that saved disk without
+probing the CD-ROM or requiring the ISO to remain inserted. This also applies
+after booting inteiliDOS directly from the HDD.
+
+The saved image on native C: takes precedence. If C: has no image, the emulator
+looks for a single existing image on another safe native disk and reuses it.
+Multiple alternative images, a wrong-sized image, or an I/O error cause a
+refusal rather than overwriting data or choosing a disk silently.
+
+Installation A: media is loaded on demand; F6 can retry after inserting the
+CD. Missing optional media does not terminate DOS running from its saved C:.
+Explicit `MS-DOS /IMAGE ...` still requires the requested image on the CD,
+and unreadable media produces an error rather than a substitute.
+
+Rebuilding the ISO does not update a kernel already installed on an HDD.
+That installed kernel must also be updated to use changes when booting from
+the HDD. Do not erase or clean-install over a disk containing games or saves
+just to apply an emulator fix.
 
 ## Commands, drives, and controls
 
@@ -182,7 +198,7 @@ python3 tests/build_test_kernel.py /tmp/msdos622-build
 python3 tests/run_msdos622_test.py /tmp/msdos622-build/inteilidOS.elf
 ```
 
-The integration test needs the supplied images in `../attached_assets` and
+The integration test needs the supplied images in `MS-DOS_disks` and
 GCC/binutils, NASM, Python 3, xorriso, and QEMU. It checks real DOS 6.22 boot,
 installed/nested COMMAND.COM, DEBUG.EXE, persistence across F8, re-entry and a
 host restart, F8 through guest CLI, 80186 instructions, CGA, speaker register

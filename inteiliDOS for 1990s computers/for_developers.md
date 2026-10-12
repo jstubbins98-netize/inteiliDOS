@@ -416,8 +416,8 @@ For build setup, controls, installation examples and troubleshooting, see
 | `tests/run_msdos622_test.py`, `msdos622_fixture.asm` | Complete-OS integration test and 80186/CGA/speaker COM fixture |
 
 The CPU, platform and device sources are included in `KERNEL_C_SOURCES`.
-The ISO build uses the `MSDOS_DISK_DIR` cache path (by default the adjacent
-`attached_assets`) and prepares `D6221.IMG`, `D6222.IMG`, `D6223.IMG`,
+The ISO build uses the `MSDOS_DISK_DIR` cache path (by default `MS-DOS_disks`
+inside the source folder) and prepares `D6221.IMG`, `D6222.IMG`, `D6223.IMG`,
 and `D622S.IMG`. DOS binaries remain external input images; they are not linked
 into the kernel and the DOS 4 source build is not part of this path.
 
@@ -523,7 +523,7 @@ python3 tests/build_test_kernel.py /tmp/msdos622-build
 python3 tests/run_msdos622_test.py /tmp/msdos622-build/inteilidOS.elf
 ```
 
-The test requires the four supplied disks in `../attached_assets`, QEMU,
+The test requires the four supplied disks in `MS-DOS_disks`, QEMU,
 xorriso, NASM, Python 3 and the GCC/binutils build tools. It verifies DOS 6.22,
 COM and MZ execution, installation and persistence after re-entry/reboot,
 F8 through CLI, 80186 instructions, graphics/speaker handling, CD-hosted game

@@ -12,11 +12,11 @@ From the OS source directory:
 
 ```bash
 python3 tests/build_test_kernel.py /tmp/hdd-cold-build
-python3 tests/run_hdd_cold_boot_test.py /tmp/hdd-cold-build/inteilidOS.elf ../attached_assets
+python3 tests/run_hdd_cold_boot_test.py /tmp/hdd-cold-build/inteilidOS.elf MS-DOS_disks
 ```
 
 With no arguments the runner builds its own temporary kernel and uses the
-uploaded DOS disks in `../attached_assets`. Requires GCC/binutils, NASM, QEMU
+supplied DOS disks in `MS-DOS_disks`. Requires GCC/binutils, NASM, QEMU
 i386, xorriso and the four user-supplied MS-DOS 6.22 disk images (never
 downloaded). All HDDs, installation media and QMP snapshots are temporary;
 no user disk or configuration is modified.
@@ -143,6 +143,19 @@ See `../SYSTEM_HEALTH.md` for the tabs, read-only checks and limitations.
 This runner includes focused real-i386 SMART/heap/alert tests and complete-OS
 keyboard/UI tests with absent, normal, multiple and read-failing HDDs. It
 checks live updates and compares full disk-image hashes before/after.
+
+### Saved DOS startup without the installation CD
+
+```bash
+python3 tests/run_msdos_reopen_test.py
+```
+
+This host test checks CD-independent disk selection, recovery from another
+native volume, ambiguous/invalid/unreadable-image refusal, and nonfatal
+optional-floppy failure. It never accesses physical CMOS or VGA.
+`run_msdos622_test.py` also ejects the ISO between actual DOS sessions and
+checks saved files. `run_hdd_cold_boot_test.py` checks real BIOS HDD-only
+startup without a kernel loader or CD.
 
 ### Setup wizard and legacy ATA writes
 

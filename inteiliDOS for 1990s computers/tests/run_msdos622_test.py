@@ -47,7 +47,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="inteilidos-msdos622-") as folder:
         tmp=Path(folder)
         kernel=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else build(tmp/"build")
-        media=Path(sys.argv[2]).resolve() if len(sys.argv)>2 else ROOT.parent/"attached_assets"
+        media=Path(sys.argv[2]).resolve() if len(sys.argv)>2 else ROOT/"MS-DOS_disks"
         prepare(media,tmp/"disc")
         run("nasm","-f","bin",ROOT/"tests/msdos622_fixture.asm","-o",tmp/"pc.com")
         (tmp/"game.img").write_bytes(fat12_image({"PC.COM":(tmp/"pc.com").read_bytes(),
@@ -106,6 +106,11 @@ def main():
             time.sleep(1)
             guest.key("f8")
             guest.wait("Returned from MS-DOS")
+            # Keep the same host session but eject the installation ISO.
+            # Saved DOS C: and installed programs must not depend on that CD.
+            cd=next(b["device"] for b in guest.command("query-block")
+                    if b.get("inserted",{}).get("file")==str(tmp/"dos.iso"))
+            guest.command("eject",{"device":cd,"force":True})
             shell(guest,"ms-dos")
             guest.wait("MS-DOS 6.22 -")
             guest.wait("C:\\>")
@@ -114,7 +119,7 @@ def main():
             guest.wait("DOS-SAVED")
             guest.key("f8")
             guest.wait("Returned from MS-DOS")
-            print("PASS: real DOS 6.22, nested COM execution, install, writes, F8 and re-entry",flush=True)
+            print("PASS: real DOS 6.22, nested COM execution, install, writes, F8 and re-entry with CD ejected",flush=True)
         finally: guest.close()
         guest=start()
         try:
@@ -186,8 +191,8 @@ def main():
             assert f.read(11)==b"KEEP-NATIVE", "Native file was damaged"
         print("PASS: original native file preserved",flush=True)
         # Refuse physical formatting and insufficient-space allocations.
-        for formatted, expected in ((False,"No physical disk was formatted"),
-                                    (True,"Could not create DOS HDD")):
+        for formatted, expected in ((False,"no physical disk was formatted"),
+                                    (True,"insufficient disk space")):
             small=tmp/"small.img"
             with small.open("wb") as f: f.truncate(5*1024*1024)
             if formatted:
