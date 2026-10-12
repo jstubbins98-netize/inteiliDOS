@@ -9,6 +9,9 @@ computers from the 1990s, beginning with the Intel 80386 instruction set.
 It is not Linux, DOS, or a hosted application. The boot code, kernel, device
 drivers, shell, applications, and games run directly on the computer.
 
+`MS-DOS` opens a separate MS-DOS 6.22 software emulator with a persistent
+private C: drive; F8 returns to inteiliShell.
+
 ## Compatibility baseline
 
 The universal build favors standardized legacy interfaces:
@@ -35,8 +38,7 @@ Kernel C code is compiled with:
 The operating system does not require CPUID, CMOV, MMX, SSE, APIC, USB, ACPI,
 or PCI to start. Optional drivers can use later hardware when it is present.
 
-See COMPATIBILITY.md for detailed boundaries and testing
-recommendations.
+See COMPATIBILITY.md for detailed boundaries and testing recommendations.
 
 ## Features
 
@@ -262,7 +264,7 @@ shell/                        IntelliShell and built-in applications
 shell/sam/                    SAM speech synthesizer
 tetris/                       Tetris game
 daisy_bell_easter_egg/        Daisy Bell demonstration
-still_alive_easter_egg/       Still Alive demonstration
+want_you_gone_easter_egg/     GLADOS: Want You Gone, amber-screen lyrics + MIDI
 grub/                         GRUB configurations
 cmake/                        Toolchain and binary-header helpers
 configurations/config.h       Generated target-computer hardware profile
