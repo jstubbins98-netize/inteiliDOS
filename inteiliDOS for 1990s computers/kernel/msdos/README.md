@@ -37,9 +37,10 @@ An already initialized virtual HDD can boot without the CD.
 - Install programs using normal DOS commands/installers, directing their
   destination to `C:\GAMES` or another C: directory.
 - `A:` is read-only installation/game media. F6 cycles Disk 1, Disk 2, Disk 3,
-  and the supplemental disk. F7 mounts the real 1.44 MB floppy drive.
+  and the supplemental disk. F7 selects the physical floppy drive and
+  reprobes its media; press it again after changing the mounted disk.
   Missing/unreadable disks produce DOS disk errors.
-- `MS-DOS /IMAGE GAME.IMG` mounts a 720 KB or 1.44 MB floppy image stored in
+- `MS-DOS /IMAGE GAME.IMG` mounts a 360 KB, 720 KB, 1.2 MB or 1.44 MB floppy image stored in
   the CD's root as A:, while still booting from the persistent C: drive.
 - F8 stops the guest and returns to inteiliShell, even after guest CLI or HLT.
   Close files and save inside DOS programs first: F8 is an immediate stop,

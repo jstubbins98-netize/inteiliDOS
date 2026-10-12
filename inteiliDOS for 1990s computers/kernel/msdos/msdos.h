@@ -14,4 +14,5 @@ void msdos_devices_update(const uint8_t *ram, const uint8_t *ports);
 void msdos_devices_restore(void);
 int msdos_devices_graphics(void);
 int msdos_media_changed(void);
+int msdos_pc_floppy_params(unsigned *sectors, unsigned *spt);
 #endif

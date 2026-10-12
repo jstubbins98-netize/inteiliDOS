@@ -5,9 +5,9 @@
  * Drives the primary FDC in DMA mode (ISA DMA channel 2).
  * Compatible with the PIIX4E integrated FDC on the HP Vectra VEi8.
  *
- * 1.44 MB 3.5" geometry assumed:
- *   80 tracks  ×  2 heads  ×  18 sectors/track  =  2880 logical sectors
- *   512 bytes per sector, MFM, 500 Kbps data rate
+ * DOS BPB geometry detected on first use:
+ *   360K/720K/1.2M/1.44M, two heads, 512-byte MFM sectors.
+ *   Probe 500/250/300 kbps; use the disk's actual sectors per track.
  *
  * IRQ6 (the floppy interrupt) is masked at the 8259 PIC during all
  * FDC operations so that the lack of an IRQ6 handler does not cause a
@@ -141,6 +141,11 @@ static uint8_t *fdc_get_dma_ptr(void) {
 /* ── Per-drive state ──────────────────────────────────────────────────── */
 static uint8_t fdc_cur_track[2] = { 0xFFu, 0xFFu };  /* 0xFF = unknown */
 static uint8_t fdc_motor_on     = 0;                  /* bitmask        */
+typedef struct {
+    uint16_t sectors;
+    uint8_t spt, rate, step, known;
+} floppy_geometry_t;
+static floppy_geometry_t geometry[2]={{2880,18,0,1,0},{2880,18,0,1,0}};
 
 /* Last error recorded by fdc_read_sector (0 = success). */
 static int fdc_last_err = 0;
@@ -175,12 +180,36 @@ static int fdc_recv(void) {
 }
 
 /* ── SENSE INTERRUPT STATUS ───────────────────────────────────────────── */
-static void fdc_sense_irq(uint8_t *st0_out, uint8_t *pcn_out) {
-    fdc_send(CMD_SENSE_INT);
+static int fdc_sense_irq(uint8_t *st0_out, uint8_t *pcn_out) {
+    if (fdc_send(CMD_SENSE_INT)) return -1;
     int st0 = fdc_recv();
+    if (st0<0) return -1;
+    if (st0==0x80) return 1; /* no pending interrupt: no PCN byte follows */
     int pcn = fdc_recv();
-    if (st0_out) *st0_out = (uint8_t)(st0 < 0 ? 0 : st0);
-    if (pcn_out) *pcn_out = (uint8_t)(pcn < 0 ? 0 : pcn);
+    if (pcn<0) return -1;
+    if (st0_out) *st0_out = (uint8_t)st0;
+    if (pcn_out) *pcn_out = (uint8_t)pcn;
+    return 0;
+}
+
+static int fdc_wait_seek(uint8_t drive, uint8_t target) {
+    uint32_t start=timer_get_ticks();
+    for (unsigned tries=0;tries<300;tries++) {
+        uint8_t st0,pcn;
+        int rc=fdc_sense_irq(&st0,&pcn);
+        if (rc<0) return -1;
+        if (!rc && (st0&3)==drive) {
+            /* Require successful seek-end AND the requested physical cylinder.
+             * An abnormal recalibration must not be cached as track zero. */
+            if ((st0&0xf0)!=0x20) return -1;
+            if (pcn!=target) return -1;
+            fdc_cur_track[drive]=target;
+            return 0;
+        }
+        if ((uint32_t)(timer_get_ticks()-start)>=600u) break;
+        timer_sleep(2);
+    }
+    return -1;
 }
 
 /* ── Motor control ────────────────────────────────────────────────────── */
@@ -243,21 +272,14 @@ static int fdc_recalibrate(uint8_t drive) {
     uint8_t old_mask = inb(PIC1_MASK);
     outb(PIC1_MASK, (uint8_t)(old_mask | IRQ6_BIT));
 
-    fdc_send(CMD_RECALIBRATE);
-    fdc_send(drive & 0x03u);
-
-    /* Recalibrate moves up to 80 tracks; worst case ~480 ms. */
-    timer_sleep(500);
-
-    uint8_t st0, pcn;
-    fdc_sense_irq(&st0, &pcn);
+    int rc=-1;
+    if (!fdc_send(CMD_RECALIBRATE) && !fdc_send(drive & 0x03u))
+        rc=fdc_wait_seek(drive,0);
 
     outb(PIC1_MASK, old_mask);
 
-    fdc_cur_track[drive & 1u] = 0;
-
-    /* ST0 bits [6:5] = 0b10 means abnormal termination. */
-    return ((st0 & 0xC0u) == 0x00u || (st0 & 0xC0u) == 0x40u) ? 0 : -1;
+    if (rc) fdc_cur_track[drive]=0xff;
+    return rc;
 }
 
 /* ── SEEK ─────────────────────────────────────────────────────────────── */
@@ -268,20 +290,15 @@ static int fdc_seek(uint8_t drive, uint8_t head, uint8_t track) {
     uint8_t old_mask = inb(PIC1_MASK);
     outb(PIC1_MASK, (uint8_t)(old_mask | IRQ6_BIT));
 
-    fdc_send(CMD_SEEK);
-    fdc_send((uint8_t)((head << 2) | (drive & 0x03u)));
-    fdc_send(track);
-
-    /* Allow enough time for the seek to complete. */
-    timer_sleep(50);
-
-    uint8_t st0, pcn;
-    fdc_sense_irq(&st0, &pcn);
+    int rc=-1;
+    if (!fdc_send(CMD_SEEK) &&
+        !fdc_send((uint8_t)((head << 2) | (drive & 0x03u))) &&
+        !fdc_send(track)) rc=fdc_wait_seek(drive,track);
 
     outb(PIC1_MASK, old_mask);
 
-    fdc_cur_track[drive & 1u] = track;
-    return ((st0 & 0xC0u) == 0x00u || (st0 & 0x20u)) ? 0 : -1;
+    if (rc) fdc_cur_track[drive]=0xff;
+    return rc;
 }
 
 /* ── DMA setup for channel 2 (floppy read: device → memory) ──────────── */
@@ -356,7 +373,7 @@ static int fdc_do_read_attempt(uint8_t drive, uint8_t head,
 
     /* Issue READ DATA command (9 parameter bytes). */
     const uint8_t command[]={CMD_READ_DATA,(uint8_t)((head<<2)|(drive&3)),
-                             track,head,sector,2,18,0x1b,0xff};
+                             track,head,sector,2,geometry[drive].spt,0x1b,0xff};
     for (unsigned i=0;i<sizeof(command);i++) {
         if (fdc_send(command[i])) {
             outb(DMA_SINGLE_MASK,0x06u);
@@ -405,11 +422,48 @@ static int fdc_do_read_attempt(uint8_t drive, uint8_t head,
 
 /* ── Public API ───────────────────────────────────────────────────────── */
 
-int fdc_init(void) {
-    /* Set 500 Kbps data rate for 1.44 MB disks. */
-    outb(FDC_CCR, 0x00u);
+static unsigned boot_word(const uint8_t *p) {return p[0]|((unsigned)p[1]<<8);}
 
+/* Probe only when media is actually read. DD disks need 250 kbps, or
+ * 300 kbps in a 360-RPM 5.25" HD drive. Do not guess 18-sector geometry. */
+static int fdc_accept_geometry(uint8_t drive, const uint8_t *dma, uint8_t rate) {
+        unsigned total=boot_word(dma+19),spt=boot_word(dma+24);
+        if (boot_word(dma+11)!=512 || boot_word(dma+26)!=2 ||
+            !((spt==9 && (total==720 || total==1440)) ||
+              (spt==15 && total==2400) || (spt==18 && total==2880)))
+            return FDC_ERR_FORMAT;
+        geometry[drive]=(floppy_geometry_t){total,spt,rate,1,1};
+        /* A 1.2 MB 5.25" drive has 80 cylinders: a 40-track 360K disk
+         * needs two steps per logical cylinder. Preserve the CMOS/NMI index. */
+        if (total==720) {
+            uint8_t index=inb(0x70);
+            outb(0x70,(uint8_t)((index&0x80)|0x10));
+            uint8_t types=inb(0x71);
+            outb(0x70,index);
+            unsigned type=drive ? types&15 : types>>4;
+            if (type==2) geometry[drive].step=2;
+        }
+        return 0;
+}
+
+static int fdc_detect_geometry(uint8_t drive, uint8_t *dma) {
+    static const uint8_t rates[]={0,2,1};
+    if (fdc_cur_track[drive]!=0 && fdc_recalibrate(drive)) return -1;
+    int rc=FDC_ERR_ABNORMAL;
+    for (unsigned i=0;i<sizeof(rates);i++) {
+        outb(FDC_CCR,rates[i]);
+        rc=fdc_do_read_attempt(drive,0,0,1,dma);
+        if (rc) continue;
+        return fdc_accept_geometry(drive,dma,rates[i]);
+    }
+    return rc;
+}
+
+int fdc_init(void) {
+    for (unsigned i=0;i<2;i++)
+        geometry[i]=(floppy_geometry_t){2880,18,0,1,0};
     fdc_reset();
+    outb(FDC_CCR, 0x00u);
     fdc_specify();
 
     /* Recalibrate drive A: to verify a controller is present. */
@@ -427,11 +481,6 @@ int fdc_read_sector(uint8_t drive, uint32_t lba, uint8_t *buf) {
         return -1;
     }
 
-    /* LBA → CHS for 1.44 MB (18 sectors/track, 2 heads, 80 tracks) */
-    uint8_t track  = (uint8_t)(lba / 36u);
-    uint8_t head   = (uint8_t)((lba / 18u) & 1u);
-    uint8_t sector = (uint8_t)((lba % 18u) + 1u);
-
     /*
      * Motor spin-up is enforced inside fdc_motor_start(): the function
      * waits FDC_MOTOR_SPINUP_MS (300 ms) the first time the motor is
@@ -439,13 +488,26 @@ int fdc_read_sector(uint8_t drive, uint32_t lba, uint8_t *buf) {
      * READ DATA command is issued below.
      */
     fdc_motor_start(drive);
+    uint8_t *dma = fdc_get_dma_ptr();
+    if (!geometry[drive].known) {
+        int rc=fdc_detect_geometry(drive,dma);
+        if (rc) {fdc_last_err=rc;return rc;}
+        if (!lba) {
+            for (unsigned i=0;i<512;i++) buf[i]=dma[i];
+            fdc_last_err=0;return 0;
+        }
+    }
+    if (lba>=geometry[drive].sectors) {fdc_last_err=-1;return -1;}
+    uint8_t track=(uint8_t)(lba/(geometry[drive].spt*2u));
+    uint8_t head=(uint8_t)((lba/geometry[drive].spt)&1u);
+    uint8_t sector=(uint8_t)(lba%geometry[drive].spt+1);
+    uint8_t physical_track=(uint8_t)(track*geometry[drive].step);
+    outb(FDC_CCR,geometry[drive].rate);
 
-    if (fdc_seek(drive, head, track) != 0) {
+    if (fdc_seek(drive, head, physical_track) != 0) {
         fdc_last_err = -1;
         return -1;
     }
-
-    uint8_t *dma = fdc_get_dma_ptr();
 
     /* ── First attempt ── */
     int rc = fdc_do_read_attempt(drive, head, track, sector, dma);
@@ -465,6 +527,7 @@ int fdc_read_sector(uint8_t drive, uint32_t lba, uint8_t *buf) {
     if (rc == FDC_ERR_ABNORMAL || rc == FDC_ERR_CRC || rc == FDC_ERR_DMA) {
         /* Soft-reset and re-initialise the controller. */
         fdc_reset();
+        outb(FDC_CCR,geometry[drive].rate);
         fdc_specify();
 
         /* Re-spin the motor (reset cleared the DOR motor bit). */
@@ -478,7 +541,7 @@ int fdc_read_sector(uint8_t drive, uint32_t lba, uint8_t *buf) {
 
         /* Re-seek to the target track. */
         fdc_cur_track[drive & 1u] = 0xFFu;   /* force seek */
-        if (fdc_seek(drive, head, track) != 0) {
+        if (fdc_seek(drive, head, physical_track) != 0) {
             fdc_last_err = -1;
             return -1;
         }

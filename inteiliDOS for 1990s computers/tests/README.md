@@ -246,3 +246,22 @@ The QEMU fixture checks the actual shell messages for a 10 MiB native HDD, a
 full directory on 32 MiB, and sufficient space with missing DOS media. All
 three preserve the complete disposable disk byte-for-byte and return to a
 usable shell. Screenshots are saved under ignored `generated-artifacts/msdos-space`.
+
+### Legacy 360 KB game media
+
+Run with a user-supplied Zork Trilogy FAT12 image (not bundled into the OS):
+
+```bash
+python3 tests/run_msdos_zork_test.py /tmp/test-kernel/inteilidOS.elf /path/to/Zork.img \
+  --media ../MS-DOS_disks/Disk1.img
+```
+
+This checks the actual directory, ZORK1.BAT launch, West of House and opening
+the mailbox through both physical-floppy and CD-hosted image paths. The original
+image and existing native file are preserved. Screenshots go to ignored
+`generated-artifacts/msdos-zork`. QEMU needs an explicit double-sided 40-track
+profile: its default drive can interpret 360K as single-sided 80-track media.
+The fixture also declares the model's actual 40-track mechanism in CMOS,
+because QEMU's 1.2M-labelled profile does not emulate physical double stepping.
+The register-level FDC fixture separately checks 80-track drive double stepping,
+all four supported geometries, invalid BPBs, and incomplete/failed seeks.

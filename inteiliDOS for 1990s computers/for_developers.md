@@ -489,17 +489,25 @@ save and close applications before aborting.
 A: is read-only. ISO-backed images are read on demand through a cached 2048-byte
 ISO sector; do not allocate an entire 1.44 MB image alongside guest RAM in the
 native embedded heap. F6 cycles the supplied media and F7 selects the physical
-1.44 MB floppy. `/FLOPPY` supports initial seeding directly from DOS Disk 1 in
+floppy. `/FLOPPY` supports initial seeding directly from DOS Disk 1 in
 the floppy drive; shared sector reads handle partial file tails as well as
 BIOS transfers. The native floppy controller is initialized on first physical
 read and reinitialized after F7 selects physical media; firmware state is not
 assumed. Saved C: startup alone never initializes or requires a floppy drive.
 Plain startup tries the floppy if no DOS Disk 1 CD is present.
-`/IMAGE` selects a CD-root 720 KB/1.44 MB game image without requiring any
+`/IMAGE` selects a CD-root 360 KB/720 KB/1.2 MB/1.44 MB game image without requiring any
 DOS installation images on that CD. CD installation images may use `D622*.IMG`
 or `DISK1.IMG`/`DISK2.IMG`/`DISK3.IMG`/`SUPPDISK.IMG`.
 The BIOS media-change notification invalidates
 DOS's cached floppy directory after a swap.
+
+First physical use probes the data rate and validates a standard 512-byte,
+two-head DOS BPB. CHS conversion, EOT and capacity follow the detected format.
+360 KB media uses double stepping only in a CMOS-declared 1.2 MB 5.25-inch
+drive. Seek/recalibrate completion requires successful seek-end and the
+requested physical cylinder; abnormal status is not cached as success.
+The guest BIOS reports actual media parameters and change-line support.
+Physical media changes currently require F7 to invalidate the cached geometry.
 
 There is no guest ISO9660 or ATAPI/MSCDEX CD-ROM driver and no D: CD mapping.
 Native CD/floppy reads supply the emulated floppy; failures become guest

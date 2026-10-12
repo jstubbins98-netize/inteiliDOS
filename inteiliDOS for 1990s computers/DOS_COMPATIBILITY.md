@@ -87,9 +87,23 @@ MS-DOS /FLOPPY
 MS-DOS /IMAGE GAME.IMG
 ```
 
-The `/IMAGE` form mounts a 720 KB or 1.44 MB floppy image from the CD's root as
+The `/IMAGE` form mounts a 360 KB, 720 KB, 1.2 MB or 1.44 MB floppy image from the CD's root as
 A:, while still booting DOS from C:. Game-image CDs do not need DOS installation
 images. `/FLOPPY` selects the physical/emulated floppy drive as A:.
+
+The physical reader detects the disk's BPB geometry and probes 500/250/300
+kbps rather than assuming every game uses 18 sectors per track. A 360 KB
+disk uses 40 tracks, two heads and nine sectors per track. A real 360 KB
+disk requires a compatible 5.25-inch drive; emulator image support also
+depends on its configured drive model.
+
+For a saved DOS installation, mount the game disk before `MS-DOS /FLOPPY`,
+then use `A:`, `DIR`, and the game's command (for Zork Trilogy, `ZORK1`).
+The game disk need not contain DOS system files. First-time creation of the
+DOS HDD still requires the supplied 1.44 MB DOS Disk 1.
+After swapping physical media during a DOS session, press **F7** to reprobe
+it and notify DOS. BIOS drive parameters reflect the active disk, and the
+BIOS reports change-line support so DOS invalidates cached media information.
 
 | Drive/key | Meaning |
 |---|---|

@@ -221,6 +221,31 @@ void set_opcode(unsigned char opcode)
 // Execute INT #interrupt_num on the emulated machine
 char pc_interrupt(unsigned char interrupt_num)
 {
+if (interrupt_num==0x13 && regs8[REG_DL]==0 &&
+    CAST(unsigned short)mem[0x13*4+2]==0xF000) {
+    if (regs8[REG_AH]==0x15) {
+        regs8[REG_AH]=2; /* floppy with working change-line support */
+        set_CF(0);return 0;
+    }
+    if (regs8[REG_AH]==0x08) {
+        unsigned sectors,spt;
+        if (!msdos_pc_floppy_params(&sectors,&spt)) {
+            regs8[REG_AH]=0x80;set_CF(1);return 0;
+        }
+        unsigned table=CAST(unsigned short)mem[0x1e*4];
+        unsigned segment=CAST(unsigned short)mem[0x1e*4+2];
+        if (segment==0xf000 && table<0xfff0) {
+            mem[(segment<<4)+table+4]=(unsigned char)spt;
+            regs16[REG_ES]=segment;regs16[REG_DI]=table;
+            regs16[REG_AX]=0;
+            regs16[REG_BX]=sectors==720 ? 1 : sectors==1440 ? 3 :
+                           sectors==2400 ? 2 : 4;
+            regs16[REG_CX]=((sectors/(spt*2)-1)<<8)|spt;
+            regs16[REG_DX]=0x0101;
+            set_CF(0);return 0;
+        }
+    }
+}
 /* The original ROM predates removable-media change notification. Report
  * virtual/physical swaps to DOS so its cached A: directory is invalidated. */
 if (interrupt_num==0x13 && regs8[REG_AH]==0x16 && regs8[REG_DL]==0 &&

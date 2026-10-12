@@ -42,13 +42,13 @@ def make_cd(folder, image, name):
     return iso
 
 
-def session(kernel, disk, folder, cd=None, floppy=None):
+def session(kernel, disk, folder, cd=None, floppy=None, extra_args=()):
     folder.mkdir()
     args = ["-drive", f"file={disk},if=ide,index=1,format=raw"]
     if floppy:
         args += ["-drive", f"file={floppy},if=floppy,index=0,format=raw,readonly=on"]
         args += ["-qtest", f"unix:{folder / 'fdc.sock'},server=on,wait=off"]
-    guest = Guest(kernel, cd, False, folder, tuple(args))
+    guest = Guest(kernel, cd, False, folder, tuple(args)+tuple(extra_args))
     guest.sock.settimeout(20)
     guest.wait("Welcome to inteiliDOS"); guest.wait("> ")
     return guest

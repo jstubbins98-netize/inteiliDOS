@@ -4,8 +4,9 @@
  *
  * Drives the primary FDC (I/O base 0x3F0) in DMA mode.
  * Compatible with the PIIX4E integrated FDC on the HP Vectra VEi8.
- * Supports standard 3.5" 1.44 MB floppy disks (80 tracks, 2 heads,
- * 18 sectors/track, 512 bytes/sector, MFM encoding, 500 Kbps).
+ * Detects standard DOS 360K/720K/1.2M/1.44M floppy geometry from the BPB.
+ * Reads 512-byte MFM sectors at 250/300/500 kbps, including double stepping
+ * for 360K media in a CMOS-declared 1.2M 5.25" drive.
  */
 
 #ifndef FDC_H
@@ -45,6 +46,7 @@
 #define FDC_ERR_ABNORMAL  (-3)
 #define FDC_ERR_CRC       (-4)
 #define FDC_ERR_DMA       (-5) /* incomplete transfer or unreachable DMA buffer */
+#define FDC_ERR_FORMAT    (-6) /* unsupported/corrupt DOS floppy geometry */
 
 typedef struct {
     int st0, st1, st2;
@@ -65,7 +67,7 @@ int fdc_init(void);
 /*
  * fdc_read_sector — read one 512-byte sector from floppy drive into buf.
  *   drive : 0 = A:, 1 = B:
- *   lba   : logical block address (0–2879 for a 1.44 MB disk)
+ *   lba   : logical block address, bounded by detected disk capacity
  *   buf   : caller-supplied 512-byte output buffer
  *
  * Returns 0 on success.

@@ -215,7 +215,8 @@ static int load_media(int index, const char *name) {
     if (!found && index>=0 && index<4)
         found=iso9660_find_file(disc,media_aliases[index],&e);
     if (found!=1 || e.is_dir ||
-        (e.size!=1474560 && e.size!=737280)) return -1;
+        (e.size!=1474560 && e.size!=737280 && e.size!=368640 &&
+         e.size!=1228800)) return -1;
     uint8_t boot[512];
     if (iso9660_read_file(disc,&e,boot,512)!=512 || boot[510]!=0x55 ||
         boot[511]!=0xaa || u16(boot+11)!=512) return -1;
@@ -246,6 +247,7 @@ static int load_install_floppy(void) {
         const char *reason=rc==FDC_ERR_TIMEOUT ? "controller/drive timeout" :
                            rc==FDC_ERR_CRC ? "CRC error" :
                            rc==FDC_ERR_DMA ? "incomplete DMA transfer" :
+                           rc==FDC_ERR_FORMAT ? "unsupported or corrupt floppy geometry" :
                            rc==FDC_ERR_ABNORMAL ? "no readable sector or disk" :
                            "seek or controller error";
         vga_printf("MS-DOS: cannot read A: boot sector: %s (code %d).\n",reason,rc);
@@ -308,6 +310,17 @@ static int read_floppy(uint32_t offset, uint8_t *data, uint32_t length) {
         length-=count;data+=count;offset+=count;
     }
     return 0;
+}
+/* Accurate geometry matters for DOS 2-era FAT12 media as well as disk swaps. */
+int msdos_pc_floppy_params(unsigned *sectors, unsigned *spt) {
+    uint8_t boot[512];
+    if (read_floppy(0,boot,sizeof(boot))) return 0;
+    unsigned total=u16(boot+19),track=u16(boot+24);
+    if (u16(boot+11)!=512 || u16(boot+26)!=2 ||
+        !((track==9 && (total==720 || total==1440)) ||
+          (track==15 && total==2400) || (track==18 && total==2880))) return 0;
+    *sectors=total;*spt=track;
+    return 1;
 }
 int msdos_pc_disk(int drive, uint32_t offset, uint8_t *data,
                   uint32_t length, int write) {
