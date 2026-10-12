@@ -10,6 +10,12 @@ programs are no longer launched directly through LaunchPad or `RUN /DOS`;
 those paths direct users to `MS-DOS`. Native IPGM and ELF applications still
 use LaunchPad as before.
 
+## Development status
+
+Disk reading is a **work in progress**. Reading floppy disks and CD-hosted
+disk images may not work reliably with every disk format, drive configuration,
+or emulator. Compatibility is not guaranteed.
+
 ## Build and first launch
 
 1. Build with `bash build.sh` and boot the new inteiliDOS image.
@@ -26,8 +32,9 @@ use LaunchPad as before.
    installs the boot files and Disk 1 utilities, and starts the DOS `C:\>` prompt.
 
 The inteiliDOS build never bundles DOS images into its OS ISO or kernel.
-The previously supplied images are retained separately in `../MS-DOS_disks`,
-outside the OS source folder. DOS media is supplied by the user at runtime.
+**MS-DOS installation disk images and game disk images are not included in
+this GitHub repository.** Users must supply their own licensed disk images
+separately on CD-ROM or floppy disk at runtime.
 To optionally make a separate data CD from your four licensed images:
 
 ```sh
