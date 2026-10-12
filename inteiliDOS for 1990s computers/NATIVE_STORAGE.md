@@ -89,8 +89,8 @@ do not invent a directory or claim that damaged files were recovered.
 python3 tests/run_fs_layout_tests.py
 python3 tests/build_test_kernel.py /tmp/native-layout-build
 python3 tests/run_fs_layout_tests.py /tmp/native-layout-build/inteilidOS.elf
-python3 tests/run_msdos622_test.py /tmp/native-layout-build/inteilidOS.elf MS-DOS_disks --installed
-python3 tests/run_hdd_cold_boot_test.py /tmp/native-layout-build/inteilidOS.elf MS-DOS_disks
+python3 tests/run_msdos622_test.py /tmp/native-layout-build/inteilidOS.elf ../MS-DOS_disks --installed
+python3 tests/run_hdd_cold_boot_test.py /tmp/native-layout-build/inteilidOS.elf ../MS-DOS_disks
 python3 tests/run_small_hdd_test.py /tmp/native-layout-build/inteilidOS.elf
 ```
 

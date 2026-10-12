@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy user-supplied DOS disks into the ISO tree, without altering them.
+"""Copy user-supplied DOS disks into a separate DOS media CD tree unchanged.
 
 Accept Disk1.img, Disk2.img, Disk3.img, Suppdisk.img (or upload timestamp
 suffixes), or already named D6221.IMG etc. No downloading DOS binaries.

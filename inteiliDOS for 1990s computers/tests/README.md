@@ -12,11 +12,11 @@ From the OS source directory:
 
 ```bash
 python3 tests/build_test_kernel.py /tmp/hdd-cold-build
-python3 tests/run_hdd_cold_boot_test.py /tmp/hdd-cold-build/inteilidOS.elf MS-DOS_disks
+python3 tests/run_hdd_cold_boot_test.py /tmp/hdd-cold-build/inteilidOS.elf ../MS-DOS_disks
 ```
 
 With no arguments the runner builds its own temporary kernel and uses the
-supplied DOS disks in `MS-DOS_disks`. Requires GCC/binutils, NASM, QEMU
+separately supplied DOS disks in `../MS-DOS_disks`. Requires GCC/binutils, NASM, QEMU
 i386, xorriso and the four user-supplied MS-DOS 6.22 disk images (never
 downloaded). All HDDs, installation media and QMP snapshots are temporary;
 no user disk or configuration is modified.
@@ -156,6 +156,31 @@ optional-floppy failure. It never accesses physical CMOS or VGA.
 `run_msdos622_test.py` also ejects the ISO between actual DOS sessions and
 checks saved files. `run_hdd_cold_boot_test.py` checks real BIOS HDD-only
 startup without a kernel loader or CD.
+
+### Separately supplied DOS CD and floppy media
+
+```bash
+python3 tests/run_msdos_external_media_test.py /tmp/hdd-cold-build/inteilidOS.elf
+```
+
+This complete-OS test starts real DOS using only a supplied 1.44 MB floppy,
+using both `/FLOPPY` and automatic fallback after deliberately resetting the
+controller into incompatible firmware-leftover settings through QTest,
+including disabled ISA DMA and its cascade. It verifies saved files across
+sessions; runs `/IMAGE` on a game-only CD without DOS installation markers;
+and initializes another private HDD from a separate `DISK1.IMG` data CD.
+It checks native files and the original DOS floppy image are unchanged.
+
+The register-level `fdc_read_test.c` fixture checks AT DMA cascade setup,
+all 512 transferred bytes, abnormal/CRC/timeout errors, ISA address bounds,
+and PIC restoration. This supplements QEMU, which can mask firmware/DMA
+setup differences:
+
+```bash
+gcc -O1 -fsanitize=address,undefined -ffunction-sections -fdata-sections \
+  -Wl,--gc-sections tests/fdc_read_test.c -o /tmp/fdc-read-test
+ASAN_OPTIONS=detect_leaks=0 /tmp/fdc-read-test
+```
 
 ### Setup wizard and legacy ATA writes
 

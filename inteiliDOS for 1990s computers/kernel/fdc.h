@@ -25,24 +25,39 @@
  * -2  FDC_ERR_TIMEOUT   FDC did not enter result phase within ~2 seconds;
  *                       the drive may be missing, spinning down, or the
  *                       controller is not responding.
- * -3  FDC_ERR_ABNORMAL  ST0 bits [7:6] = 10b — the FDC reported an
+ * -3  FDC_ERR_ABNORMAL  ST0 bits [7:6] indicate abnormal completion, or
+ *                      ST1/ST2 indicate a sector/address/overrun error.
+ *                      The FDC reported an
  *                       abnormal termination.  Common cause: no disk
  *                       inserted, or the sector address is out of range.
  * -4  FDC_ERR_CRC       ST1 bit 5 or ST2 bit 5 set — CRC mismatch in the
  *                       ID field or data field.  The media surface may be
  *                       damaged.
  *
+ * -5  FDC_ERR_DMA       Sector transfer did not complete, or the DMA buffer
+ *                      is outside the ISA 24-bit/page-boundary limits.
+ *
  * fdc_read_sector() performs a soft-reset and one automatic retry on any
- * FDC_ERR_ABNORMAL or FDC_ERR_CRC error before returning to the caller.
+ * FDC_ERR_ABNORMAL, FDC_ERR_CRC, or FDC_ERR_DMA before returning to the caller.
  * FDC_ERR_TIMEOUT is not retried (the controller is unresponsive).
  */
 #define FDC_ERR_TIMEOUT   (-2)
 #define FDC_ERR_ABNORMAL  (-3)
 #define FDC_ERR_CRC       (-4)
+#define FDC_ERR_DMA       (-5) /* incomplete transfer or unreachable DMA buffer */
+
+typedef struct {
+    int st0, st1, st2;
+    uint16_t dma_count; /* residual counter: 0xffff after full transfer */
+} fdc_read_status_t;
+
+/* Diagnostic result from the last attempted sector read. */
+void fdc_last_read_status(fdc_read_status_t *out);
 
 /*
  * fdc_init — reset the FDC, send SPECIFY timings, and recalibrate drive A:.
- * Must be called once during kernel init (after timer is running).
+ * Call after the timer is running and before the first controller read.
+ * Callers may initialize lazily when floppy media is actually needed.
  * Returns 0 on success, -1 if the controller does not respond.
  */
 int fdc_init(void);

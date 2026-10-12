@@ -48,12 +48,20 @@
 
 /* ── Port I/O helpers (self-contained, like ata.c / cdrom.c) ──────────── */
 static inline void outb(uint16_t port, uint8_t val) {
-    __asm__ volatile ("outb %0,%1" :: "a"(val), "Nd"(port));
+#ifdef FDC_TEST_IO
+    fdc_test_outb(port,val);
+#else
+    __asm__ volatile ("outb %0,%1" :: "a"(val), "Nd"(port) : "memory");
+#endif
 }
 static inline uint8_t inb(uint16_t port) {
+#ifdef FDC_TEST_IO
+    return fdc_test_inb(port);
+#else
     uint8_t v;
-    __asm__ volatile ("inb %1,%0" : "=a"(v) : "Nd"(port));
+    __asm__ volatile ("inb %1,%0" : "=a"(v) : "Nd"(port) : "memory");
     return v;
+#endif
 }
 
 /* ── FDC register addresses (primary controller) ─────────────────────── */
@@ -82,6 +90,10 @@ static inline uint8_t inb(uint16_t port) {
 #define DMA_SINGLE_MASK  0x0Au   /* single channel mask register        */
 #define DMA_MODE         0x0Bu   /* mode register                       */
 #define DMA_RESET_FF     0x0Cu   /* flip-flop reset (write any)         */
+#define DMA_COMMAND      0x08u
+#define DMA2_COMMAND     0xD0u
+#define DMA2_SINGLE_MASK 0xD4u
+#define DMA2_MODE        0xD6u
 
 /* 8259 PIC master mask register */
 #define PIC1_MASK 0x21u
@@ -132,6 +144,11 @@ static uint8_t fdc_motor_on     = 0;                  /* bitmask        */
 
 /* Last error recorded by fdc_read_sector (0 = success). */
 static int fdc_last_err = 0;
+static fdc_read_status_t fdc_status = {-1,-1,-1,0xffff};
+
+void fdc_last_read_status(fdc_read_status_t *out) {
+    if (out) *out=fdc_status;
+}
 
 /* ── Low-level FIFO access ────────────────────────────────────────────── */
 
@@ -276,6 +293,14 @@ static void fdc_dma_setup_read(const uint8_t *buf, uint16_t count) {
     uint16_t cnt  = (uint16_t)(count - 1u);
 
     outb(DMA_SINGLE_MASK, 0x06u);       /* mask channel 2               */
+    /* Primary 8237 requests pass through secondary channel 4 on an AT.
+     * BIOS CD/HDD boot need not leave either controller/cascade enabled.
+     * Set only the cascade channel; do not reset/mask unrelated channels. */
+    outb(DMA_COMMAND, 0x00u);
+    outb(DMA2_COMMAND, 0x00u);
+    outb(DMA2_SINGLE_MASK, 0x04u);
+    outb(DMA2_MODE, 0xC0u);
+    outb(DMA2_SINGLE_MASK, 0x00u);
     outb(DMA_RESET_FF,    0xFFu);       /* reset flip-flop              */
     outb(DMA_ADDR_CH2, lo);             /* address low byte             */
     outb(DMA_ADDR_CH2, hi);             /* address high byte            */
@@ -290,10 +315,15 @@ static void fdc_dma_setup_read(const uint8_t *buf, uint16_t count) {
 /* ── Wait for READ DATA result phase ─────────────────────────────────── */
 static int fdc_wait_result(void) {
     /* Poll MSR until RQM=1 and DIO=1 (FDC entering result phase). */
-    for (int t = 0; t < 2000000; t++) {
+    uint32_t start=timer_get_ticks();
+    /* A sector may take a full rotation to arrive. Fixed instruction counts
+     * are not a time budget on a fast Pentium; IRQ0 stays enabled here.
+     * Retain a generous poll ceiling if the caller's timer stops advancing. */
+    for (unsigned t = 0; t < 100000000u; t++) {
         uint8_t msr = inb(FDC_MSR);
         if ((msr & (MSR_RQM | MSR_DIO)) == (MSR_RQM | MSR_DIO))
             return 0;
+        if ((uint32_t)(timer_get_ticks()-start)>=2000u) break;
     }
     return -1;  /* timeout (~2 s) */
 }
@@ -308,59 +338,68 @@ static int fdc_wait_result(void) {
  * Returns:
  *   0                on success (sector data in *dma, 512 bytes)
  *   FDC_ERR_TIMEOUT  if the FDC does not enter result phase
- *   FDC_ERR_ABNORMAL if ST0 bits [7:6] == 10b
+ *   FDC_ERR_ABNORMAL on abnormal status or a sector/address error
  *   FDC_ERR_CRC      if ST1 bit 5 or ST2 bit 5 is set
+ *   FDC_ERR_DMA      on an incomplete or unaddressable transfer
  */
 static int fdc_do_read_attempt(uint8_t drive, uint8_t head,
                                 uint8_t track, uint8_t sector,
                                 uint8_t *dma) {
+    fdc_status=(fdc_read_status_t){-1,-1,-1,0x01ff};
+    uintptr_t address=(uintptr_t)dma;
+    if (address>=0x1000000u || address>0x1000000u-512u ||
+        (address&0xffffu)>0x10000u-512u) return FDC_ERR_DMA;
     uint8_t old_mask = inb(PIC1_MASK);
     outb(PIC1_MASK, (uint8_t)(old_mask | IRQ6_BIT));  /* mask IRQ6 */
 
     fdc_dma_setup_read(dma, 512);
 
     /* Issue READ DATA command (9 parameter bytes). */
-    fdc_send(CMD_READ_DATA);
-    fdc_send((uint8_t)((head << 2) | (drive & 0x03u)));
-    fdc_send(track);
-    fdc_send(head);
-    fdc_send(sector);
-    fdc_send(0x02u);    /* N = 2 → 512 bytes/sector                   */
-    fdc_send(18u);      /* EOT = last sector on track                  */
-    fdc_send(0x1Bu);    /* GPL = gap 3 for 1.44 MB MFM                */
-    fdc_send(0xFFu);    /* DTL = unused when N != 0                    */
+    const uint8_t command[]={CMD_READ_DATA,(uint8_t)((head<<2)|(drive&3)),
+                             track,head,sector,2,18,0x1b,0xff};
+    for (unsigned i=0;i<sizeof(command);i++) {
+        if (fdc_send(command[i])) {
+            outb(DMA_SINGLE_MASK,0x06u);
+            outb(PIC1_MASK,old_mask);
+            return FDC_ERR_TIMEOUT;
+        }
+    }
 
     /* Wait for the FDC to enter result phase (DMA transfer complete). */
     int rc = fdc_wait_result();
 
     /* Read all 7 result bytes regardless, to release the FDC FIFO. */
-    int st0 = fdc_recv();
-    int st1 = fdc_recv();
-    int st2 = fdc_recv();
-    /* C, H, R, N — positioning info, not needed for error decode */
-    fdc_recv(); fdc_recv(); fdc_recv(); fdc_recv();
+    int result[7];
+    for (unsigned i=0;i<7;i++) result[i]=fdc_recv();
+    int st0=result[0],st1=result[1],st2=result[2];
+    fdc_status.st0=st0;fdc_status.st1=st1;fdc_status.st2=st2;
+
+    /* Mask before inspecting the remaining count. Reading DMA status would
+     * clear other channels' terminal-count flags; read channel 2 only. */
+    outb(DMA_SINGLE_MASK,0x06u);
+    outb(DMA_RESET_FF,0xffu);
+    uint16_t remaining=inb(DMA_COUNT_CH2);
+    remaining|=(uint16_t)inb(DMA_COUNT_CH2)<<8;
+    fdc_status.dma_count=remaining;
 
     outb(PIC1_MASK, old_mask);
 
     if (rc != 0)
         return FDC_ERR_TIMEOUT;
 
-    if (st0 < 0)
-        return FDC_ERR_TIMEOUT;   /* FIFO timeout during result phase */
-
-    /* ST0 bits [7:6] = 10b → abnormal termination (no disk, wrong addr) */
-    if ((uint8_t)st0 & 0x80u)
-        return FDC_ERR_ABNORMAL;
+    for (unsigned i=0;i<7;i++)
+        if (result[i]<0) return FDC_ERR_TIMEOUT;
 
     /* ST1 bit 5 = CRC error in ID field; ST2 bit 5 = CRC in data field */
     if (((uint8_t)st1 & 0x20u) || ((uint8_t)st2 & 0x20u))
         return FDC_ERR_CRC;
 
-    /* ST1 bit 7 = end-of-cylinder; treat as abnormal termination */
-    if ((uint8_t)st1 & 0x80u)
+    /* 01b (0x40), not just 10b, is abnormal termination. Missing sectors,
+     * DMA overruns and address-mark errors must never return stale data. */
+    if ((st0&0xc0) || st1 || st2)
         return FDC_ERR_ABNORMAL;
-
-    (void)st2;
+    if (remaining!=0xffffu) return FDC_ERR_DMA;
+    __asm__ volatile ("" ::: "memory"); /* observe hardware DMA writes */
     return 0;   /* success */
 }
 
@@ -382,6 +421,7 @@ int fdc_init(void) {
 }
 
 int fdc_read_sector(uint8_t drive, uint32_t lba, uint8_t *buf) {
+    fdc_status=(fdc_read_status_t){-1,-1,-1,0x01ff};
     if (drive > 1 || lba >= 2880u || !buf) {
         fdc_last_err = -1;
         return -1;
@@ -422,7 +462,7 @@ int fdc_read_sector(uint8_t drive, uint32_t lba, uint8_t *buf) {
      * FDC_ERR_TIMEOUT is not retried: if the controller is unresponsive
      * a second command will also time out and merely waste ~4 seconds.
      */
-    if (rc == FDC_ERR_ABNORMAL || rc == FDC_ERR_CRC) {
+    if (rc == FDC_ERR_ABNORMAL || rc == FDC_ERR_CRC || rc == FDC_ERR_DMA) {
         /* Soft-reset and re-initialise the controller. */
         fdc_reset();
         fdc_specify();

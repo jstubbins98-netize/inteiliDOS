@@ -345,31 +345,8 @@ else() # BUILD_TARGET == "universal"
     set(GRUB_DIR_LEG ${ISO_DIR_LEG}/boot/grub)
     set(KERNEL_ISO   ${CMAKE_CURRENT_BINARY_DIR}/inteiliDOS_1990s.iso)
 
-    # DOS media stay out of the linked kernel (and LaunchPad staging memory).
-    # Bundle the supplied media with this source folder. Migrate an existing
-    # cache's old default, but preserve explicitly selected custom locations.
-    get_filename_component(MSDOS_OLD_DEFAULT
-        "${CMAKE_SOURCE_DIR}/../attached_assets" ABSOLUTE)
-    if(DEFINED MSDOS_DISK_DIR)
-        get_filename_component(MSDOS_CACHED_PATH "${MSDOS_DISK_DIR}" ABSOLUTE)
-        if(MSDOS_CACHED_PATH STREQUAL MSDOS_OLD_DEFAULT)
-            set(MSDOS_DISK_DIR "${CMAKE_SOURCE_DIR}/MS-DOS_disks" CACHE PATH
-                "Folder containing user-supplied MS-DOS 6.22 Disk1/2/3/Suppdisk images" FORCE)
-        endif()
-    endif()
-    set(MSDOS_DISK_DIR "${CMAKE_SOURCE_DIR}/MS-DOS_disks" CACHE PATH
-        "Folder containing user-supplied MS-DOS 6.22 Disk1/2/3/Suppdisk images")
-    file(GLOB MSDOS_DISKS CONFIGURE_DEPENDS
-        "${MSDOS_DISK_DIR}/*.img" "${MSDOS_DISK_DIR}/*.IMG")
-    set(MSDOS_MEDIA_COMMAND)
-    if(MSDOS_DISKS)
-        set(MSDOS_MEDIA_COMMAND
-            COMMAND python3
-                "${CMAKE_SOURCE_DIR}/cmake/prepare_msdos622.py"
-                "${MSDOS_DISK_DIR}" "${ISO_DIR_LEG}")
-    else()
-        message(WARNING "No DOS disk images found in ${MSDOS_DISK_DIR}. Put the supplied disks in MS-DOS_disks or configure -DMSDOS_DISK_DIR=/path/to/disks for MS-DOS first-run setup.")
-    endif()
+    # DOS is user-supplied on separate CD/floppy media, never bundled with
+    # inteiliDOS. Also remove images staged by an older build configuration.
 
     add_custom_command(
         OUTPUT  ${KERNEL_ISO}
@@ -377,7 +354,9 @@ else() # BUILD_TARGET == "universal"
         COMMAND ${CMAKE_COMMAND} -E copy ${KERNEL_ELF} ${ISO_DIR_LEG}/boot/inteilidOS.elf
         COMMAND ${CMAKE_COMMAND} -E copy
                     ${CMAKE_SOURCE_DIR}/grub/grub_legacy.cfg ${GRUB_DIR_LEG}/grub.cfg
-        ${MSDOS_MEDIA_COMMAND}
+        COMMAND ${CMAKE_COMMAND} -E remove -f
+                    ${ISO_DIR_LEG}/D6221.IMG ${ISO_DIR_LEG}/D6222.IMG
+                    ${ISO_DIR_LEG}/D6223.IMG ${ISO_DIR_LEG}/D622S.IMG
         # Use only i386-pc modules — skip EFI / VESA to keep the GRUB core small
         # and compatible with old BIOSes.  biosdisk + multiboot are all we need.
         COMMAND ${GRUB_MKRESCUE}
@@ -386,8 +365,6 @@ else() # BUILD_TARGET == "universal"
                     ${ISO_DIR_LEG}
         DEPENDS ${KERNEL_ELF}
                 ${CMAKE_SOURCE_DIR}/grub/grub_legacy.cfg
-                ${CMAKE_SOURCE_DIR}/cmake/prepare_msdos622.py
-                ${MSDOS_DISKS}
         COMMENT "Building universal 1990s GRUB2 ISO: inteiliDOS_1990s.iso"
         VERBATIM
     )

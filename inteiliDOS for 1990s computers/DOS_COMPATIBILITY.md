@@ -20,23 +20,24 @@ use LaunchPad as before.
    unpartitioned legacy filesystems remain supported in place. Older installed
    disks without layout metadata are blocked until a backup-safe migration is
    explicitly approved; see [NATIVE_STORAGE.md](NATIVE_STORAGE.md).
-3. Keep the ISO containing the supplied DOS disks inserted for first launch.
+3. Supply your licensed DOS disks separately: insert a DOS media CD containing
+   Disk 1's image, or a standard 1.44 MB MS-DOS 6.22 Disk 1 floppy in A:.
 4. Type `MS-DOS` at inteiliShell. The emulator creates its private DOS HDD,
    installs the boot files and Disk 1 utilities, and starts the DOS `C:\>` prompt.
 
-By default, the ISO build reads the four supplied images from `MS-DOS_disks`
-inside the inteiliDOS source folder: `Disk1.img`, `Disk2.img`, `Disk3.img`,
-and `Suppdisk.img`. Keep this folder with a separate source download.
-To use a different image directory, build with:
+The inteiliDOS build never bundles DOS images into its OS ISO or kernel.
+The previously supplied images are retained separately in `../MS-DOS_disks`,
+outside the OS source folder. DOS media is supplied by the user at runtime.
+To optionally make a separate data CD from your four licensed images:
 
 ```sh
-bash build.sh "-DMSDOS_DISK_DIR=/absolute/path/to/dos-disks"
+python3 cmake/create_msdos_cd.py /path/to/your/dos-disks /path/to/dos-media.iso
 ```
 
-`MSDOS_DISK_DIR` is a CMake cache setting. The preparation script accepts the
-uploaded filenames with their suffixes as well as the names above. It checks
+The old `MSDOS_DISK_DIR` OS-build option is no longer used. The separate-CD
+tool accepts uploaded filenames with suffixes or standard disk names. It checks
 the 1.44 MB FAT12 image layout and Disk 1's system files, then copies the
-original images unchanged to the ISO root:
+original images unchanged to the separate DOS CD's root:
 
 | Supplied disk | ISO filename |
 |---|---|
@@ -44,6 +45,16 @@ original images unchanged to the ISO root:
 | Disk 2 | `D6222.IMG` |
 | Disk 3 | `D6223.IMG` |
 | Supplemental disk | `D622S.IMG` |
+
+You can instead create your own ISO9660 data CD with `DISK1.IMG`, `DISK2.IMG`,
+`DISK3.IMG`, and `SUPPDISK.IMG` in its root. Only Disk 1 is required for initial
+setup; the remaining images provide optional installation utilities.
+The DOS CD needs no inteiliDOS kernel or bootloader and is not the OS boot ISO.
+In 86Box, mount it in the CD-ROM drive after inteiliDOS has started.
+
+For floppy-only setup, mount/write Disk 1's image as the actual 1.44 MB floppy
+medium (not an `.IMG` file inside another floppy filesystem), then type
+`MS-DOS /FLOPPY`. Plain `MS-DOS` also tries A: if no DOS Disk 1 CD is available.
 
 The build does not download DOS or require the previously supplied DOS 4
 source. First-time creation needs Disk 1. Once `MSDOS622.HDD` has been
@@ -72,18 +83,19 @@ At inteiliShell:
 
 ```text
 MS-DOS
+MS-DOS /FLOPPY
 MS-DOS /IMAGE GAME.IMG
 ```
 
-The second form mounts a 720 KB or 1.44 MB floppy image from the CD's root as
-A:, while still booting DOS from C:. Keep the standard DOS images on that CD
-too: the current CD discovery path looks for `D6221.IMG`.
+The `/IMAGE` form mounts a 720 KB or 1.44 MB floppy image from the CD's root as
+A:, while still booting DOS from C:. Game-image CDs do not need DOS installation
+images. `/FLOPPY` selects the physical/emulated floppy drive as A:.
 
 | Drive/key | Meaning |
 |---|---|
 | C: | Writable, persistent private DOS hard drive |
 | A: | Read-only installation/game floppy media |
-| F6 | Cycle Disk 1, Disk 2, Disk 3, and the supplemental image |
+| F6 | Cycle Disk 1, Disk 2, Disk 3, and the supplemental image on the DOS CD |
 | F7 | Select the real 1.44 MB floppy drive as A: |
 | F8 | Stop the guest and return to inteiliShell |
 
@@ -181,10 +193,18 @@ installation and its saved files; do not treat it as an editable text document.
 | Message/problem | Action |
 |---|---|
 | Needs an installed inteiliDOS HDD | Install the native OS/filesystem on the intended disk first; the DOS command deliberately will not format it |
-| DOS boot disk missing | Rebuild the ISO with the four images using `MSDOS_DISK_DIR`, then insert it |
+| DOS boot disk missing | Supply a separate DOS Disk 1 CD, or insert the DOS floppy and use `MS-DOS /FLOPPY`; rebuilding the OS ISO does not supply DOS |
+| Cannot initialize the floppy controller / cannot read A: boot sector | Enable the floppy controller and configure A: as a 3½-inch 1.44 MB drive; mount Disk 1 directly. The message distinguishes timeout, CRC, and seek/read failures |
+| Incomplete DMA transfer | The floppy transfer did not supply a full sector. Report the FDC status and DMA count line; do not format or erase the HDD |
+| A: has no valid boot signature / unsupported floppy format | Mount a standard 1.44 MB DOS Disk 1 image, not a floppy containing an `.IMG` file, a CD image, or Disk 2 |
+
+Physical floppy reads explicitly enable the AT DMA cascade and reject
+abnormal controller status, incomplete result bytes, and short sector
+transfers. The boot-signature check is never skipped. A failed boot-sector
+read includes ST0/ST1/ST2 and the channel-2 DMA counter for diagnosis.
 | Could not create DOS HDD | Check native free space, directory capacity, disk I/O, and whether initialization was cancelled |
 | Invalid virtual HDD size | Preserve/back up the image and investigate; it will not be automatically replaced |
-| Cannot read that floppy image | Check its supported size, CD-root filename, and the presence of `D6221.IMG` on the same CD |
+| Cannot read that floppy image | Check its supported size and CD-root filename; DOS installation images are not required on a game CD |
 | Unsupported CPU instruction | Check whether the program needs a newer CPU, protected mode, or an FPU |
 | A: write failure | A: is deliberately read-only; install programs and store saves on C: |
 | Disk I/O failed | Stop and investigate the underlying native storage rather than assuming writes succeeded |
@@ -198,7 +218,7 @@ python3 tests/build_test_kernel.py /tmp/msdos622-build
 python3 tests/run_msdos622_test.py /tmp/msdos622-build/inteilidOS.elf
 ```
 
-The integration test needs the supplied images in `MS-DOS_disks` and
+The integration test needs the separately supplied images in `../MS-DOS_disks` and
 GCC/binutils, NASM, Python 3, xorriso, and QEMU. It checks real DOS 6.22 boot,
 installed/nested COMMAND.COM, DEBUG.EXE, persistence across F8, re-entry and a
 host restart, F8 through guest CLI, 80186 instructions, CGA, speaker register

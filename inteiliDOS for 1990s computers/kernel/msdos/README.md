@@ -7,20 +7,20 @@ still launch through LaunchPad.
 
 ## Build and media
 
-Build normally with `build.sh`. In this repository the build finds the four
-supplied images in the source folder's `MS-DOS_disks` directory and copies them to
-the ISO root as `D6221.IMG`, `D6222.IMG`, `D6223.IMG`, and `D622S.IMG`.
+Build normally with `build.sh`; the OS ISO contains no DOS disk images.
+Users supply their DOS media separately. Reference images are retained
+outside the OS source folder in `../MS-DOS_disks`, not in the OS distribution.
 No DOS binaries are downloaded.
 
-For a downloaded OS source folder, put your four licensed images in a folder,
-named `Disk1.img`, `Disk2.img`, `Disk3.img`, and `Suppdisk.img`. Configure with:
+To make a separate DOS media CD, put your four licensed images in a folder,
+named `Disk1.img`, `Disk2.img`, `Disk3.img`, and `Suppdisk.img`, then run:
 
 ```sh
-bash build.sh -DMSDOS_DISK_DIR=/absolute/path/to/dos-disks
+python3 cmake/create_msdos_cd.py /path/to/dos-disks /path/to/dos-media.iso
 ```
 
-The same setting can be passed directly to CMake. Keep the resulting ISO
-inserted for installation-media access. The images are read on demand, not
+Alternatively insert a 1.44 MB DOS Disk 1 floppy and run `MS-DOS /FLOPPY`.
+Keep the separate DOS media inserted for installation access. Images are read on demand, not
 embedded in the kernel or loaded entirely into the small native heap.
 An already initialized virtual HDD can boot without the CD.
 

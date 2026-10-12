@@ -47,7 +47,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="inteilidos-msdos622-") as folder:
         tmp=Path(folder)
         kernel=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else build(tmp/"build")
-        media=Path(sys.argv[2]).resolve() if len(sys.argv)>2 else ROOT/"MS-DOS_disks"
+        media=Path(sys.argv[2]).resolve() if len(sys.argv)>2 else ROOT.parent/"MS-DOS_disks"
         prepare(media,tmp/"disc")
         run("nasm","-f","bin",ROOT/"tests/msdos622_fixture.asm","-o",tmp/"pc.com")
         (tmp/"game.img").write_bytes(fat12_image({"PC.COM":(tmp/"pc.com").read_bytes(),

@@ -2,7 +2,7 @@
 """Real installer -> BIOS HDD boot -> native/DOS writes -> HDD-only cold boot.
 
 Usage: run_hdd_cold_boot_test.py [kernel.elf] [supplied DOS disk directory]
-No arguments builds a temporary test kernel and uses MS-DOS_disks. Every
+No arguments builds a temporary test kernel and uses ../MS-DOS_disks. Every
 disk is disposable. DOS install media is a data-only ISO, never a boot CD.
 Both clean and alongside-existing-partition setup paths are exercised.
 """
@@ -281,7 +281,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("kernel", nargs="?", type=Path)
     parser.add_argument("dos_disks", nargs="?", type=Path,
-                        default=ROOT / "MS-DOS_disks")
+                        default=ROOT.parent / "MS-DOS_disks")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="inteilidos-cold-boot-") as folder:
         tmp = Path(folder)

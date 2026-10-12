@@ -13,7 +13,7 @@ static uint8_t forbidden_cmos(uint8_t reg) {
 #include "../kernel/msdos/platform.c"
 
 static int images[ATA_MAX_DRIVES], cd_calls, boot_calls, reserve_calls;
-static int key=-1, expected_drive;
+static int key=-1, expected_drive, fdc_calls;
 static char output[4096];
 void *kmalloc(size_t n) {return malloc(n);}
 void *kcalloc(size_t n,size_t s) {return calloc(n,s);}
@@ -76,9 +76,17 @@ int32_t iso9660_read_file(uint8_t d,const iso9660_dirent_t *e,uint8_t *b,uint32_
 int cdrom_read_sector(uint8_t d,uint32_t lba,uint8_t *b) {
     (void)d;(void)lba;(void)b;assert(!"unexpected CD read");return -1;
 }
+int fdc_init(void) {++fdc_calls;return -1;}
+void fdc_last_read_status(fdc_read_status_t *out) {
+    *out=(fdc_read_status_t){-1,-1,-1,0xffff};
+}
+int fdc_read_sector(uint8_t d,uint32_t lba,uint8_t *b) {
+    assert(!"read after controller initialization failed");
+    (void)d;(void)lba;(void)b;return -1;
+}
 static void fixture(void) {
     memset(images,0,sizeof(images));output[0]=0;
-    cd_calls=boot_calls=reserve_calls=0;key=-1;
+    cd_calls=boot_calls=reserve_calls=fdc_calls=0;key=-1;
 }
 int main(void) {
     fixture();images[0]=1;expected_drive=0;
@@ -106,5 +114,15 @@ int main(void) {
     fixture();images[0]=1;
     const char *a[]={"/IMAGE","GAME.IMG"};
     assert(prepare_disk(2,a)==1 && !boot_calls && !reserve_calls);
+    /* Selecting A: must not require it to be present to boot an existing C:.
+     * Its controller is initialized only on an actual guest floppy read. */
+    fixture();images[0]=1;
+    const char *f[]={"/FLOPPY"};
+    assert(!prepare_disk(1,f) && !fdc_calls && !cd_calls);
+    uint8_t sector[512];
+    assert(!msdos_pc_disk(1,0,sector,sizeof(sector),0) && fdc_calls==1);
+    assert(!io_failed); /* optional A: failure does not terminate DOS C: */
+    fixture();images[0]=1;
+    assert(!prepare_disk(0,NULL) && !fdc_calls && !cd_calls);
     puts("PASS: CD-independent saved DOS startup, other-volume recovery, ambiguity/size/I/O protection and optional floppy failure");
 }

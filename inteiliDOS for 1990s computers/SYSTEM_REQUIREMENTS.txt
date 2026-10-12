@@ -119,17 +119,22 @@ Host HDD space
   Files installed there persist across emulator sessions and host reboots.
 
 DOS installation media
-  The supplied source images are stored in MS-DOS_disks inside the
-  inteiliDOS source folder, named Disk1.img, Disk2.img, Disk3.img and Suppdisk.img.
-  First-time creation requires a valid MS-DOS 6.22 Disk 1 image on the OS CD.
-  Build the ISO with the supplied Disk 1, Disk 2, Disk 3, and supplemental
-  images. Their ISO-root names are:
+  Users must supply licensed DOS media separately. The inteiliDOS OS ISO
+  does not contain MS-DOS disk images. Reference images are kept outside the
+  OS source folder in ../MS-DOS_disks.
+  First-time creation requires MS-DOS 6.22 Disk 1 either as an image on a
+  separate ISO9660 CD, or as a standard 1.44 MB floppy in A:.
+  On a separate DOS CD, recommended root filenames are:
     D6221.IMG    Disk 1
     D6222.IMG    Disk 2
     D6223.IMG    Disk 3
     D622S.IMG    Supplemental disk
 
-  Keep that CD inserted for first launch and whenever using its floppy images.
+  DISK1.IMG, DISK2.IMG, DISK3.IMG and SUPPDISK.IMG are also accepted.
+  Optionally create a separate DOS CD with cmake/create_msdos_cd.py.
+  For floppy setup, mount/write Disk 1 as floppy media and run MS-DOS /FLOPPY.
+  A disk-image file stored inside a floppy filesystem is not a boot floppy.
+  Keep the DOS media inserted for first launch and whenever accessing A:.
   An already initialized DOS HDD can boot without the installation CD.
   MS-DOS 4.0 source is not a substitute for these MS-DOS 6.22 system files.
 
@@ -155,7 +160,7 @@ Program media and controls
   Mount a CD-root floppy image with: MS-DOS /IMAGE GAME.IMG
   Supported game floppy-image sizes: 720 KiB or standard 1.44 MB.
   A "1.44 MB" floppy image contains 1,474,560 bytes (1,440 KiB).
-  The CD used by /IMAGE must also contain D6221.IMG for current CD discovery.
+  A game-image CD used by /IMAGE does not need DOS installation images.
 
   DOS A: is read-only. Supply programs through mounted floppy images or a
   physical 1.44 MB floppy, then copy/install them onto DOS C:.

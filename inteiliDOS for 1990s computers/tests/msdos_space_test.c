@@ -16,6 +16,9 @@ static size_t output_len;
 static uint8_t floppy[FLOPPY_BYTES];
 static unsigned media_reads;
 static int cancel, fail_media;
+static int floppy_ready;
+static int controller_configured, init_failure, floppy_read_error;
+static unsigned fdc_initializations, floppy_reads;
 
 void *kmalloc(size_t n) { return malloc(n); }
 void *kcalloc(size_t n, size_t s) { return calloc(n,s); }
@@ -59,13 +62,31 @@ const cdrom_drive_t *cdrom_drives(void) {
     return drives;
 }
 uint32_t cdrom_rescan_media(uint8_t d) {(void)d;return FLOPPY_BYTES/2048-1;}
+int fdc_init(void) {
+    ++fdc_initializations;
+    if (init_failure) return -1;
+    controller_configured=1;return 0;
+}
+void fdc_last_read_status(fdc_read_status_t *out) {
+    *out=(fdc_read_status_t){0x40,0x10,0,0x1ff};
+}
+int fdc_read_sector(uint8_t d,uint32_t lba,uint8_t *b) {
+    assert(controller_configured && "floppy read before FDC initialization");
+    ++floppy_reads;
+    ++media_reads;
+    if (floppy_read_error) return floppy_read_error;
+    if (d || !floppy_ready || lba>=FLOPPY_BYTES/512) return FDC_ERR_ABNORMAL;
+    memcpy(b,floppy+(size_t)lba*512,512);return 0;
+}
 
 static void fixture(uint32_t sectors) {
     total=sectors;
     installed(2048,sectors-2048);
     memset(disk+446,0,sizeof(native_part_t)); /* no overlapping foreign partition */
     fs_volume_count=0;
-    output_len=0;output[0]=0;media_reads=0;cancel=fail_media=0;
+    output_len=0;output[0]=0;media_reads=0;cancel=fail_media=floppy_ready=0;
+    controller_configured=init_failure=floppy_read_error=physical_ready=0;
+    fdc_initializations=floppy_reads=0;
     uint8_t keep[512];memset(keep,0x79,sizeof(keep));
     assert(fs_write(0,"KEEP.TXT",keep,sizeof(keep))==FS_OK);
     writes=write_attempts=0;
@@ -153,6 +174,39 @@ int main(void) {
     assert(image.sectors==DISK_SECTORS && image.start==allowed_start+1);
     assert(sector(image.start)[510]==0x55 && sector(image.start)[511]==0xaa);
     assert(!memcmp(sector(image.start+98),floppy+33*512,512));kept();
-    puts("PASS: 10MiB refusal, required/available space, 32MiB seeding, full directory, ATA read/write failure, F8 cancellation; native files preserved");
+    /* Seed using only a supplied physical floppy, including partial-sector
+     * source reads. No CD boot file is needed or published into the OS. */
+    fixture(32*2048);floppy_ready=1;
+    w16(floppy+14,1);floppy[13]=1;floppy[16]=2;
+    w16(floppy+17,224);w16(floppy+19,2880);w16(floppy+22,9);
+    w16(floppy+24,18);w16(floppy+26,2);
+    const char *args[]={"/FLOPPY"};
+    assert(!prepare_disk(1,args) && physical);
+    assert(fdc_initializations==1 && floppy_reads>1);
+    assert(fs_image_open(0,IMAGE_NAME,&image)==FS_OK);kept();
+    uint8_t partial[37];
+    assert(!read_floppy(33*512+11,partial,sizeof(partial)));
+    assert(!memcmp(partial,floppy+33*512+11,sizeof(partial)));
+    fixture(32*2048);floppy_ready=1; /* invalid BPB */
+    assert(prepare_disk(1,args)==1 && !write_attempts);
+    assert(strstr(output,"not a supported 1.44 MB"));
+    assert(fs_image_open(0,IMAGE_NAME,&image)==FS_ERR_NOTFOUND);kept();
+    fixture(32*2048);init_failure=1;
+    assert(prepare_disk(1,args)==1 && !write_attempts && !floppy_reads);
+    assert(strstr(output,"cannot initialize the floppy controller"));
+    assert(fs_image_open(0,IMAGE_NAME,&image)==FS_ERR_NOTFOUND);kept();
+    const int errors[]={FDC_ERR_TIMEOUT,FDC_ERR_ABNORMAL,FDC_ERR_CRC,FDC_ERR_DMA};
+    const char *reasons[]={"timeout","no readable sector","CRC error","incomplete DMA"};
+    for (unsigned i=0;i<4;i++) {
+        fixture(32*2048);floppy_read_error=errors[i];
+        assert(prepare_disk(1,args)==1 && !write_attempts);
+        assert(fdc_initializations==1 && floppy_reads==1);
+        assert(strstr(output,reasons[i]) && !strstr(output,"boot disk missing"));
+        assert(fs_image_open(0,IMAGE_NAME,&image)==FS_ERR_NOTFOUND);kept();
+    }
+    fixture(32*2048);floppy_ready=1;floppy[510]=0;
+    assert(prepare_disk(1,args)==1 && !write_attempts);
+    assert(strstr(output,"no valid boot signature"));kept();
+    puts("PASS: space/directory refusal, CD and physical-floppy seeding, invalid floppy, partial-sector reads, ATA failures and F8 cancellation; native files preserved");
     free(disk);return 0;
 }

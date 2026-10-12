@@ -416,10 +416,13 @@ For build setup, controls, installation examples and troubleshooting, see
 | `tests/run_msdos622_test.py`, `msdos622_fixture.asm` | Complete-OS integration test and 80186/CGA/speaker COM fixture |
 
 The CPU, platform and device sources are included in `KERNEL_C_SOURCES`.
-The ISO build uses the `MSDOS_DISK_DIR` cache path (by default `MS-DOS_disks`
-inside the source folder) and prepares `D6221.IMG`, `D6222.IMG`, `D6223.IMG`,
-and `D622S.IMG`. DOS binaries remain external input images; they are not linked
-into the kernel and the DOS 4 source build is not part of this path.
+The OS ISO build never includes DOS disk images, even from an old cached
+`MSDOS_DISK_DIR`. Old automatically staged `D622*.IMG` files are removed.
+Users supply DOS separately on a data CD or a physical/emulated 1.44 MB floppy.
+The optional `cmake/create_msdos_cd.py` utility validates four user-owned
+images and makes a separate DOS-only CD. The supplied reference images are
+outside the OS folder in `../MS-DOS_disks`; no DOS binaries are linked into
+the kernel or downloaded by the OS build.
 
 ### Guest execution and BIOS interface
 
@@ -486,8 +489,16 @@ save and close applications before aborting.
 A: is read-only. ISO-backed images are read on demand through a cached 2048-byte
 ISO sector; do not allocate an entire 1.44 MB image alongside guest RAM in the
 native embedded heap. F6 cycles the supplied media and F7 selects the physical
-1.44 MB floppy. `/IMAGE` selects a CD-root 720 KB/1.44 MB game image, on a CD
-discoverable via `D6221.IMG`. The BIOS media-change notification invalidates
+1.44 MB floppy. `/FLOPPY` supports initial seeding directly from DOS Disk 1 in
+the floppy drive; shared sector reads handle partial file tails as well as
+BIOS transfers. The native floppy controller is initialized on first physical
+read and reinitialized after F7 selects physical media; firmware state is not
+assumed. Saved C: startup alone never initializes or requires a floppy drive.
+Plain startup tries the floppy if no DOS Disk 1 CD is present.
+`/IMAGE` selects a CD-root 720 KB/1.44 MB game image without requiring any
+DOS installation images on that CD. CD installation images may use `D622*.IMG`
+or `DISK1.IMG`/`DISK2.IMG`/`DISK3.IMG`/`SUPPDISK.IMG`.
+The BIOS media-change notification invalidates
 DOS's cached floppy directory after a swap.
 
 There is no guest ISO9660 or ATAPI/MSCDEX CD-ROM driver and no D: CD mapping.
@@ -523,7 +534,7 @@ python3 tests/build_test_kernel.py /tmp/msdos622-build
 python3 tests/run_msdos622_test.py /tmp/msdos622-build/inteilidOS.elf
 ```
 
-The test requires the four supplied disks in `MS-DOS_disks`, QEMU,
+The test requires the four separately supplied disks in `../MS-DOS_disks`, QEMU,
 xorriso, NASM, Python 3 and the GCC/binutils build tools. It verifies DOS 6.22,
 COM and MZ execution, installation and persistence after re-entry/reboot,
 F8 through CLI, 80186 instructions, graphics/speaker handling, CD-hosted game

@@ -25,7 +25,7 @@ static iso9660_dirent_t floppy_entry;
 static uint8_t media_cache[2048];
 static uint32_t media_cached_lba;
 static int disc = -1, media_index, physical, pending = -1, io_failed;
-static int auto_media;
+static int auto_media, physical_ready;
 static int media_changed;
 static uint16_t screen[2000], saved[2000];
 static int row, col, save_row, save_col, region_top, region_bottom;
@@ -33,6 +33,7 @@ static uint8_t attr, ansi, bright;
 static unsigned parameters[8], parameter;
 static uint32_t last_refresh, started;
 static const char *media_names[] = {"D6221.IMG", "D6222.IMG", "D6223.IMG", "D622S.IMG"};
+static const char *media_aliases[] = {"DISK1.IMG", "DISK2.IMG", "DISK3.IMG", "SUPPDISK.IMG"};
 
 static uint16_t u16(const uint8_t *p) { return p[0] | ((uint16_t)p[1] << 8); }
 static uint32_t u32(const uint8_t *p) { return u16(p) | ((uint32_t)u16(p+2) << 16); }
@@ -188,14 +189,14 @@ void msdos_pc_rtc(uint8_t *p) {
     w16(p+36,ticks%1000);
 }
 
-static int find_install_cd(void) {
+static int find_image_cd(const char *name) {
     disc=-1;
     const cdrom_drive_t *drives=cdrom_drives();
     for (unsigned d=0;d<CDROM_MAX_DRIVES;d++) {
         if (!drives[d].present) continue;
-        cdrom_rescan_media(d);
+        if (!cdrom_rescan_media(d)) continue; /* empty tray */
         iso9660_dirent_t e;
-        if (iso9660_find_file(d,media_names[0],&e)==1) {
+        if (iso9660_find_file(d,name,&e)==1 && !e.is_dir) {
             disc=(int)d;
             return 0;
         }
@@ -203,10 +204,17 @@ static int find_install_cd(void) {
     return -1;
 }
 
+static int find_install_cd(void) {
+    return !find_image_cd(media_names[0]) ? 0 : find_image_cd(media_aliases[0]);
+}
+
 static int load_media(int index, const char *name) {
     if (disc<0) return -1;
     iso9660_dirent_t e;
-    if (iso9660_find_file(disc,name,&e)!=1 || e.is_dir ||
+    int found=iso9660_find_file(disc,name,&e);
+    if (!found && index>=0 && index<4)
+        found=iso9660_find_file(disc,media_aliases[index],&e);
+    if (found!=1 || e.is_dir ||
         (e.size!=1474560 && e.size!=737280)) return -1;
     uint8_t boot[512];
     if (iso9660_read_file(disc,&e,boot,512)!=512 || boot[510]!=0x55 ||
@@ -214,6 +222,54 @@ static int load_media(int index, const char *name) {
     floppy_entry=e; floppy_size=e.size; media_cached_lba=0xffffffff;
     media_index=index; physical=0;
     media_changed=1;
+    return 0;
+}
+
+static int ensure_physical_floppy(void) {
+    /* Unlike LaunchPad, entering MS-DOS need not have initialized the FDC.
+     * BIOS leftovers are not a usable controller contract (notably in 86Box).
+     * Initialize lazily so a saved DOS HDD still boots with no floppy drive. */
+    if (!physical_ready) {
+        if (fdc_init()) return -1;
+        physical_ready=1;
+    }
+    return 0;
+}
+static int load_install_floppy(void) {
+    uint8_t boot[512];
+    if (ensure_physical_floppy()) {
+        vga_puts("MS-DOS: cannot initialize the floppy controller for A:.\n");
+        return -1;
+    }
+    int rc=fdc_read_sector(0,0,boot);
+    if (rc) {
+        const char *reason=rc==FDC_ERR_TIMEOUT ? "controller/drive timeout" :
+                           rc==FDC_ERR_CRC ? "CRC error" :
+                           rc==FDC_ERR_DMA ? "incomplete DMA transfer" :
+                           rc==FDC_ERR_ABNORMAL ? "no readable sector or disk" :
+                           "seek or controller error";
+        vga_printf("MS-DOS: cannot read A: boot sector: %s (code %d).\n",reason,rc);
+        fdc_read_status_t status;
+        fdc_last_read_status(&status);
+        vga_printf("FDC status: ST0=%x ST1=%x ST2=%x DMA count=%x.\n",
+                   (unsigned)status.st0,(unsigned)status.st1,
+                   (unsigned)status.st2,(unsigned)status.dma_count);
+        return -1;
+    }
+    if (boot[510]!=0x55 || boot[511]!=0xaa) {
+        vga_puts("MS-DOS: A: has no valid boot signature; mount DOS Disk 1 directly.\n");
+        vga_printf("Read signature bytes: %x %x; sector size=%u, sectors=%u.\n",
+                   (unsigned)boot[510],(unsigned)boot[511],
+                   (unsigned)u16(boot+11),(unsigned)u16(boot+19));
+        return -1;
+    }
+    if (u16(boot+11)!=512 || boot[13]!=1 || u16(boot+14)!=1 || boot[16]!=2 ||
+        u16(boot+17)!=224 || u16(boot+19)!=2880 || u16(boot+22)!=9 ||
+        u16(boot+24)!=18 || u16(boot+26)!=2) {
+        vga_puts("MS-DOS: A: is not a supported 1.44 MB DOS floppy format.\n");
+        return -1;
+    }
+    physical=1;floppy_size=FLOPPY_BYTES;media_index=0;media_changed=1;
     return 0;
 }
 int msdos_media_changed(void) {
@@ -225,6 +281,19 @@ static int read_floppy(uint32_t offset, uint8_t *data, uint32_t length) {
     if (auto_media) {
         auto_media=0;
         if (!find_install_cd()) load_media(0,media_names[0]);
+    }
+    if (physical) {
+        if (offset>=FLOPPY_BYTES || length>FLOPPY_BYTES-offset) return -1;
+        if (ensure_physical_floppy()) return -1;
+        uint8_t sector[512];
+        while (length) {
+            uint32_t in=offset%512, count=512-in;
+            if (count>length) count=length;
+            if (fdc_read_sector(0,offset/512,sector)) return -1;
+            kmemcpy(data,sector+in,count);
+            data+=count;offset+=count;length-=count;
+        }
+        return 0;
     }
     if (!floppy_size || offset>=floppy_size || length>floppy_size-offset) return -1;
     while (length) {
@@ -245,12 +314,6 @@ int msdos_pc_disk(int drive, uint32_t offset, uint8_t *data,
     if (!length || length%512 || offset%512) return 0;
     if (drive==1) {
         if (write) return 0; /* supplied images and physical floppy read-only */
-        if (physical) {
-            if (offset>=FLOPPY_BYTES || length>FLOPPY_BYTES-offset) return 0;
-            for (uint32_t i=0;i<length;i+=512)
-                if (fdc_read_sector(0,(offset+i)/512,data+i)) return 0;
-            return 1;
-        }
         return !read_floppy(offset,data,length);
     }
     if (drive!=0 || offset/512>=hard.sectors ||
@@ -274,7 +337,9 @@ int msdos_pc_poll(const uint8_t *ram, const uint8_t *ports) {
             vga_puts("MS-DOS: could not load next installation disk.\n");
             /* Optional A: media failure must not stop the saved DOS C:. */
         }
-    } else if (key==KEY_F1+6) {auto_media=0;physical=1; media_changed=1; pending=-1;}
+    } else if (key==KEY_F1+6) {
+        auto_media=physical_ready=0;physical=1;media_changed=1;pending=-1;
+    }
     else if (key>=0 && pending<0) {
         int symbol=key;
         if (key>=KEY_UP && key<=KEY_RIGHT) {
@@ -436,12 +501,15 @@ done:
 /* Keep storage/media selection separate from physical VGA/CMOS and CPU entry
  * so selection, recovery and refusal paths can be tested without host I/O. */
 static int prepare_disk(int argc, const char *argv[]) {
-    if (argc && kstrcmp(argv[0],"/IMAGE") && kstrcmp(argv[0],"/image")) {
-        vga_puts("Usage: MS-DOS [/IMAGE <720K or 1.44M floppy image on CD>]\n");return 1;
+    int use_floppy=argc==1 &&
+        (!kstrcmp(argv[0],"/FLOPPY") || !kstrcmp(argv[0],"/floppy"));
+    int use_image=argc==2 &&
+        (!kstrcmp(argv[0],"/IMAGE") || !kstrcmp(argv[0],"/image"));
+    if (argc && !use_floppy && !use_image) {
+        vga_puts("Usage: MS-DOS [/FLOPPY | /IMAGE <floppy image on CD>]\n");return 1;
     }
-    if (argc && argc!=2) {vga_puts("MS-DOS /IMAGE requires a filename.\n");return 1;}
     floppy_size=0; disc=-1; pending=-1; io_failed=0; media_index=0;physical=0;
-    auto_media=0;
+    auto_media=physical_ready=0;
     int existing=-1, candidate=-1;
     uint8_t native_drive;
     int storage_rc=fs_volume_drive(0, &native_drive);
@@ -475,8 +543,16 @@ static int prepare_disk(int argc, const char *argv[]) {
     }
     if (existing<0 && reserve_disk(candidate)) return 1;
     if (existing<0) {
-        if (find_install_cd() || load_media(0,media_names[0])) {
-            vga_puts("DOS boot disk missing: rebuild the ISO with the supplied DOS disks.\n");return 1;
+        if (use_floppy || find_install_cd()) {
+            vga_puts("Reading user-supplied DOS Disk 1 from floppy A:...\n");
+            if (load_install_floppy()) {
+                vga_puts("Supply MS-DOS 6.22 Disk 1 on a separate\n"
+                         "CD (D6221.IMG or DISK1.IMG), or insert a 1.44 MB DOS Disk 1\n"
+                         "floppy in drive A: and run MS-DOS /FLOPPY.\n"
+                         "Check that A: is configured as a 3.5-inch 1.44 MB drive.\n");return 1;
+            }
+        } else if (load_media(0,media_names[0])) {
+            vga_puts("MS-DOS: supplied CD Disk 1 image is invalid or unreadable.\n");return 1;
         }
         int rc=seed_disk();
         if (rc) return disk_failure(rc);
@@ -485,7 +561,8 @@ static int prepare_disk(int argc, const char *argv[]) {
                    (unsigned)hard.drive);
         auto_media=!argc;
     }
-    if (argc && ((disc<0 && find_install_cd()) || load_media(-1,argv[1]))) {
+    if (use_floppy) {physical=1;floppy_size=FLOPPY_BYTES;media_changed=1;}
+    if (use_image && (find_image_cd(argv[1]) || load_media(-1,argv[1]))) {
         vga_puts("Cannot read that floppy image from the CD.\n");return 1;
     }
     return 0;
