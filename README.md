@@ -10,8 +10,7 @@ It is not Linux, DOS, or a hosted application. The boot code, kernel, device
 drivers, shell, applications, and games run directly on the computer.
 
 `MS-DOS` opens a separate MS-DOS 6.22 software emulator with a persistent
-private C: drive; F8 returns to inteiliShell. See
-[DOS emulator setup, media controls, and compatibility](inteiliDOS for 1990s computers/DOS_COMPATIBILITY.md).
+private C: drive; F8 returns to inteiliShell.
 
 ## Compatibility baseline
 
