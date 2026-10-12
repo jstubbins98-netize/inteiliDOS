@@ -5,6 +5,11 @@ MS-DOS 6.22 system files supplied on the installation disks. DOS has its own
 memory, BIOS, command prompt, and persistent virtual hard drive. F8 stops the
 emulator and returns to inteiliShell without rebooting inteiliDOS.
 
+This replaces the earlier LaunchPad Virtual 8086 compatibility path. DOS
+programs are no longer launched directly through LaunchPad or `RUN /DOS`;
+those paths direct users to `MS-DOS`. Native IPGM and ELF applications still
+use LaunchPad as before.
+
 ## Build and first launch
 
 1. Build with `bash build.sh` and boot the new inteiliDOS image.
@@ -21,13 +26,17 @@ emulator and returns to inteiliShell without rebooting inteiliDOS.
    installs the boot files and Disk 1 utilities, and starts the DOS `C:\>` prompt.
 
 The inteiliDOS build never bundles DOS images into its OS ISO or kernel.
-DOS media is supplied by the user at runtime. To optionally make a separate data CD from your four licensed images:
+The previously supplied images are retained separately in `../MS-DOS_disks`,
+outside the OS source folder. DOS media is supplied by the user at runtime.
+To optionally make a separate data CD from your four licensed images:
 
 ```sh
 python3 cmake/create_msdos_cd.py /path/to/your/dos-disks /path/to/dos-media.iso
 ```
 
-The separate-CD tool accepts uploaded filenames with suffixes or standard disk names. It checks the 1.44 MB FAT12 image layout and Disk 1's system files, then copies the
+The old `MSDOS_DISK_DIR` OS-build option is no longer used. The separate-CD
+tool accepts uploaded filenames with suffixes or standard disk names. It checks
+the 1.44 MB FAT12 image layout and Disk 1's system files, then copies the
 original images unchanged to the separate DOS CD's root:
 
 | Supplied disk | ISO filename |
@@ -65,7 +74,8 @@ and unreadable media produces an error rather than a substitute.
 
 Rebuilding the ISO does not update a kernel already installed on an HDD.
 That installed kernel must also be updated to use changes when booting from
-the HDD.
+the HDD. Do not erase or clean-install over a disk containing games or saves
+just to apply an emulator fix.
 
 ## Commands, drives, and controls
 
