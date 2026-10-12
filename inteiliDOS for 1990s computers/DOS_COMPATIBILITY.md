@@ -21,17 +21,13 @@ emulator and returns to inteiliShell without rebooting inteiliDOS.
    installs the boot files and Disk 1 utilities, and starts the DOS `C:\>` prompt.
 
 The inteiliDOS build never bundles DOS images into its OS ISO or kernel.
-The previously supplied images are retained separately in `../MS-DOS_disks`,
-outside the OS source folder. DOS media is supplied by the user at runtime.
-To optionally make a separate data CD from your four licensed images:
+DOS media is supplied by the user at runtime. To optionally make a separate data CD from your four licensed images:
 
 ```sh
 python3 cmake/create_msdos_cd.py /path/to/your/dos-disks /path/to/dos-media.iso
 ```
 
-The old `MSDOS_DISK_DIR` OS-build option is no longer used. The separate-CD
-tool accepts uploaded filenames with suffixes or standard disk names. It checks
-the 1.44 MB FAT12 image layout and Disk 1's system files, then copies the
+The separate-CD tool accepts uploaded filenames with suffixes or standard disk names. It checks the 1.44 MB FAT12 image layout and Disk 1's system files, then copies the
 original images unchanged to the separate DOS CD's root:
 
 | Supplied disk | ISO filename |
@@ -69,8 +65,7 @@ and unreadable media produces an error rather than a substitute.
 
 Rebuilding the ISO does not update a kernel already installed on an HDD.
 That installed kernel must also be updated to use changes when booting from
-the HDD. Do not erase or clean-install over a disk containing games or saves
-just to apply an emulator fix.
+the HDD.
 
 ## Commands, drives, and controls
 
