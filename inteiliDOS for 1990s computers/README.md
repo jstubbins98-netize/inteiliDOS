@@ -223,6 +223,30 @@ sudo dd \
 
 ### CD-ROM
 
+At inteiliShell, use these commands with a detected ATAPI CD-ROM drive:
+
+| Command | Action |
+|---|---|
+| `CDROM` | Show detected drives, readable-disc capacity and ISO9660 volume information. |
+| `CDROM /EJECT` | Open the first drive with a readable disc, or the first detected drive if all trays are empty. |
+| `CDROM /LIST` | List the ISO9660 root directory on each inserted readable data disc, including folders and file sizes. |
+| `CDROM /RUN` | Open LaunchPad's CD-only browser to choose a native `.ELF` program. Folders remain browsable; other file types are hidden. |
+| `CDROM /?` | Show command usage. |
+
+In the `/RUN` browser, use the arrow keys and Enter to choose a program or
+enter a folder, Backspace to go up, F2 to switch between detected CD-ROM
+drives, F3 to rescan changed media, and Esc to return to the shell. Programs
+use the existing ELF loader, validation and launch-confirmation dialog.
+Opening ordinary LaunchPad still shows its usual file types and floppy sources.
+
+Information and listings are read-only and refreshed from the drive at each
+command. Empty trays, rejected eject commands, read failures and unsupported
+filesystems are reported rather than replaced with sample contents.
+Only ISO9660 data-disc listings are supported (not audio CD, Joliet or Rock
+Ridge names). `/LIST` displays at most 64 root entries per disc and warns when
+that limit is reached; use `/RUN` to browse folders containing ELF programs.
+After changing a disc in an open tray, close the tray before retrying.
+
 Burn `build_1990s/inteiliDOS_1990s.iso` as an image, not as a regular file.
 Older optical drives are generally more reliable with CD-R media written at a
 low speed.

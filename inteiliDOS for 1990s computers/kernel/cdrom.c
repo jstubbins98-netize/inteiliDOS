@@ -193,8 +193,9 @@ static int atapi_packet(uint8_t d, const uint8_t *cdb,
     return -1;
 }
 
-/* Disc insertion/boot can leave UNIT ATTENTION pending. Clear it with
- * REQUEST SENSE and retry capacity, without treating an empty tray as absent. */
+/* Disc insertion/boot can leave UNIT ATTENTION pending, or briefly report
+ * NOT READY as the tray/media transition settles. Retry at most three times;
+ * a persistently empty tray still fails and the drive remains detected. */
 static int read_capacity(uint8_t d, uint8_t cap[8]) {
     const uint8_t cdb[12] = { CDB_READ_CAPACITY10 };
     const uint8_t sense_cdb[12] = { CDB_REQUEST_SENSE, 0, 0, 0, 18 };
@@ -202,7 +203,8 @@ static int read_capacity(uint8_t d, uint8_t cap[8]) {
         if (atapi_packet(d, cdb, cap, 8) == 0) return 0;
         uint8_t sense[18] = {0};
         if (atapi_packet(d, sense_cdb, sense, 18) < 0) return -1;
-        if ((sense[2] & 0x0F) != 6) return -1; /* not UNIT ATTENTION */
+        unsigned key=sense[2] & 0x0F;
+        if (key!=6 && key!=2) return -1; /* only UNIT ATTENTION / NOT READY */
     }
     return -1;
 }

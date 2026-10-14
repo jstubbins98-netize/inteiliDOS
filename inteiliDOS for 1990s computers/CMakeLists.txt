@@ -135,6 +135,7 @@ set(KERNEL_C_SOURCES
 set(SHELL_C_SOURCES
     shell/shell.c
     shell/commands.c
+    shell/cdrom_command.c
     shell/iedit.c
     shell/tour.c
     tetris/tetris.c

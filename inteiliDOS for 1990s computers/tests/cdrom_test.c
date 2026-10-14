@@ -9,7 +9,7 @@
 
 typedef struct {
     int type, mode, position, size, chunk, phase_left, busy, attention, empty;
-    int extra, short_read, reject_eject, words, senses;
+    int extra, short_read, reject_eject, words, senses, transient_empty;
     uint8_t status, reason, cdb[12], data[4096];
     uint16_t cylinder, identity;
 } device_t;
@@ -124,6 +124,9 @@ void outw(uint16_t port, uint16_t value) {
             d->data[2] = d->attention ? 6 : 2;
             d->data[12] = d->attention ? 0x28 : 0x3A;
             d->attention = 0;
+            if (d->transient_empty) {
+                d->transient_empty=0;d->empty=0;d->attention=1;
+            }
             break;
         case 0x28:
             assert(d->cdb[7] == 0 && d->cdb[8] == 1);
@@ -188,6 +191,11 @@ int main(void) {
             assert(cdrom_count() == 1 && cdrom_drives()[slot].last_lba == 0);
             dev[slot].empty = 0; dev[slot].attention = 1;
             assert(cdrom_rescan_media(slot) == 127);
+            setup(slot,native,0,1);
+            dev[slot].transient_empty=1;
+            cdrom_init();
+            assert(cdrom_count()==1 && cdrom_drives()[slot].last_lba==127);
+            assert(dev[slot].senses==2); /* NOT READY -> attention -> capacity */
             setup(slot, native, 0, 0);
             dev[slot].identity = 0x8180; /* packet tape, not CD */
             cdrom_init();

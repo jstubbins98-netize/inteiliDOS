@@ -247,6 +247,22 @@ full directory on 32 MiB, and sufficient space with missing DOS media. All
 three preserve the complete disposable disk byte-for-byte and return to a
 usable shell. Screenshots are saved under ignored `generated-artifacts/msdos-space`.
 
+### CDROM command
+
+```bash
+gcc -O1 -fsanitize=address,undefined tests/cdrom_command_test.c -o /tmp/cdrom-command-test
+ASAN_OPTIONS=detect_leaks=0 /tmp/cdrom-command-test
+python3 tests/run_cdrom_command_test.py /tmp/test-kernel/inteilidOS.elf
+```
+
+The host fixture covers all options, case-insensitive arguments, multiple drives,
+empty/absent discs, read errors and eject rejection. The complete-kernel QEMU
+fixture creates a disposable ISO and an ELF linked outside the staging window.
+It checks actual volume/size listings, ELF-only browsing, nested program
+execution, wrong-format rejection, ordinary LaunchPad restoration, tray
+ejection and media reinsertion. It verifies the ISO is unchanged and saves a
+listing screenshot under ignored `generated-artifacts/cdrom-command`.
+
 ### Legacy 360 KB game media
 
 Run with a user-supplied Zork Trilogy FAT12 image (not bundled into the OS):

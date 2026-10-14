@@ -119,6 +119,9 @@ typedef struct {
 static lp_file_t lp_files[LP_MAX_FILES];
 static int       lp_file_count = 0;
 static int       lp_listing_ok = 0;
+static int       lp_cd_elf_only = 0;
+static const char *lp_ext(const char *name);
+static int lp_ext_eq(const char *ext, const char *cmp);
 static char      lp_err[48]    = "";  /* error message when listing fails */
 
 /* =========================================================================
@@ -256,13 +259,15 @@ static void lp_refresh_listing(int src, const cdrom_drive_t *drives) {
             return;
         }
         for (int i = 0; i < n && i < LP_MAX_FILES; i++) {
-            lp_strcpy(lp_files[i].name, iso_ents[i].name, ISO9660_NAME_MAX);
-            lp_files[i].size        = iso_ents[i].size;
-            lp_files[i].is_dir      = iso_ents[i].is_dir;
-            lp_files[i].cd_lba      = iso_ents[i].lba;
-            lp_files[i].fat_cluster = 0;
+            if (lp_cd_elf_only && !iso_ents[i].is_dir &&
+                !lp_ext_eq(lp_ext(iso_ents[i].name),"ELF")) continue;
+            lp_file_t *f=&lp_files[lp_file_count++];
+            lp_strcpy(f->name, iso_ents[i].name, ISO9660_NAME_MAX);
+            f->size        = iso_ents[i].size;
+            f->is_dir      = iso_ents[i].is_dir;
+            f->cd_lba      = iso_ents[i].lba;
+            f->fat_cluster = 0;
         }
-        lp_file_count = n < LP_MAX_FILES ? n : LP_MAX_FILES;
         lp_listing_ok = 1;
 
     } else {
@@ -376,6 +381,7 @@ static void lp_draw_source_bar(int src, const cdrom_drive_t *drives) {
 
     int col = 9;
     for (int i = 0; i < LP_SRC_COUNT && col < 72; i++) {
+        if (lp_cd_elf_only && !lp_src_is_cdrom(i)) continue;
         vga_color_t fg = (i == src) ? VGA_COLOR_BLACK       : VGA_COLOR_LIGHT_CYAN;
         vga_color_t bg = (i == src) ? VGA_COLOR_LIGHT_CYAN  : VGA_COLOR_DARK_GREY;
 
@@ -718,6 +724,12 @@ static void lp_do_load(int src, int sel, const cdrom_drive_t *drives) {
                    && lp_load_buf[3] == 'F');
 
     int is_mz = bytes >= 2 && lp_load_buf[0] == 'M' && lp_load_buf[1] == 'Z';
+    if (lp_cd_elf_only && !is_elf) {
+        lp_dlg_line(DLG_R0 + 12,1,"Not a native ELF executable.",VGA_COLOR_LIGHT_RED,55);
+        lp_dlg_line(DLG_R0 + 14,1,"Press any key.",VGA_COLOR_DARK_GREY,30);
+        keyboard_getchar();
+        return;
+    }
     int is_com = !is_ipgm && !is_elf && !is_mz && lp_ext_eq(lp_ext(f->name), "COM");
     int is_dos = !is_ipgm && !is_elf && (is_com || is_mz);
 
@@ -796,7 +808,8 @@ static void lp_do_load(int src, int sel, const cdrom_drive_t *drives) {
 /* =========================================================================
  * Main entry point
  * ========================================================================= */
-void launchpad_run(void) {
+static void launchpad_run_source(int initial_source, int elf_only) {
+    lp_cd_elf_only=elf_only;
     /*
      * Take a mutable local copy of the drive table so we can update it at
      * runtime when the user inserts a disc or swaps a floppy after boot.
@@ -818,6 +831,8 @@ void launchpad_run(void) {
             if (drives[i].last_lba > 0) break;
         }
     }
+    if (initial_source>=0) src=initial_source;
+    lp_probe_source(src,drives);
 
     int sel = 0;
     int top = 0;
@@ -858,7 +873,12 @@ void launchpad_run(void) {
         }
         else if (ch == LP_F2) {
             /* Cycle source — reset to root of new source, then probe. */
-            src = (src + 1) % LP_SRC_COUNT;
+            if (lp_cd_elf_only) {
+                for (unsigned tries=0;tries<CDROM_MAX_DRIVES;tries++) {
+                    src=(src+1)%CDROM_MAX_DRIVES;
+                    if (drives[src].present==CDROM_PRESENT) break;
+                }
+            } else src = (src + 1) % LP_SRC_COUNT;
             lp_depth = 0;
             sel = 0; top = 0;
             lp_draw_source_bar(src, drives);
@@ -928,5 +948,15 @@ void launchpad_run(void) {
         }
     }
 
+    lp_cd_elf_only=0;
     vga_clear();
+}
+
+void launchpad_run(void) {
+    launchpad_run_source(-1,0);
+}
+
+void launchpad_run_cdrom(uint8_t drive) {
+    if (drive>=CDROM_MAX_DRIVES) return;
+    launchpad_run_source(drive,1);
 }

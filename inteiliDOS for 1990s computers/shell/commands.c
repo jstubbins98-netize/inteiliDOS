@@ -13,6 +13,7 @@
 #include "talk.h"
 #include "filemanager.h"
 #include "launchpad.h"
+#include "cdrom_command.h"
 #include "setup.h"
 #include "health.h"
 #include "../want_you_gone_easter_egg/glados.h"
@@ -146,6 +147,7 @@ static int cmd_help(int argc, const char *argv[]) {
     println("\n  -- Storage --------------------");
     vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     println("  DISKCHECK - Check IDE hard disk health and geometry");
+    println("  CDROM    - CD-ROM info; /EJECT, /LIST, /RUN");
 
     /* System */
     vga_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
@@ -1321,6 +1323,7 @@ int nlp_translate(const char *input, char *out, int out_len) {
  * Command dispatcher
  * ========================================================================= */
 int command_dispatch(const char *cmd, int argc, const char *argv[]) {
+    if (kstrcmp(cmd, "CDROM") == 0) return cdrom_command(argc,argv);
     if (kstrcmp(cmd, "MS-DOS") == 0) return msdos_run(argc,argv);
     if (kstrcmp(cmd, "DIR")      == 0) return cmd_dir(argc, argv);
     if (kstrcmp(cmd, "LS")       == 0) return cmd_dir(argc, argv);
