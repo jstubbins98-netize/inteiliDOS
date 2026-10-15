@@ -7,5 +7,6 @@
  */
 
 void setup_run(void);
+int setup_repair_boot(void);
 
 #endif /* SETUP_H */

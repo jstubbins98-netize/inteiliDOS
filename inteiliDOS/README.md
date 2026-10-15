@@ -22,6 +22,10 @@ private C: drive; F8 returns to inteiliShell. See
 
 ## Compatibility baseline
 
+If an installed HDD stops booting after power-off or a BIOS visit, see
+[non-formatting boot recovery](BOOT_RECOVERY.md). Boot a newly rebuilt ISO and
+use the confirmed `BOOTREPAIR` command; do not erase the disk to repair boot code.
+
 The universal build favors standardized legacy interfaces:
 
 | Area | Baseline |

@@ -1,5 +1,9 @@
 # Modern hardware
 
+For installed-HDD startup and recovery regressions, see
+[BOOT_RECOVERY.md](../BOOT_RECOVERY.md). `run_boot_repair_test.py` covers cancelled
+and confirmed boot repair, backups, dirty-RAM cold boots and BIOS drive `0x81`.
+
 `python3 tests/run_modern_hardware_test.py` builds the optional-driver profile
 and runs it as ELF32 on x86-64 Intel/AMD QEMU CPU models. It tests USB-only input
 without the PS/2 driver, xHCI/UHCI after a mouse, report-ring wrap, the health UI

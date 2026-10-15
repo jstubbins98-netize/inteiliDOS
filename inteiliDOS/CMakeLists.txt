@@ -244,7 +244,18 @@ target_include_directories(kernel_c PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/shell
 )
 
-add_dependencies(kernel_c mbr_header)
+set(HDD_BOOT_HEADER ${CMAKE_CURRENT_BINARY_DIR}/shell/hdd_boot_data.h)
+add_custom_command(
+    OUTPUT ${HDD_BOOT_HEADER}
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/cmake/hdd_boot_header.py
+            ${HDD_BOOT_HEADER} ${NASM}
+    DEPENDS ${CMAKE_SOURCE_DIR}/cmake/hdd_boot_header.py
+            ${CMAKE_SOURCE_DIR}/boot/hdd_mbr.asm
+            ${CMAKE_SOURCE_DIR}/boot/hdd_vbr.asm
+    COMMENT "Generating relocated HDD MBR and BIOS-safe VBR"
+)
+add_custom_target(hdd_boot_header DEPENDS ${HDD_BOOT_HEADER})
+add_dependencies(kernel_c mbr_header hdd_boot_header)
 
 target_compile_options(kernel_c PRIVATE
     ${KERNEL_CFLAGS}

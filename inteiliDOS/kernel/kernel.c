@@ -124,7 +124,8 @@ void kernel_main(uint32_t mb_magic, uint32_t mb_info_phys) {
     /* Keep the firmware's standard VGA text mode. Direct VGA register
      * programming is deliberately avoided here because clone VGA adapters
      * from the early 1990s varied in their handling of undocumented state.
-     * Both boot paths request or preserve a BIOS text console before entering
+     * The installed VBR requests mode 3/page 0 before disk loading; GRUB's
+     * console path supplies a text console before entering
      * protected mode, so direct writes to 0xB8000 are the safest common path. */
 
     /* Dead-reckoning diagnostic '4': kernel_main reached, before any init.

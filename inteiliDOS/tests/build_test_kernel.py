@@ -52,6 +52,7 @@ def build(folder, modern=False):
 """)
     run("nasm", "-f", "bin", ROOT/"boot/mbr.asm", "-o", tmp/"mbr.bin")
     run(sys.executable, ROOT/"cmake/bin2header.py", tmp/"mbr.bin", "mbr_data", tmp/"mbr_data.h")
+    run(sys.executable,ROOT/"cmake/hdd_boot_header.py",tmp/"hdd_boot_data.h")
     if modern:
         profile=config.read_text()
         for key,value in {

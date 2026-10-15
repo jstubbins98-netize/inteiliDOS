@@ -28,13 +28,14 @@ SECTIONS
     }
 
     /* End of sections that must be loaded from disk.
-     * BSS is zero-initialised; on a fresh QEMU image the RAM is already
-     * zero, so we do not need to store or load it. */
+     * BSS is explicitly cleared by boot.asm, never assumed to be clean RAM. */
     _kernel_data_end = ALIGN(512);
 
     .bss ALIGN(4K) : {
+        _bss_start = .;
         *(COMMON)
         *(.bss*)
+        _bss_end = .;
     }
 
     /* Symbol marking the end of the kernel image */

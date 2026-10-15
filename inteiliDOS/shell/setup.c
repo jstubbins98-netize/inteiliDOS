@@ -46,6 +46,7 @@
 #include "../kernel/ata.h"
 #include "../kernel/memory.h"
 #include "../kernel/disk_layout.h"
+#include "../kernel/fs.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -250,6 +251,8 @@ static void sw_menu_item(int row, const char *text, int selected) {
  *   0x58  ret
  *   0x59  msg "No bootable partition\r\n\0"  (24 bytes)
  * ========================================================================= */
+#if 0 /* Historical handwritten boot code. Canonical sources: boot/hdd_*.asm.
+       * Disabled: MBR self-overwrite, BIOS register assumptions and drive 0x80. */
 static const uint8_t mbr_bootstrap[446] = {
     /* 0x00 — setup: cli, zero ax, initialise ss/sp/ds/es */
     0xFA,                          /* cli */
@@ -705,6 +708,10 @@ static const uint8_t vbr_code[512] = {
     /* 0x1FE–0x1FF: boot signature */
     0x55, 0xAA
 };
+#endif
+#include <hdd_boot_data.h>
+#define mbr_bootstrap hdd_boot_data
+#define vbr_code (hdd_boot_data+512)
 
 /* =========================================================================
  * Partition table structures (packed, MBR-compatible)
@@ -1292,9 +1299,9 @@ static int sw_stage_install(void) {
          * 128 iterations (512 KB) which may still truncate a big kernel. */
         sw_sector[0x36] = sw_vbr_iterations;
 
-        /* Patch the Phase 2 'mov ecx' immediate at VBR offset 0x0DA.
+        /* Patch the NASM VBR copy_dwords field at offset 0x0DA.
          * ECX = iterations × 8 sectors × 128 dwords/sector.
-         * This controls how many dwords Phase 2 copies from 0x8000→0x100000;
+         * This controls how many dwords Phase 2 copies from 0x8000 to 0x100000;
          * it must match the number of sectors loaded in Phase 1. */
         uint32_t vbr_ecx = (uint32_t)sw_vbr_iterations * 1024u;
         sw_sector[0xDA] = (uint8_t)( vbr_ecx        & 0xFF);
@@ -1529,4 +1536,101 @@ done:
     vga_clear();
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     vga_set_cursor(0, 0);
+}
+
+static int boot_bytes_equal(const uint8_t *a,const uint8_t *b,unsigned n) {
+    for (unsigned i=0;i<n;i++) if (a[i]!=b[i]) return 0;
+    return 1;
+}
+
+/* Explicit, boot-sectors-only recovery. Never formats/migrates or replaces
+ * the installed kernel. Keep an on-volume backup before any boot write. */
+int setup_repair_boot(void) {
+    uint8_t drive;
+    ata_drive_t disk;
+    static uint8_t backup[1024],check[1024],replacement[1024];
+    const char *failure="No safe installed native C: volume found.";
+    if (fs_volume_drive(0,&drive)!=FS_OK || ata_get_drive(drive,&disk) ||
+        !disk.present || ata_read_sector(drive,0,backup)) goto refuse;
+    failure="Invalid or ambiguous partition table; no boot sectors changed.";
+    if (backup[510]!=0x55 || backup[511]!=0xAA) goto refuse;
+    int slot=native_partition_find(backup,disk.total_sectors);
+    if (slot<0) goto refuse;
+    native_part_t part=((native_part_t *)(backup+446))[slot];
+    if (part.status!=0x80) goto refuse;
+    for (int i=0;i<4;i++)
+        if (i!=slot && ((native_part_t *)(backup+446))[i].status==0x80) goto refuse;
+    failure="Unrecognized boot manager; refusing to replace another OS loader.";
+    static const uint8_t old_prefix[]={0xFA,0x31,0xC0,0x8E,0xD0,0xBC,0x00,0x7C};
+    static const uint8_t old_message[]="No bootable partition";
+    if (!boot_bytes_equal(backup,mbr_bootstrap,446) &&
+        !(boot_bytes_equal(backup,old_prefix,sizeof(old_prefix)) &&
+          boot_bytes_equal(backup+0x59,old_message,sizeof(old_message)-1))) goto refuse;
+    failure="Unsafe/unsupported native layout; no boot sectors changed.";
+    if (ata_read_sector(drive,part.start+NATIVE_CONFIG_OFFSET,check) ||
+        !native_layout_valid((native_layout_t *)check,part.start,part.sectors) ||
+        ata_read_sector(drive,part.start,backup+512)) goto refuse;
+    unsigned iterations=backup[512+0x36];
+    uint32_t kernel_lba=(uint32_t)backup[512+0x21] |
+        ((uint32_t)backup[512+0x22]<<8) | ((uint32_t)backup[512+0x23]<<16) |
+        ((uint32_t)backup[512+0x24]<<24);
+    failure="Invalid kernel load metadata; backup/recovery is required.";
+    if (backup[1022]!=0x55 || backup[1023]!=0xAA ||
+        !iterations || iterations>128 || kernel_lba!=part.start+1 ||
+        ata_read_sector(drive,kernel_lba,check)) goto refuse;
+    int magic_ok=0;
+    for (unsigned off=0;off+12<=512;off+=4) {
+        uint32_t *h=(uint32_t *)(check+off);
+        if (h[0]==0x1BADB002u && h[0]+h[1]+h[2]==0) magic_ok=1;
+    }
+    if (!magic_ok) goto refuse;
+    char filename[]="boot-backup0.bin";
+    uint32_t length=0;
+    int available=0;
+    for (char number='0';number<='9';number++) {
+        filename[11]=number;
+        int rc=fs_read(drive,filename,check,sizeof(check),&length);
+        if (rc==FS_ERR_NOTFOUND) {available=1;break;}
+        if (rc!=FS_OK) {failure="Cannot verify backup location; repair refused.";goto refuse;}
+    }
+    if (!available) {failure="All boot backup names exist; preserve them before retrying.";goto refuse;}
+    vga_printf("BOOTREPAIR: C: / ATA slot %u, partition LBA %u\n",drive,part.start);
+    vga_puts("Replaces only inteiliDOS MBR/VBR code. Keeps kernel, partitions and files.\n");
+    vga_printf("Saves original sectors as C:\\%s. Do not power off during repair.\n",filename);
+    vga_puts("Type YES and press Enter to apply; anything else cancels: ");
+    char answer[4]={0};unsigned used=0;int extra=0;
+    for (;;) {
+        char c=keyboard_getchar();
+        if (c=='\r' || c=='\n') break;
+        if (c==27) {extra=1;break;}
+        if (used<3) {answer[used++]=c;vga_putchar(c);} else extra=1;
+    }
+    vga_putchar('\n');
+    if (extra || used!=3 || (answer[0]!='Y' && answer[0]!='y') ||
+        (answer[1]!='E' && answer[1]!='e') || (answer[2]!='S' && answer[2]!='s')) {
+        vga_puts("Boot repair cancelled; disk unchanged.\n");return 0;
+    }
+    failure="Could not save and verify boot-sector backup; boot sectors unchanged.";
+    if (fs_write(drive,filename,backup,sizeof(backup))!=FS_OK ||
+        fs_read(drive,filename,check,sizeof(check),&length)!=FS_OK ||
+        length!=sizeof(backup) || !boot_bytes_equal(check,backup,sizeof(backup))) goto refuse;
+    kmemcpy(replacement,mbr_bootstrap,446);
+    kmemcpy(replacement+446,backup+446,66); /* partition table + signature */
+    kmemcpy(replacement+512,vbr_code,512);
+    kmemcpy(replacement+512+0x21,backup+512+0x21,4);
+    replacement[512+0x36]=(uint8_t)iterations;
+    uint32_t words=iterations*1024u;
+    for (unsigned i=0;i<4;i++) replacement[512+0xDA+i]=(uint8_t)(words>>(i*8));
+    failure="Boot write/verification failed. Keep the ISO inserted and preserve the backup.";
+    if (ata_write_sector(drive,part.start,replacement+512) ||
+        ata_read_sector(drive,part.start,check) ||
+        !boot_bytes_equal(check,replacement+512,512) ||
+        ata_write_sector(drive,0,replacement) ||
+        ata_read_sector(drive,0,check) ||
+        !boot_bytes_equal(check,replacement,512)) goto refuse;
+    vga_puts("Boot repair verified. Kernel, partition extents and existing files preserved.\n");
+    return 0;
+refuse:
+    vga_printf("BOOTREPAIR: %s\n",failure);
+    return -1;
 }

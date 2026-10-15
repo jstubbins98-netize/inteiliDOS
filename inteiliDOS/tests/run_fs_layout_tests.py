@@ -15,6 +15,7 @@ def run(*args):
 def main():
     with tempfile.TemporaryDirectory(prefix="native-layout-") as folder:
         tmp=Path(folder)
+        run(sys.executable,HERE.parent/"cmake/hdd_boot_header.py",tmp/"hdd_boot_data.h")
         run("gcc","-std=gnu11","-Wall","-Wextra","-Werror",
             "-fsanitize=address,undefined","-g",HERE/"fs_layout_test.c",
             "-o",tmp/"fs-layout")
@@ -32,7 +33,7 @@ def main():
         # neither belongs to the host-side partition-preflight entry point.
         run("gcc","-std=gnu11","-Wall","-Wextra","-Werror",
             "-Wno-unused-function","-Wno-pointer-to-int-cast",
-            "-ffunction-sections","-fdata-sections",HERE/"setup_layout_test.c",
+            "-ffunction-sections","-fdata-sections","-I"+str(tmp),HERE/"setup_layout_test.c",
             "-Wl,--gc-sections","-o",tmp/"setup-layout")
         run(tmp/"setup-layout")
     if len(sys.argv)>1:

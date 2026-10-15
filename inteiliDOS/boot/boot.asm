@@ -27,6 +27,7 @@ stack_top:
 section .text
 global _start
 extern kernel_main
+extern _bss_start, _bss_end
 
 _start:
     ; Jump over the inline Multiboot1 header so that the MBR can call
@@ -54,6 +55,17 @@ align 4
 ;   col 3  '4'  = kernel_main entered  (written in kernel.c before vga_init)
 ;
 _kernel_entry:
+    ; Firmware does NOT guarantee zero RAM after setup/warm/cold boot.
+    ; Clear BSS before installing/using its stack, preserving Multiboot ABI.
+    cli
+    cld
+    mov edx,eax
+    xor eax,eax
+    mov edi,_bss_start
+    mov ecx,_bss_end
+    sub ecx,edi
+    rep stosb
+    mov eax,edx
     ; ── Dead-reckoning VGA diagnostics ────────────────────────────────────
     ; Written directly to the VGA frame buffer before ANY driver initialises.
     ; Attribute byte 0x0F = bright white on black, visible against the BIOS

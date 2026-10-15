@@ -147,6 +147,7 @@ static int cmd_help(int argc, const char *argv[]) {
     println("\n  -- Storage --------------------");
     vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     println("  DISKCHECK - Check IDE hard disk health and geometry");
+    println("  BOOTREPAIR - Confirmed native boot-sector repair; preserves files");
     println("  CDROM    - CD-ROM info; /EJECT, /LIST, /RUN");
 
     /* System */
@@ -1324,6 +1325,10 @@ int nlp_translate(const char *input, char *out, int out_len) {
  * ========================================================================= */
 int command_dispatch(const char *cmd, int argc, const char *argv[]) {
     if (kstrcmp(cmd, "CDROM") == 0) return cdrom_command(argc,argv);
+    if (kstrcmp(cmd, "BOOTREPAIR") == 0) {
+        if (argc) {vga_puts("Usage: BOOTREPAIR (no arguments)\n");return -1;}
+        return setup_repair_boot();
+    }
     if (kstrcmp(cmd, "MS-DOS") == 0) return msdos_run(argc,argv);
     if (kstrcmp(cmd, "DIR")      == 0) return cmd_dir(argc, argv);
     if (kstrcmp(cmd, "LS")       == 0) return cmd_dir(argc, argv);
