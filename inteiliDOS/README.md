@@ -1,6 +1,6 @@
 # inteiliDOS
 
-> “The future still has a blinking cursor.”
+> “The command line of the future.”
 
 inteiliDOS is a freestanding, 32-bit x86 operating system written in C and NASM
 assembly. This edition is designed for broad compatibility with PC-compatible
