@@ -1,6 +1,8 @@
 # inteiliDOS
 
-> “The command line of the future.”
+USB drive mounting, saving and safe removal: USB_STORAGE.md.
+
+> “The future still has a blinking cursor.”
 
 inteiliDOS is a freestanding, 32-bit x86 operating system written in C and NASM
 assembly. This edition is designed for broad compatibility with PC-compatible
@@ -10,15 +12,21 @@ native 64-bit kernel. They must provide legacy BIOS/CSM boot and compatible
 VGA/PIC/PIT interfaces.
 
 Source is now in `inteiliDOS/`. Willburd has `legacy`, `2000s`, `2010s`, and
-`x86_64` profiles.
+`x86_64` profiles. See modern hardware setup for USB
+keyboard, SATA mechanical HDD, firmware requirements, and verified boundaries.
 
 It is not Linux, DOS, or a hosted application. The boot code, kernel, device
 drivers, shell, applications, and games run directly on the computer.
 
 `MS-DOS` opens a separate MS-DOS 6.22 software emulator with a persistent
-private C: drive; F8 returns to inteiliShell.
+private C: drive; F8 returns to inteiliShell. See
+DOS emulator setup, media controls, and compatibility.
 
 ## Compatibility baseline
+
+If an installed HDD stops booting after power-off or a BIOS visit, see
+non-formatting boot recovery.md. Boot a newly rebuilt ISO and
+use the confirmed `BOOTREPAIR` command; do not erase the disk to repair boot code.
 
 The universal build favors standardized legacy interfaces:
 
@@ -82,7 +90,7 @@ space.
 - SETUP disk installation utility
 - Tetris
 - TOUR text adventure
-- Daisy Bell and Still Alive audio demonstrations
+- Daisy Bell and Want You Gone audio demonstrations
 - KCS cassette `CSAVE` and `CLOAD` support
 
 Hardware-dependent applications remain available but may report that their
@@ -229,6 +237,9 @@ sudo dd \
 ### CD-ROM
 
 At inteiliShell, use these commands with a detected ATAPI CD-ROM drive:
+
+Both IDE and SATA/AHCI optical drives are supported. SATA
+optical support requires an AHCI-enabled profile and the CD-ROM driver enabled.
 
 | Command | Action |
 |---|---|
