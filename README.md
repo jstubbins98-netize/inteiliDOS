@@ -1,16 +1,24 @@
 # inteiliDOS
 
-> “the command line of the future.”
+> “The command line of the future”
 
 inteiliDOS is a freestanding, 32-bit x86 operating system written in C and NASM
 assembly. This edition is designed for broad compatibility with PC-compatible
-computers from the 1990s, beginning with the Intel 80386 instruction set.
+computers from the 1990s through the 2000s and early 2010s, beginning with the
+Intel 80386 instruction set. x86-64 PCs run the same **32-bit kernel**, not a
+native 64-bit kernel. They must provide legacy BIOS/CSM boot and compatible
+VGA/PIC/PIT interfaces.
+
+Source is now in `inteiliDOS/`. Willburd has `legacy`, `2000s`, `2010s`, and
+`x86_64` profiles. See [modern hardware setup](MODERN_HARDWARE.md) for USB
+keyboard, SATA mechanical HDD, firmware requirements, and verified boundaries.
 
 It is not Linux, DOS, or a hosted application. The boot code, kernel, device
 drivers, shell, applications, and games run directly on the computer.
 
 `MS-DOS` opens a separate MS-DOS 6.22 software emulator with a persistent
-private C: drive; F8 returns to inteiliShell.
+private C: drive; F8 returns to inteiliShell. See
+[DOS emulator setup, media controls, and compatibility](kernel/msdos/README.md).
 
 ## Compatibility baseline
 
@@ -19,7 +27,7 @@ The universal build favors standardized legacy interfaces:
 | Area | Baseline |
 |---|---|
 | CPU | Intel 80386-compatible or newer |
-| Memory | 4 MB minimum; 8 MB or more recommended |
+| Memory | 8 MiB minimum for the current full build; 16 MiB+ recommended |
 | Firmware | PC-compatible BIOS |
 | Display | VGA-compatible 80×25 color text mode |
 | Interrupt controller | Dual 8259 PIC |
@@ -300,6 +308,17 @@ COMPATIBILITY.md              Hardware strategy and known boundaries
 for_developers.md             Architecture and contribution guide
 ```
 
+## Background temperature and fan monitoring
+
+The kernel checks supported thermal monitors every 500 ms, independently of
+the dashboard. Run `HEALTH`, then select **4 Cooling** for fresh temperature
+channels, verified CPU readings when available, fan RPM/status and warnings.
+Existing BIOS-controlled cooling is unchanged. **Automatic fan activation is
+not supported**; this is not a guaranteed overheating safeguard.
+
+See [THERMAL_MONITORING.md](THERMAL_MONITORING.md) for hardware support,
+the requested OEM model limitations, advisory thresholds and diagnostics.
+
 ## Known boundaries
 
 - 80286 and older processors are unsupported.
@@ -318,4 +337,4 @@ inteiliDOS is open-source software. You may study, modify, use, and distribute
 the source and compiled images. Redistributed versions must clearly credit
 Inteilix Software Corporation as the original author.
 
-See for_developers.md for development details.
+See [for_developers.md](for_developers.md) for development details.
