@@ -1,5 +1,25 @@
 # Developing inteiliDOS
 
+## Newer hardware and directory name
+
+The source directory is now `inteiliDOS`. Hardware profiles cover 1990s,
+2000s and early-2010s PCs; [MODERN_HARDWARE.md](MODERN_HARDWARE.md) is the
+current specification for newer hardware and its limitations. x86-64 support
+means running the existing IA-32 kernel on 64-bit-capable CPUs. Native program
+ABI, LaunchPad ELF32 loading and the DOS emulator remain 32-bit.
+
+USB boot-keyboard parsing/report translation is shared by UHCI and xHCI.
+xHCI uses identity-mapped, aligned DMA below 4 GiB, BIOS ownership handoff,
+command/transfer/event rings and bounded polling. No hubs or OHCI/EHCI drivers
+are implemented. Failed controller DMA must be quiesced before reusing buffers.
+
+AHCI uses single-sector DMA bounce buffers, bounds-checked LBA48 commands and
+advertised cache-flush commands. A timeout disables that descriptor slot;
+unknown durability is not permission to report a successful write. The public
+32-bit sector API limits addressable capacity to just under 2 TiB. Native 4Kn,
+AHCI optical media, RAID and NVMe remain unsupported. Do not modify the native
+disk layout just to add another controller.
+
 This guide describes the universal 32-bit x86 edition. Its lowest supported
 instruction set is Intel 80386, and its required hardware interfaces are the
 standard PC-compatible BIOS, VGA text mode, dual 8259 PIC, 8253/8254 PIT, and
@@ -97,9 +117,9 @@ hardware.
 
 The timer remains fixed at 1000 Hz because existing sleep, USB polling, and
 audio code use one PIT tick as one millisecond. PS/2 remains enabled in every
-profile because optional UHCI detection cannot guarantee a working USB
-keyboard. The wizard offers legacy IDE/PATA or disabled storage; unsupported
-native PCI IDE, AHCI, and SCSI modes are not presented as working choices.
+Willburd profile as a fallback; direct UHCI/xHCI boot keyboards are optional.
+The wizard also offers PCI-native IDE/SATA compatibility and SATA/AHCI HDD
+profiles. SCSI, RAID and NVMe are not implemented.
 
 The script always configures:
 
@@ -151,7 +171,7 @@ configurations/config.h
 | `kernel/loader.c` | IPGM and ELF32 application loading |
 | `kernel/msdos/` | Software 8086/80186 PC and MS-DOS 6.22 platform adapter |
 | `kernel/pci.c` | Optional PCI configuration-space scanner |
-| `kernel/usb.c` | Optional UHCI support; not initialized universally |
+| `kernel/usb.c`, `kernel/usb_xhci.c` | Optional UHCI/xHCI boot keyboards; enabled in newer profiles |
 | `kernel/ac97.c` | Optional PCI audio support |
 | `kernel/hda.c` | Optional later audio support |
 
@@ -747,7 +767,7 @@ build_1990s/inteiliDOS_1990s_floppy.img
 | `kernel/iso9660.c` | ISO 9660 reader |
 | `kernel/loader.c` | IPGM and ELF32 application loading |
 | `kernel/pci.c` | Optional PCI configuration-space scanner |
-| `kernel/usb.c` | Optional UHCI support; not initialized universally |
+| `kernel/usb.c`, `kernel/usb_xhci.c` | Optional UHCI/xHCI boot keyboards; enabled in newer profiles |
 | `kernel/ac97.c` | Optional PCI audio support |
 | `kernel/hda.c` | Optional later audio support |
 

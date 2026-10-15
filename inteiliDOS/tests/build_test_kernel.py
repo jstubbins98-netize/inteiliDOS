@@ -17,7 +17,7 @@ def run(*args):
     subprocess.run([str(a) for a in args], check=True)
 
 
-def build(folder):
+def build(folder, modern=False):
     tmp = Path(folder).resolve()
     tmp.mkdir(parents=True, exist_ok=True)
     cc = shutil.which("i686-elf-gcc") or shutil.which("gcc")
@@ -52,6 +52,17 @@ def build(folder):
 """)
     run("nasm", "-f", "bin", ROOT/"boot/mbr.asm", "-o", tmp/"mbr.bin")
     run(sys.executable, ROOT/"cmake/bin2header.py", tmp/"mbr.bin", "mbr_data", tmp/"mbr_data.h")
+    if modern:
+        profile=config.read_text()
+        for key,value in {
+            "CONFIG_CPU_CLASS":9, "CONFIG_RAM_MB":256,
+            "CONFIG_TARGET_X86_64":1, "CONFIG_ENABLE_PS2_KEYBOARD":0,
+            "CONFIG_ENABLE_USB_KEYBOARD":1, "CONFIG_ENABLE_PCI":1,
+            "CONFIG_ENABLE_PCI_IDE":1, "CONFIG_ENABLE_AHCI":1,
+        }.items():
+            profile=re.sub(r"^#define "+key+r" .*?$","",profile,flags=re.M)
+            profile+=f"\n#define {key} {value}\n"
+        config.write_text(profile)
     cmake = (ROOT/"CMakeLists.txt").read_text()
     objects = []
     # Match CMake's link order: boot.asm embeds Multiboot in .text, so its
@@ -81,6 +92,6 @@ def build(folder):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit("Usage: python3 tests/build_test_kernel.py /tmp/inteilidos-build")
-    build(sys.argv[1])
+    if len(sys.argv) not in (2,3) or (len(sys.argv)==3 and sys.argv[2]!="--modern"):
+        raise SystemExit("Usage: python3 tests/build_test_kernel.py /tmp/inteilidos-build [--modern]")
+    build(sys.argv[1],modern="--modern" in sys.argv)

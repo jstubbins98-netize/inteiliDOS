@@ -4,6 +4,7 @@
  */
 
 #include "timer.h"
+#include "thermal.h"
 #include "isr.h"
 #include "vga.h"
 #include <stdint.h>
@@ -25,6 +26,9 @@ void timer_register_secondary(void (*cb)(void)) {
     timer_secondary_cb = cb;
 }
 
+#ifdef THERMAL_TIMER_TEST
+#include "../tests/thermal_test_io.h"
+#else
 static inline void outb(uint16_t port, uint8_t val) {
     __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
 }
@@ -34,10 +38,12 @@ static inline uint8_t inb(uint16_t port) {
     __asm__ volatile ("inb %1, %0" : "=a"(val) : "Nd"(port));
     return val;
 }
+#endif
 
 static void timer_handler(registers_t *regs) {
     (void)regs;
     ticks++;
+    thermal_tick(ticks);
     if (timer_secondary_cb) timer_secondary_cb();
 }
 
@@ -139,8 +145,8 @@ void speaker_boot_chime(void) {
  * For sample 128 → count ≈ 27 → ~50 % duty                        ✓
  * For sample 0   → count = 54 → speaker OFF full period            ✓
  *
- * The system timer (ticks) is corrected for the elapsed time after
- * playback so that timer_sleep() still works correctly afterwards.
+ * The system timer and thermal monitor advance during playback using
+ * the actual PIT clock count, not only after playback finishes.
  * ========================================================================= */
 
 #define PCM_RATE 22050u
@@ -150,12 +156,21 @@ static volatile const unsigned char *pcm_data;
 static volatile int pcm_total;
 static volatile int pcm_pos;
 static volatile int pcm_done;
+static uint32_t pcm_clock_accum;
 
 static void pcm_irq_handler(registers_t *regs) {
     (void)regs;
     unsigned int count;
     unsigned char s;
 
+    /* Keep the thermal monitor on the host millisecond clock while IRQ0
+     * drives PCM audio. It must not disappear for a long spoken message. */
+    pcm_clock_accum += PCM_DIV * 1000u;
+    if (pcm_clock_accum >= PIT_BASE_HZ) {
+        pcm_clock_accum -= PIT_BASE_HZ;
+        ticks++;
+        thermal_tick(ticks);
+    }
     if (pcm_pos >= pcm_total) {
         pcm_done = 1;
         return;
@@ -187,13 +202,13 @@ void speaker_play_pcm(const unsigned char *buf, int len) {
     /* Disable secondary callback during playback (would fire 22× too fast) */
     void (*saved_cb)(void) = timer_secondary_cb;
     timer_secondary_cb = NULL;
-    uint32_t saved_ticks = ticks;
 
     /* Set up PCM state */
     pcm_data  = buf;
     pcm_total = len;
     pcm_pos   = 0;
     pcm_done  = 0;
+    pcm_clock_accum = 0;
 
     /* Prime PIT ch2 with a mid-value count; enable gate + speaker */
     outb(PIT_CMD, 0xB0);
@@ -226,8 +241,7 @@ void speaker_play_pcm(const unsigned char *buf, int len) {
     /* Silence the speaker */
     outb(SPEAKER_PORT, (uint8_t)(inb(SPEAKER_PORT) & ~0x03));
 
-    /* Correct ticks for elapsed playback time */
-    ticks = saved_ticks + ((uint32_t)len * 1000u) / PCM_RATE;
+    /* ticks already advanced at the actual PIT rate throughout playback. */
 
     /* Restore secondary callback */
     timer_secondary_cb = saved_cb;

@@ -111,11 +111,14 @@ set(KERNEL_C_SOURCES
     kernel/idt.c
     kernel/isr.c
     kernel/timer.c
+    kernel/thermal.c
+    kernel/thermal_hw.c
     kernel/keyboard.c
     kernel/memory.c
     kernel/ata.c
     kernel/pci.c
     kernel/usb.c
+    kernel/usb_xhci.c
     kernel/cdrom.c
     kernel/fs.c
     kernel/hda.c

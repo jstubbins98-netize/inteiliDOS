@@ -125,7 +125,8 @@ void memory_init(uint32_t mb_info_phys) {
     /* Basic memory totals (flags bit 0) */
     if (info->flags & MULTIBOOT_FLAG_MEM) {
         /* mem_upper is measured from 1 MB, not from mem_lower. */
-        total_mem_kb = 1024u + info->mem_upper;
+        uint64_t reported=1024ULL+info->mem_upper;
+        total_mem_kb=(uint32_t)(reported>4194304ULL ? 4194304ULL : reported);
     }
 
     /* Full memory map (flags bit 6) */
@@ -137,11 +138,13 @@ void memory_init(uint32_t mb_info_phys) {
             multiboot_mmap_entry_t *e = (multiboot_mmap_entry_t *)addr;
             if (e->type == MULTIBOOT_MEMORY_AVAILABLE &&
                 e->base_addr < 0x100000000ULL) {
-                uint32_t base = (uint32_t)e->base_addr;
-                uint32_t len  = (uint32_t)(e->length < 0xFFFFFFFFULL
-                                           ? e->length : 0xFFFFFFFFULL);
-                uint32_t page_start = (base + PAGE_SIZE - 1) / PAGE_SIZE;
-                uint32_t page_end   = (base + len) / PAGE_SIZE;
+                /* Modern BIOS maps can cross 4 GiB. Clip in 64-bit math
+                 * before narrowing; base+len must not wrap into low RAM. */
+                uint64_t top=e->length>0x100000000ULL-e->base_addr ?
+                             0x100000000ULL : e->base_addr+e->length;
+                uint32_t page_start=(uint32_t)((e->base_addr+PAGE_SIZE-1)/PAGE_SIZE);
+                uint32_t page_end=(uint32_t)(top/PAGE_SIZE);
+                if (page_end>BITMAP_SIZE*8u) page_end=BITMAP_SIZE*8u;
                 for (uint32_t p = page_start; p < page_end; p++) {
                     bitmap_clear(p);
                     free_pages++;
@@ -158,7 +161,9 @@ void memory_init(uint32_t mb_info_phys) {
          * the reported top as available, then reserve the kernel below.
          */
         uint32_t page_start = 0x100000u / PAGE_SIZE;
-        uint32_t page_end = (0x100000u + info->mem_upper * 1024u) / PAGE_SIZE;
+        uint64_t top=0x100000ULL+(uint64_t)info->mem_upper*1024;
+        if (top>0x100000000ULL) top=0x100000000ULL;
+        uint32_t page_end=(uint32_t)(top/PAGE_SIZE);
         if (page_end > BITMAP_SIZE * 8u)
             page_end = BITMAP_SIZE * 8u;
         for (uint32_t p = page_start; p < page_end; p++) {

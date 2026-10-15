@@ -1,5 +1,25 @@
 # inteiliDOS — Build Guide
 
+## Selecting the target generation
+
+The source directory is `inteiliDOS`. All profiles build an ELF32/i386 kernel:
+
+```bash
+cd inteiliDOS
+./build.sh --profile=2000s
+./build.sh --profile=2010s
+./build.sh --profile=x86_64 --defaults
+```
+
+Without a preset, Willburd offers the processor, firmware, USB keyboard and
+disk-controller choices interactively. `--defaults` uses the selected preset
+without questions; `--config-only` writes only the configuration.
+`--profile=legacy` retains conservative legacy defaults.
+
+Read [MODERN_HARDWARE.md](MODERN_HARDWARE.md) before choosing newer hardware.
+Output names containing `_1990s` are retained for existing build scripts;
+these names do not restrict newer profiles to 1990s CPUs.
+
 ## Overview
 
 inteiliDOS is a bare-metal x86 OS.  It requires a **cross-compiler toolchain**

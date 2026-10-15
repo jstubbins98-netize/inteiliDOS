@@ -94,6 +94,9 @@ int main(void) {
     ata_drive_t ahci={0};
     ahci.drive_index=4;
     pata_parse_identify(id,&ahci);
-    assert(ahci.total_sectors==0x10000000); /* same command width on SATA */
+    assert(ahci.total_sectors==0xffffffffu); /* SATA LBA48, 32-bit sector API */
+    id[102]=0;id[101]=0x2000;
+    pata_parse_identify(id,&ahci);
+    assert(ahci.total_sectors==0x20000000); /* capacity beyond the PATA limit */
     puts("PASS: 86Box-style 10MiB CHS capacity, master/slave reads/writes/zeroing, translation, bounds and LBA compatibility");
 }

@@ -13,6 +13,7 @@ CLEAN=0
 USE_DEFAULTS=0
 CONFIGURE_ONLY=0
 CONFIG_ONLY=0
+PROFILE_PRESET="legacy"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; MAGENTA='\033[0;35m'; BOLD='\033[1m'; RESET='\033[0m'
@@ -31,12 +32,14 @@ Options:
   --clean            Remove build_1990s before configuring
   --defaults         Use the safest generic 1990s PC answers without prompting
   --config-only      Generate configurations/config.h, then stop
+  --profile=NAME     Starting profile: legacy, 2000s, 2010s, or x86_64
   --configure-only   Generate config.h and configure CMake, but do not compile
   --help             Show this help
 
-The old --modern, --legacy, and --universal flags are accepted as aliases for
-the universal i386-safe compiler target. Hardware behavior is selected through
-Willburd's generated configurations/config.h file.
+All profiles retain the 32-bit, i386-safe kernel and native ELF32 programs.
+--modern selects the 2010s preset; --legacy selects legacy. --universal keeps
+the selected preset. Modern profiles require BIOS/CSM boot (not UEFI-only).
+Hardware behavior is selected through configurations/config.h.
 EOF
 }
 
@@ -46,7 +49,10 @@ for arg in "$@"; do
         --defaults|--non-interactive) USE_DEFAULTS=1 ;;
         --config-only) CONFIG_ONLY=1 ;;
         --configure-only) CONFIGURE_ONLY=1 ;;
-        --modern|--legacy|--universal) ;;
+        --modern) PROFILE_PRESET="2010s" ;;
+        --legacy) PROFILE_PRESET="legacy" ;;
+        --universal) ;;
+        --profile=*) PROFILE_PRESET="${arg#*=}" ;;
         --help|-h) usage; exit 0 ;;
         *) CMAKE_EXTRA_ARGS+=("$arg") ;;
     esac
@@ -164,6 +170,21 @@ set_default_profile() {
     ENABLE_FLOPPY=1
     AUDIO_MODE=0
     TIMER_HZ=1000
+    TARGET_X86_64=0
+    case "$PROFILE_PRESET" in
+        legacy) ;;
+        2000s|2010s|x86_64)
+            PROFILE_NAME="Generic 2000s BIOS PC"
+            CPU_CLASS=7; RAM_MB=512; BOOT_MEDIA=2
+            ENABLE_USB=1; ENABLE_PCI=1; ENABLE_PCI_IDE=1
+            ENABLE_AHCI=1; ENABLE_FLOPPY=0; AUDIO_MODE=3
+            if [[ "$PROFILE_PRESET" != "2000s" ]]; then
+                PROFILE_NAME="Generic x86-64 BIOS PC"
+                CPU_CLASS=9; TARGET_X86_64=1; RAM_MB=2048
+            fi
+            ;;
+        *) error "Unknown profile '$PROFILE_PRESET': use legacy, 2000s, 2010s, or x86_64." ;;
+    esac
 }
 
 run_wizard() {
@@ -180,14 +201,14 @@ run_wizard() {
         echo ""
         willburd "What short name should I give this computer profile?"
         echo "  H) How do I find the correct answer?"
-        printf "Name [Generic 1990s PC]: "
+        printf "Name [%s]: " "$PROFILE_NAME"
         IFS= read -r answer || answer=""
         case "$(uppercase "$answer")" in
             H|\?|HELP)
                 willburd "This is only a label shown at boot. Use a model, room, or nickname, such as Office 486 or Basement Pentium."
                 ;;
             *)
-                PROFILE_NAME="$(safe_c_string "${answer:-Generic 1990s PC}")"
+                PROFILE_NAME="$(safe_c_string "${answer:-$PROFILE_NAME}")"
                 [[ -n "$PROFILE_NAME" ]] || PROFILE_NAME="Generic 1990s PC"
                 break
                 ;;
@@ -196,29 +217,36 @@ run_wizard() {
 
     ask_menu \
         "Which processor family does the target computer use?" \
-        "Watch the first power-on screen, inspect the case badge, or enter BIOS Setup. Choose 386 if uncertain; every generated kernel still uses only 386 instructions." \
-        1 \
+        "Check BIOS Setup or the CPU model. Pentium 4 and Athlon XP can be 32-bit only; Athlon 64, Core 2 and Core i-series support x86-64. All choices run the SAME 32-bit i386-safe kernel, not a native 64-bit kernel. BIOS/CSM is required; disable Secure Boot only when appropriate for your boot setup." \
+        "$((CPU_CLASS - 2))" \
         "Intel 80386 or compatible" \
         "Intel 80486 or compatible" \
         "Pentium or Pentium MMX" \
-        "Pentium Pro, II, III, or compatible"
+        "Pentium Pro, II, III, or compatible" \
+        "Pentium 4, Athlon XP, or other 2000s 32-bit CPU" \
+        "Athlon 64, Opteron, Core 2, or compatible x86-64 CPU" \
+        "Core i3/i5/i7, AMD Phenom/FX, or early-2010s x86-64 CPU"
     case "$REPLY" in
         1) CPU_CLASS=3 ;;
         2) CPU_CLASS=4 ;;
         3) CPU_CLASS=5 ;;
         4) CPU_CLASS=6 ;;
+        5) CPU_CLASS=7 ;;
+        6) CPU_CLASS=8 ;;
+        7) CPU_CLASS=9 ;;
     esac
+    [[ "$CPU_CLASS" -ge 8 ]] && TARGET_X86_64=1 || TARGET_X86_64=0
 
     ask_number \
         "How many megabytes of RAM are installed?" \
-        "The power-on memory count and BIOS Setup usually show RAM in KB or MB. Divide a KB value by 1024. If unknown, 16 MB is a conservative starting point." \
-        16 4 4096
+        "Enter installed RAM from BIOS in MB. 1 GB = 1024 MB. This 32-bit kernel does not use RAM above 4 GB; configured RAM is descriptive, not a promise that all installed RAM is allocatable." \
+        "$RAM_MB" 4 65536
     RAM_MB="$REPLY"
 
     ask_menu \
         "How will this computer boot inteiliDOS?" \
-        "Choose floppy for machines without BIOS CD boot. Choose CD-ROM if BIOS Setup offers CDROM in its boot order. Choose both if you want both images." \
-        3 \
+        "Use floppy on older PCs or BIOS-bootable CD-ROM on newer PCs. UEFI-only boot, Secure Boot and native USB-storage boot are not implemented. A newer PC needs legacy BIOS/CSM and compatible VGA text output." \
+        "$BOOT_MEDIA" \
         "3.5-inch floppy" \
         "BIOS-bootable CD-ROM" \
         "Both floppy and CD-ROM"
@@ -226,10 +254,10 @@ run_wizard() {
 
     ask_menu \
         "What keyboard connection will be used?" \
-        "Round mini-DIN is PS/2. The larger 5-pin DIN AT keyboard also normally uses the 8042 path. USB is optional because this kernel supports UHCI only; PS/2 remains enabled as a safe fallback." \
-        1 \
+        "PS/2 is the round mini-DIN connector. Native USB supports direct boot-protocol keyboards on UHCI and xHCI controllers. OHCI/EHCI-only ports and external USB hubs are not supported by these drivers. A USB 3 port may use xHCI even for a USB 1/2 keyboard. PS/2 stays available; BIOS legacy USB emulation can also provide PS/2 input." \
+        "$((ENABLE_USB + 1))" \
         "PS/2 or AT keyboard" \
-        "PS/2 plus optional UHCI USB keyboard"
+        "PS/2 plus native UHCI/xHCI USB keyboard"
     case "$REPLY" in
         1) ENABLE_PS2=1; ENABLE_USB=0 ;;
         2) ENABLE_PS2=1; ENABLE_USB=1; ENABLE_PCI=1 ;;
@@ -237,15 +265,23 @@ run_wizard() {
 
     ask_menu \
         "Which hard-disk controller best matches the computer?" \
-        "Choose IDE/PATA when BIOS Setup says IDE, ATA, PATA, Legacy, or Compatibility. Native PCI IDE, SATA/AHCI, SCSI, and proprietary controllers are not universal in this edition." \
-        1 \
+        "Inspect BIOS storage mode: IDE/PATA or SATA Compatibility uses IDE; AHCI uses the SATA driver. AHCI supports SATA mechanical HDDs with 512-byte logical sectors, including 512e. RAID, NVMe, SCSI and native 4Kn are unsupported. Changing SATA mode can break another installed OS, so match the current setting rather than changing it blindly." \
+        "$((ENABLE_ATA ? (ENABLE_AHCI ? 3 : (ENABLE_PCI_IDE ? 2 : 1)) : 4))" \
         "Legacy IDE/PATA compatibility ports" \
+        "PCI IDE or SATA in IDE/compatibility mode" \
+        "SATA mechanical HDD in AHCI mode (also probe IDE)" \
         "No supported hard disk"
     case "$REPLY" in
         1)
             ENABLE_ATA=1; ENABLE_PCI_IDE=0; ENABLE_AHCI=0
             ;;
         2)
+            ENABLE_ATA=1; ENABLE_PCI_IDE=1; ENABLE_AHCI=0; ENABLE_PCI=1
+            ;;
+        3)
+            ENABLE_ATA=1; ENABLE_PCI_IDE=1; ENABLE_AHCI=1; ENABLE_PCI=1
+            ;;
+        4)
             ENABLE_ATA=0; ENABLE_PCI_IDE=0; ENABLE_AHCI=0
             ;;
     esac
@@ -253,7 +289,7 @@ run_wizard() {
     if [[ "$ENABLE_ATA" -eq 1 ]]; then
         ask_menu \
             "Does the computer have an IDE/ATAPI CD-ROM drive?" \
-            "BIOS Setup may list the drive model. A wide 40-pin ribbon cable normally indicates IDE/ATAPI. Choose no for SCSI, proprietary, or absent optical drives." \
+            "This option is for IDE/ATAPI optical drives, including PCI IDE compatibility mode. SATA AHCI optical drives are NOT supported by the runtime CD-ROM driver, even if BIOS can boot a CD from them. Choose no for AHCI-only optical, SCSI, proprietary or absent drives." \
             1 \
             "Yes" \
             "No"
@@ -266,7 +302,7 @@ run_wizard() {
     ask_menu \
         "Does the computer have a standard PC floppy controller?" \
         "Choose yes for a BIOS-visible 3.5-inch or 5.25-inch drive attached by a 34-pin ribbon cable. Choose no for USB-only or proprietary external floppy drives." \
-        1 \
+        "$((ENABLE_FLOPPY ? 1 : 2))" \
         "Yes" \
         "No"
     [[ "$REPLY" -eq 1 ]] && ENABLE_FLOPPY=1 || ENABLE_FLOPPY=0
@@ -302,6 +338,7 @@ write_config() {
 
 #define CONFIG_PROFILE_NAME "${PROFILE_NAME}"
 #define CONFIG_CPU_CLASS ${CPU_CLASS}
+#define CONFIG_TARGET_X86_64 ${TARGET_X86_64}
 #define CONFIG_RAM_MB ${RAM_MB}
 #define CONFIG_BOOT_MEDIA ${BOOT_MEDIA}
 
@@ -325,6 +362,9 @@ write_config() {
 #define CONFIG_CPU_486 4
 #define CONFIG_CPU_PENTIUM 5
 #define CONFIG_CPU_P6 6
+#define CONFIG_CPU_2000S 7
+#define CONFIG_CPU_X86_64 8
+#define CONFIG_CPU_2010S 9
 
 #define CONFIG_BOOT_FLOPPY 1
 #define CONFIG_BOOT_CDROM 2
@@ -335,7 +375,7 @@ write_config() {
 #endif
 
 #if CONFIG_ENABLE_USB_KEYBOARD && !CONFIG_ENABLE_PCI
-#error "UHCI USB keyboard support requires PCI probing"
+#error "Native USB keyboard support requires PCI probing"
 #endif
 
 #if CONFIG_ENABLE_AHCI && !CONFIG_ENABLE_PCI
@@ -350,7 +390,8 @@ print_profile() {
     echo ""
     willburd "The spell is prepared. Here is your hardware profile:"
     echo "  Name             : ${PROFILE_NAME}"
-    echo "  CPU class        : ${CPU_CLASS}86-family (kernel remains i386-safe)"
+    echo "  CPU profile      : ${CPU_CLASS} (32-bit i386-safe kernel)"
+    echo "  x86-64 target    : ${TARGET_X86_64} (32-bit compatibility mode)"
     echo "  Installed RAM    : ${RAM_MB} MB"
     echo "  Boot media       : ${BOOT_MEDIA} (1=floppy, 2=CD, 3=both)"
     echo "  PS/2 keyboard    : ${ENABLE_PS2}"
@@ -370,7 +411,7 @@ print_profile() {
 if [[ "$USE_DEFAULTS" -eq 1 || ! -t 0 ]]; then
     set_default_profile
     show_hat
-    willburd "No interactive crystal ball detected; I shall use safe defaults."
+    willburd "No interactive crystal ball detected; I shall use the '$PROFILE_PRESET' preset."
 else
     run_wizard
 fi

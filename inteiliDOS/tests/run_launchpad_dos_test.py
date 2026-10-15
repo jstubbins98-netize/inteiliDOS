@@ -16,12 +16,13 @@ from run_dos_tests import fat12_image, run, TESTS
 
 
 class Guest:
-    def __init__(self, kernel, media, floppy, folder, extra_args=()):
+    def __init__(self, kernel, media, floppy, folder, extra_args=(),
+                 qemu_binary="qemu-system-i386"):
         self.folder = folder
         self.snapshot = folder/"vga.bin"
         qmp = folder/"qmp.sock"
         qmp.unlink(missing_ok=True)
-        cmd = ["qemu-system-i386", "-nodefaults", "-device", "VGA",
+        cmd = [qemu_binary, "-nodefaults", "-device", "VGA",
                "-machine", "pc", "-cpu", "486", "-m", "16",
                "-display", "none", "-no-reboot",
                "-qmp", "unix:"+str(qmp)+",server=on,wait=off"]

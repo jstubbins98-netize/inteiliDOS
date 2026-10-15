@@ -2,9 +2,7 @@
  * inteilidOS -- kernel/usb.c
  * USB HID keyboard driver
  *
- * Supports UHCI (USB 1.1) host controllers only, which covers:
- *   - All QEMU emulated USB keyboards  (run QEMU with: -usb -device usb-kbd)
- *   - Real hardware from roughly 1996-2010 (PIIX3/PIIX4 south bridges)
+ * UHCI and xHCI direct-root-port boot keyboards; xHCI is in usb_xhci.c.
  *
  * The driver:
  *   1. Scans PCI for a UHCI controller  (class 0x0C / sub 0x03 / pi 0x00)
@@ -20,6 +18,7 @@
  */
 
 #include "usb.h"
+#include "usb_xhci.h"
 #include "pci.h"
 #include "keyboard.h"
 #include "timer.h"
@@ -144,13 +143,13 @@ static uhci_qh_t uhci_intr_qh  __attribute__((aligned(8)));
 /* TD pool:
  *   [0 .. CTRL_TD_MAX-1]  — reused for each synchronous control transfer
  *   [CTRL_TD_MAX]         — the single persistent interrupt-endpoint TD   */
-#define CTRL_TD_MAX 20
+#define CTRL_TD_MAX 68
 static uhci_td_t uhci_tds[CTRL_TD_MAX + 1] __attribute__((aligned(16)));
 #define INTR_TD_IDX CTRL_TD_MAX
 
 /* Buffers for control transfers */
 static uint8_t uhci_setup_buf[8];   /* USB SETUP packet (8 bytes)        */
-static uint8_t uhci_data_buf[128];  /* descriptor / response data        */
+static uint8_t uhci_data_buf[512];  /* bounded complete configuration */
 
 /* HID report double-buffer */
 static volatile uint8_t uhci_kbd_report[8]; /* filled by UHCI DMA        */
@@ -165,6 +164,9 @@ static uint8_t  usb_kbd_endp   = 1;  /* interrupt IN endpoint number     */
 static uint8_t  usb_kbd_toggle = 0;  /* DATA0/DATA1 toggle for intr TD   */
 static int      usb_kbd_ls     = 0;  /* 1 = low-speed device             */
 static volatile int usb_ready  = 0;  /* 1 = interrupt polling is active  */
+static uint8_t usb_ep0_packet = 8;
+static const char *usb_status = "Native USB not enabled";
+const char *usb_keyboard_status(void) { return usb_status; }
 
 /* =========================================================================
  * Low-level UHCI helpers
@@ -241,7 +243,7 @@ static int uhci_control(uint8_t addr, uint8_t endp, int ls,
         uint8_t  pid      = dir_in ? PID_IN : PID_OUT;
 
         while (remain > 0 && td < CTRL_TD_MAX - 1) {
-            uint16_t pkt = (remain > 8u) ? 8u : remain;
+            uint16_t pkt = (remain > usb_ep0_packet) ? usb_ep0_packet : remain;
             uhci_tds[td].buffer = buf_phys;
             uhci_tds[td].token  = make_token(pid, addr, endp, toggle,
                                               (uint16_t)(pkt - 1u));
@@ -365,27 +367,18 @@ static const char hid_normal[0x53] = {
 
 /* Shifted map — only entries that differ from hid_normal */
 static const char hid_shift[0x53] = {
-    0, 0, 0, 0,
-    'A','B','C','D','E','F','G',
-    'H','I','J','K','L','M','N',
-    'O','P','Q','R','S','T','U',
-    'V','W','X','Y','Z',
-    '!','@','#','$','%',
-    '^','&','*','(',')',
-    '\r','\x1B','\b','\t',' ',
-    '_','+','{','}','|',
-    0,
-    ':','"','~','<','>','?',
-    0,
-    '\x90','\x91','\x92','\x93','\x94','\x95','\x96','\x97',
-    0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,
-    '\x83','\x82','\x81','\x80',
+    [0x1E]='!', [0x1F]='@', [0x20]='#', [0x21]='$', [0x22]='%',
+    [0x23]='^', [0x24]='&', [0x25]='*', [0x26]='(', [0x27]=')',
+    [0x2D]='_', [0x2E]='+', [0x2F]='{', [0x30]='}', [0x31]='|',
+    [0x33]=':', [0x34]='"', [0x35]='~', [0x36]='<', [0x37]='>', [0x38]='?',
 };
 
 /* State for caps lock (toggled in process_report) */
 static int usb_caps = 0;
 
-static void process_report(const uint8_t *cur, const uint8_t *prev) {
+int usb_process_boot_report(const uint8_t cur[8], const uint8_t prev[8]) {
+    for (unsigned i=2;i<8;i++)
+        if (cur[i]>=1 && cur[i]<=3) return 0;
     uint8_t mod = cur[0];
     int shifted = (mod & 0x22u) != 0;  /* L or R Shift */
 
@@ -414,14 +407,17 @@ static void process_report(const uint8_t *cur, const uint8_t *prev) {
         /* Translate HID usage ID → character */
         if (kc >= 0x53u) continue;  /* out of our table range */
 
-        char c = shifted ? hid_shift[kc] : hid_normal[kc];
+        char c = shifted && hid_shift[kc] ? hid_shift[kc] : hid_normal[kc];
 
-        /* Apply Caps Lock to alphabetic keys only */
-        if (usb_caps && c >= 'a' && c <= 'z') c = (char)(c - 32);
-        if (usb_caps && c >= 'A' && c <= 'Z' && !shifted) c = (char)(c + 32);
+        if (kc>=4 && kc<=0x1D) {
+            c=(char)('a'+kc-4);
+            if (mod&0x11) c=(char)(kc-3); /* Ctrl+A..Z */
+            else if (shifted ^ usb_caps) c=(char)(c-'a'+'A');
+        }
 
         if (c) keyboard_inject((uint8_t)c);
     }
+    return 1;
 }
 
 /* =========================================================================
@@ -452,11 +448,9 @@ static void usb_timer_tick(void) {
         snap[i] = (uint8_t)uhci_kbd_report[i];
 
     /* Translate and inject */
-    process_report(snap, uhci_kbd_prev);
-
-    /* Save as previous */
-    for (i = 0; i < 8; i++)
-        uhci_kbd_prev[i] = snap[i];
+    /* Ignore short/empty reports rather than injecting stale DMA bytes. */
+    if ((td->status&0x7FFu)==7u && usb_process_boot_report(snap,uhci_kbd_prev))
+        for (i = 0; i < 8; i++) uhci_kbd_prev[i] = snap[i];
 
     /* Flip data toggle and re-arm the interrupt TD */
     usb_kbd_toggle ^= 1u;
@@ -475,38 +469,53 @@ static void usb_timer_tick(void) {
 /* Parse a raw configuration-descriptor blob for a HID interrupt-IN endpoint.
  * Sets usb_kbd_endp to the endpoint number (1-15) on success.
  * Returns 0 if found, -1 if not found.                                   */
-static int parse_config_descriptor(const uint8_t *buf, uint16_t total_len) {
-    uint16_t off = 0;
+int usb_parse_boot_keyboard(const uint8_t *buf,unsigned total_len,
+                            usb_keyboard_descriptor_t *out) {
+    if (!buf || !out || total_len<9 || buf[0]!=9 || buf[1]!=2 ||
+        (buf[2]|((unsigned)buf[3]<<8))!=total_len || !buf[5]) return -1;
+    unsigned off = 0;
+    int keyboard=0, found=0;
+    usb_keyboard_descriptor_t info={0};
+    info.configuration=buf[5];
     while (off + 2u <= total_len) {
         uint8_t bLen  = buf[off];
         uint8_t bType = buf[off + 1];
-        if (bLen == 0) break;
+        if (bLen<2 || bLen>total_len-off) return -1;
+        if (bType==4) {
+            if (bLen<9) return -1;
+            keyboard=buf[off+3]==0 && buf[off+5]==3 &&
+                     buf[off+6]==1 && buf[off+7]==1;
+            if (keyboard && !found) info.interface=buf[off+2];
+        }
 
-        if (bType == 0x05u && bLen >= 7u) {  /* Endpoint Descriptor */
+        if (bType == 0x05u && keyboard && !found) {
+            if (bLen<7) return -1;
             uint8_t addr  = buf[off + 2];
             uint8_t attrs = buf[off + 3];
             /* We want: direction=IN (bit7=1), transfer type=interrupt (bits1:0=3) */
             if ((addr & 0x80u) && (attrs & 0x03u) == 0x03u) {
-                usb_kbd_endp = addr & 0x0Fu;  /* endpoint number */
-                return 0;
+                info.endpoint=addr&15;
+                info.packet_size=buf[off+4]|((uint16_t)buf[off+5]<<8);
+                info.interval=buf[off+6];
+                if (!info.endpoint || info.packet_size<8 ||
+                    info.packet_size>1024 || !info.interval) return -1;
+                found=1;
             }
         }
         off = (uint16_t)(off + bLen);
     }
-    return -1;
+    if (off!=total_len || !found) return -1;
+    *out=info;
+    return 0;
 }
 
 /* =========================================================================
  * Main initialisation
  * ========================================================================= */
 
-void usb_keyboard_init(void) {
-    /* ---- 1. Find UHCI controller via PCI ---- */
-    pci_device_t uhci_pci;
-    /* UHCI: class=0x0C (Serial Bus), subclass=0x03 (USB), prog_if=0x00 (UHCI) */
-    if (pci_find_device(0x0Cu, 0x03u, 0x00u, &uhci_pci) != 0) {
-        return;  /* no UHCI controller — PS/2 only */
-    }
+static void uhci_try_keyboard(pci_device_t uhci_pci,unsigned port) {
+    usb_ep0_packet=8;usb_kbd_addr=0;usb_kbd_endp=0;
+    if (!(uhci_pci.bar[4]&1) || (uhci_pci.bar[4]&0xFFFF0000u)) return;
 
     /* Enable bus mastering so the controller can DMA */
     pci_enable_busmaster(&uhci_pci);
@@ -576,9 +585,9 @@ void usb_keyboard_init(void) {
     /* Clear any stale change bits (RW1C) individually — do NOT read-modify-write \
      * with other bits ORed in, as that would inadvertently set RESET again */\
     _p = inw(_r);                                                            \
-    if (_p & UHCI_PORT_CSC) outw(_r, (uint16_t)(UHCI_PORT_CSC));           \
+    if (_p & UHCI_PORT_CSC) outw(_r, (uint16_t)((_p & ~(UHCI_PORT_CSC|UHCI_PORT_ENC))|UHCI_PORT_CSC)); \
     timer_sleep(2);                                                          \
-    if (_p & UHCI_PORT_ENC) outw(_r, (uint16_t)(UHCI_PORT_ENC));           \
+    if (_p & UHCI_PORT_ENC) outw(_r, (uint16_t)((_p & ~(UHCI_PORT_CSC|UHCI_PORT_ENC))|UHCI_PORT_ENC)); \
     timer_sleep(2);                                                          \
     _p = inw(_r);                                                            \
     if (!(_p & UHCI_PORT_CCS)) break;  /* nothing connected */              \
@@ -594,14 +603,20 @@ void usb_keyboard_init(void) {
 } while (0)
 
     int port_found = 0;
-    PROBE_PORT(UHCI_PORTSC1);
-    if (!port_found) PROBE_PORT(UHCI_PORTSC2);
+    PROBE_PORT(port ? UHCI_PORTSC2 : UHCI_PORTSC1);
     if (!port_found) return;  /* no device on either port */
 
 #undef PROBE_PORT
 
     /* ---- 4. Enumerate: SET_ADDRESS(1) ---- */
     static uint8_t setup[8];
+    make_setup(setup,0x80,6,0x0100,0,8);
+    if (uhci_control(0,0,usb_kbd_ls,setup,uhci_data_buf,8,1) ||
+        uhci_data_buf[0]<18 || uhci_data_buf[1]!=1) return;
+    usb_ep0_packet=uhci_data_buf[7];
+    if ((usb_ep0_packet!=8 && usb_ep0_packet!=16 &&
+         usb_ep0_packet!=32 && usb_ep0_packet!=64) ||
+        (usb_kbd_ls && usb_ep0_packet!=8)) return;
     make_setup(setup, 0x00u, 0x05u, 0x0001u, 0x0000u, 0x0000u); /* SET_ADDRESS */
     if (uhci_control(0, 0, usb_kbd_ls, setup, (void *)0, 0, 0) != 0)
         return;
@@ -613,27 +628,25 @@ void usb_keyboard_init(void) {
     if (uhci_control(usb_kbd_addr, 0, usb_kbd_ls, setup,
                      uhci_data_buf, 18u, 1) != 0)
         return;
-    /* uhci_data_buf[7] = bMaxPacketSize0 — always 8 for HID keyboards;
-     * we hard-code 8 throughout, so we skip reading it.                  */
 
-    /* ---- 6. GET_DESCRIPTOR(Configuration) — up to 64 bytes ---- */
-    make_setup(setup, 0x80u, 0x06u, 0x0200u, 0x0000u, 64u);
+    /* Header first, then complete configuration, never a guessed endpoint. */
+    make_setup(setup, 0x80u, 0x06u, 0x0200u, 0x0000u, 9u);
     if (uhci_control(usb_kbd_addr, 0, usb_kbd_ls, setup,
-                     uhci_data_buf, 64u, 1) != 0)
+                     uhci_data_buf, 9u, 1) != 0)
         return;
 
     /* Parse to find the interrupt IN endpoint number */
     uint16_t total_len = (uint16_t)uhci_data_buf[2]
                        | ((uint16_t)uhci_data_buf[3] << 8);
-    if (total_len > 64u) total_len = 64u;
-    if (parse_config_descriptor(uhci_data_buf, total_len) != 0) {
-        /* Descriptor parsing failed — assume endpoint 1 (works for most
-         * standard HID keyboards)                                        */
-        usb_kbd_endp = 1;
-    }
+    if (total_len<9 || total_len>sizeof(uhci_data_buf)) return;
+    make_setup(setup,0x80,6,0x0200,0,total_len);
+    if (uhci_control(usb_kbd_addr,0,usb_kbd_ls,setup,uhci_data_buf,total_len,1)) return;
+    usb_keyboard_descriptor_t info;
+    if (usb_parse_boot_keyboard(uhci_data_buf,total_len,&info) || info.packet_size>64) return;
+    usb_kbd_endp=info.endpoint;
 
     /* ---- 7. SET_CONFIGURATION(1) ---- */
-    make_setup(setup, 0x00u, 0x09u, 0x0001u, 0x0000u, 0x0000u);
+    make_setup(setup, 0x00u, 0x09u, info.configuration, 0x0000u, 0x0000u);
     if (uhci_control(usb_kbd_addr, 0, usb_kbd_ls, setup,
                      (void *)0, 0, 0) != 0)
         return;
@@ -645,17 +658,15 @@ void usb_keyboard_init(void) {
      * wValue        = 0x0000 (boot protocol)
      * wIndex        = 0x0000 (interface 0)
      */
-    make_setup(setup, 0x21u, 0x0Bu, 0x0000u, 0x0000u, 0x0000u);
-    /* Some devices STALL SET_PROTOCOL if they only support boot protocol;
-     * that is harmless — ignore the return code.                         */
-    uhci_control(usb_kbd_addr, 0, usb_kbd_ls, setup, (void *)0, 0, 0);
+    make_setup(setup, 0x21u, 0x0Bu, 0x0000u, info.interface, 0x0000u);
+    if (uhci_control(usb_kbd_addr, 0, usb_kbd_ls, setup, (void *)0, 0, 0)) return;
     timer_sleep(5);
 
     /* ---- 9. HID SET_IDLE(0, 0) — suppress repeat reports ----
      * wValue = 0x0000: duration=0 (indefinite — only report on change),
      *                  report ID=0 (all reports)
      */
-    make_setup(setup, 0x21u, 0x0Au, 0x0000u, 0x0000u, 0x0000u);
+    make_setup(setup, 0x21u, 0x0Au, 0x0000u, info.interface, 0x0000u);
     uhci_control(usb_kbd_addr, 0, usb_kbd_ls, setup, (void *)0, 0, 0);
 
     /* ---- 10. Set up the persistent interrupt-endpoint TD ---- */
@@ -682,9 +693,35 @@ void usb_keyboard_init(void) {
 
     /* Mark driver as operational */
     usb_ready = 1;
+    usb_status = "UHCI USB keyboard active";
 
     /* Let the user know */
     vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     vga_puts("  USB HID keyboard detected and active.\n");
     vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+}
+
+void usb_keyboard_init(void) {
+    usb_ready=0;usb_caps=0;
+    usb_status="No supported USB keyboard found (PS/2 fallback)";
+    if (usb_xhci_init()) {
+        usb_status="xHCI USB keyboard active";
+        timer_register_secondary(usb_xhci_poll);
+        vga_puts("  xHCI USB keyboard detected and active.\n");
+        return;
+    }
+    pci_device_t current,next;
+    if (!pci_find_class(0x0C,0x03,&current)) {
+        do {
+            if (current.prog_if==0) {
+                for (unsigned port=0;port<2;port++) {
+                    uhci_try_keyboard(current,port);
+                    if (usb_ready) return;
+                }
+            }
+            if (pci_find_class_after(0x0C,0x03,&current,&next)) break;
+            current=next;
+        } while (1);
+    }
+    vga_puts("  Native USB keyboard unavailable; use PS/2/BIOS legacy input.\n");
 }

@@ -1,3 +1,67 @@
+# Modern hardware
+
+`python3 tests/run_modern_hardware_test.py` builds the optional-driver profile
+and runs it as ELF32 on x86-64 Intel/AMD QEMU CPU models. It tests USB-only input
+without the PS/2 driver, xHCI/UHCI after a mouse, report-ring wrap, the health UI
+and SATA/AHCI durable reads/writes beyond 128 GiB. All disk fixtures are temporary
+and disposable. The 140 GiB test disks are sparse, not full allocations.
+
+To reuse a build: `python3 tests/run_modern_hardware_test.py /tmp/build/inteilidOS.elf`.
+Build that kernel with `python3 tests/build_test_kernel.py /tmp/build --modern`.
+
+# Background thermal monitoring
+
+`thermal_test.c` runs the real background service and SMBus state machine
+against a deterministic PIIX4/W83781D/W83782D/AS99127F register model:
+
+```sh
+mkdir -p /tmp/thermal-config
+printf '\n' > /tmp/thermal-config/config.h
+gcc -O1 -g -Wall -Wextra -fsanitize=address,undefined \
+  -I/tmp/thermal-config tests/thermal_test.c -o /tmp/thermal-test
+ASAN_OPTIONS=detect_leaks=0 /tmp/thermal-test
+```
+
+It checks the 500 ms start cadence, 75/65 C hysteresis, half-degree
+rounding, warning retention after failures, vendor IDs, fan divisors,
+bank restoration, timeout handling, busy firmware buses, disabled hardware
+and tick wrap. It asserts that every sensor write is a bank-selector write:
+there must be **no** fan/sensor configuration writes.
+
+`thermal_timer_test.c` exercises the real PIT and PCM IRQ handlers without
+privileged I/O, verifying that thermal ticks continue at the actual PIT
+millisecond rate through a complete four-second PCM stream and that the
+existing USB callback is unaffected:
+
+```sh
+gcc -O1 -g -Wall -Wextra -fsanitize=address,undefined \
+  tests/thermal_timer_test.c -o /tmp/thermal-timer-test
+ASAN_OPTIONS=detect_leaks=0 /tmp/thermal-timer-test
+```
+
+`run_thermal_test.py` boots the complete kernel in QEMU and checks the
+Cooling tab, four-tab navigation and accurate unavailable messages on a
+machine without supported sensors. It also checks counter progress outside
+the dashboard. It uses temporary media, not user disks:
+
+```sh
+python3 tests/build_test_kernel.py /tmp/thermal-kernel-build
+python3 tests/run_thermal_test.py /tmp/thermal-kernel-build/inteilidOS.elf
+```
+
+Native screenshots are written under ignored
+`generated-artifacts/thermal-monitor/`. Hardware readings/control on actual
+86Box OEM machines and physical motherboards remain unverified. These tests
+do not demonstrate automatic fan activation, which is not implemented.
+
+An optional `--pcm` native ELF fixture records monitoring counters
+immediately before and after real PCM playback. That end-to-end check is
+**not verified**: high-rate playback stalls QMP memory requests in this QEMU
+environment, including after the expected playback duration. Instructing
+QEMU to use instruction-count timing did not produce a reliable real-time
+baseline. The passing IRQ-handler test does not replace playback verification
+on actual 86Box machines.
+
 # Native installed-disk layout
 
 Run `python3 tests/run_fs_layout_tests.py` for bounded native saves, DOS-image

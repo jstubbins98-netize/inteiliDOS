@@ -8,6 +8,7 @@
 #include "idt.h"
 #include "isr.h"
 #include "timer.h"
+#include "thermal.h"
 #include "keyboard.h"
 #include "usb.h"
 #include "cdrom.h"
@@ -29,9 +30,28 @@ static const char *configured_cpu_name(void) {
     return "Intel 80486-compatible";
 #elif CONFIG_CPU_CLASS == CONFIG_CPU_PENTIUM
     return "Pentium-compatible";
+#elif CONFIG_CPU_CLASS == 7
+    return "Pentium 4 / Athlon XP-compatible";
+#elif CONFIG_CPU_CLASS == 8
+    return "Athlon 64 / Core 2-compatible (IA-32 mode)";
+#elif CONFIG_CPU_CLASS == 9
+    return "Core i-series / Phenom / FX-compatible (IA-32 mode)";
 #else
     return "Pentium Pro/II/III-compatible";
 #endif
+}
+
+static int cpu_long_mode_capable(void) {
+    uint32_t before,after,edited,a,b,c,d;
+    __asm__ volatile("pushfl; popl %0":"=r"(before));
+    edited=before^(1u<<21);
+    __asm__ volatile("pushl %1; popfl; pushfl; popl %0; pushl %2; popfl"
+                     :"=&r"(after):"r"(edited),"r"(before):"memory","cc");
+    if (!((before^after)&(1u<<21))) return 0;
+    __asm__ volatile("cpuid":"=a"(a),"=b"(b),"=c"(c),"=d"(d):"a"(0x80000000u));
+    if (a<0x80000001u) return 0;
+    __asm__ volatile("cpuid":"=a"(a),"=b"(b),"=c"(c),"=d"(d):"a"(0x80000001u));
+    return !!(d&(1u<<29));
 }
 
 static const char *configured_boot_name(void) {
@@ -66,7 +86,9 @@ static void print_banner(size_t mem_kb) {
     vga_puts("  Copyright (C) Inteilix Software Corporation\n\n");
     vga_puts("  Machine:\n");
     vga_printf("    Profile: %s\n", CONFIG_PROFILE_NAME);
-    vga_printf("    Target CPU: %s (i386-safe kernel)\n", configured_cpu_name());
+    vga_printf("    Target CPU: %s\n", configured_cpu_name());
+    vga_printf("    CPU: %s | kernel: 32-bit IA-32 / ELF32\n",
+               cpu_long_mode_capable() ? "x86-64 capable" : "32-bit x86");
     vga_printf("    RAM: %u MB detected / %u MB configured\n",
                (unsigned)(mem_kb / 1024u), (unsigned)CONFIG_RAM_MB);
     vga_printf("    Boot profile: %s\n", configured_boot_name());
@@ -173,6 +195,7 @@ void kernel_main(uint32_t mb_magic, uint32_t mb_info_phys) {
 
     vga_puts("  Loading Drivers...        ");
     timer_init(CONFIG_TIMER_HZ);
+    thermal_init();
 #if CONFIG_ENABLE_PS2_KEYBOARD
     keyboard_init();
 #endif

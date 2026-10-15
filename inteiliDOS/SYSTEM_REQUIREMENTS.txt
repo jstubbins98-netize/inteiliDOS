@@ -13,6 +13,10 @@ These are requirements for the target computer, not the computer used to compile
 
 CPU
   Intel 80386-compatible or newer, with 32-bit protected mode.
+  Supported targets also include Pentium 4/Athlon XP, Athlon 64/Core 2,
+  and early Core i-series/Phenom/FX PCs, when their interfaces are compatible.
+  x86-64 CPUs run the existing 32-bit kernel. Native 64-bit execution, UEFI-only
+  boot, and use of RAM above 4 GiB are not implemented.
   A 486 or Pentium-class PC is recommended for a more comfortable experience.
   An 8086, 80186, or 80286 cannot run the native operating system.
   CPUID, MMX, SSE, hardware virtualization, and a floating-point unit are not
@@ -41,8 +45,9 @@ Display
 
 Keyboard
   AT/PS/2-compatible keyboard through an 8042-compatible controller.
-  Do not rely on a USB-only keyboard unless the machine provides compatible
-  legacy keyboard support.
+  Or a direct HID boot-protocol USB keyboard on an enabled UHCI/xHCI controller.
+  OHCI/EHCI-only ports, external USB hubs and unsupported keyboards require
+  working firmware legacy USB emulation or another supported keyboard.
 
 Boot media
   Either a BIOS-bootable CD-ROM using the inteiliDOS/GRUB ISO, or the raw
@@ -57,6 +62,11 @@ HDD and persistent storage
   A supported, writable ATA/IDE HDD is needed for HDD installation and
   persistent native files. Standard primary/secondary IDE ports are supported;
   PCI-native IDE and AHCI require the appropriate enabled hardware profile.
+  SATA mechanical HDDs are supported in IDE-compatibility or AHCI mode.
+  AHCI requires 512-byte logical sectors (512e allowed, native 4Kn unsupported).
+  LBA48 removes the old 128 GiB AHCI limit; the sector API addresses just under
+  2 TiB. Writes must have verified cache durability. SATA/AHCI optical browsing,
+  RAID and NVMe are not supported. See MODERN_HARDWARE.md for details.
   Small CHS-only IDE disks are supported, as are supported LBA IDE disks.
   SCSI and proprietary storage interfaces are not native HDD requirements
   that can simply be substituted for IDE.

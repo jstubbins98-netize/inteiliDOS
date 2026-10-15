@@ -38,6 +38,7 @@
 
 #include "ata.h"
 #include "pci.h"
+#include "memory.h"
 #include "timer.h"
 #include <stdint.h>
 
@@ -220,8 +221,8 @@ static void pata_parse_identify(uint16_t *id, ata_drive_t *out) {
 
     /* Reserved capacity words on older ATA devices are not LBA counts.
      * Prefer advertised LBA48/LBA28, bounded to our actual command width. */
-    /* Both PATA and AHCI issue 28-bit READ/WRITE SECTORS commands. */
-    uint32_t limit=0x10000000u;
+    uint32_t limit=out->drive_index<4 || (id[83]&0xC400)!=0x4400 ?
+                   0x10000000u : 0xFFFFFFFFu;
     uint32_t lba28=(uint32_t)id[60] | ((uint32_t)id[61]<<16);
     uint64_t lba48=(uint64_t)id[100] | ((uint64_t)id[101]<<16) |
                    ((uint64_t)id[102]<<32);
@@ -520,6 +521,9 @@ static uint8_t ahci_fb [AHCI_MAX_PORTS][256]
     __attribute__((aligned(256)));
 static uint8_t ahci_ct [AHCI_MAX_PORTS][256]
     __attribute__((aligned(128)));
+static uint8_t ahci_data[AHCI_MAX_PORTS][512] __attribute__((aligned(512)));
+static uint8_t ahci_lba48[AHCI_MAX_PORTS], ahci_flush[AHCI_MAX_PORTS];
+static uint8_t ahci_readonly[AHCI_MAX_PORTS], ahci_failed[AHCI_MAX_PORTS];
 
 /* ── MMIO helpers ─────────────────────────────────────────────────────────── */
 
@@ -584,26 +588,37 @@ static void ahci_port_comreset(uint32_t pb) {
     /* Set DET=1, preserve other fields */
     ahci_w(pb, PxSCTL, (sctl & ~0x0Fu) | PXSCTL_DET_COMRESET);
     /* Hold reset for ≥ 1 ms */
-    for (uint32_t i = 0; i < 100000u; i++) __asm__ volatile ("nop");
+    timer_sleep(1);
     /* Release reset: DET=0 */
     ahci_w(pb, PxSCTL, sctl & ~0x0Fu);
     /* Wait for DET=3 (up to ~200 ms worth of iterations) */
-    for (uint32_t i = 0; i < 1000000u; i++) {
+    uint32_t begin=timer_get_ticks();
+    while (timer_get_ticks()-begin<500) {
         if ((ahci_r(pb, PxSSTS) & 0x0Fu) == PXSSTS_DET_PRESENT) break;
+        __asm__ volatile("hlt");
     }
     /* Clear errors that accumulated during reset */
     ahci_w(pb, PxSERR, 0xFFFFFFFFu);
 }
 
 /* Stop FIS reception and command list processing on a port. */
-static void ahci_port_stop(uint32_t pb) {
+static int ahci_port_stop(uint32_t pb) {
     uint32_t cmd = ahci_r(pb, PxCMD);
-    cmd &= ~(PXCMD_ST | PXCMD_FRE);
+    cmd &= ~PXCMD_ST;
     ahci_w(pb, PxCMD, cmd);
     /* Wait for both CR and FR to deassert (up to ~1 ms) */
-    for (uint32_t i = 0; i < 500000; i++) {
-        if (!(ahci_r(pb, PxCMD) & (PXCMD_CR | PXCMD_FR))) break;
+    uint32_t begin=timer_get_ticks();
+    while (ahci_r(pb,PxCMD)&PXCMD_CR) {
+        if (timer_get_ticks()-begin>=500) return -1;
+        __asm__ volatile("hlt");
     }
+    ahci_w(pb,PxCMD,ahci_r(pb,PxCMD)&~PXCMD_FRE);
+    begin=timer_get_ticks();
+    while (ahci_r(pb,PxCMD)&PXCMD_FR) {
+        if (timer_get_ticks()-begin>=500) return -1;
+        __asm__ volatile("hlt");
+    }
+    return 0;
 }
 
 /* Start FIS reception and command list processing on a port.
@@ -646,6 +661,16 @@ static void ahci_port_start(uint32_t pb) {
 static int ahci_issue(uint8_t buf_idx, uint32_t pb,
                       uint8_t ata_cmd, uint32_t lba,
                       int write, void *buf) {
+    if (buf_idx>=AHCI_MAX_PORTS || ahci_failed[buf_idx]) return -1;
+    int has_data=buf!=0, extended=ata_cmd==0x25 || ata_cmd==0x35;
+    if (!extended && ata_cmd!=ATA_CMD_IDENTIFY && has_data && lba>=0x10000000u) return -1;
+    if (write && has_data)
+        for (unsigned i=0;i<512;i++) ahci_data[buf_idx][i]=((const uint8_t *)buf)[i];
+    uint32_t begin=timer_get_ticks();
+    while (ahci_r(pb,PxTFD)&0x88) {
+        if (timer_get_ticks()-begin>=3000) return -1;
+        __asm__ volatile("hlt");
+    }
     uint8_t *ct = ahci_ct[buf_idx];
 
     /* Zero the command table */
@@ -680,7 +705,8 @@ static int ahci_issue(uint8_t buf_idx, uint32_t pb,
                ? 0xE0u                                   /*   IDENTIFY: LBA mode, dev 0 */
                : (uint8_t)(0xE0u | ((lba >> 24) & 0x0Fu)); /* R/W: + LBA[27:24] */
     ct[0x08] = 0;                                       /* LBA ext = 0      */
-    ct[0x0C] = (ata_cmd == ATA_CMD_IDENTIFY) ? 0 : 1;  /* Sector count     */
+    if (extended) {ct[7]=0x40;ct[8]=(uint8_t)(lba>>24);}
+    ct[0x0C] = has_data && ata_cmd!=ATA_CMD_IDENTIFY ? 1 : 0;
 
     /* ── PRDT entry at CT+0x80 ───────────────────────────────────────────── */
     /*
@@ -691,7 +717,9 @@ static int ahci_issue(uint8_t buf_idx, uint32_t pb,
      *   DW3  bits[21:0] = DBC (byte count - 1) = 511 = 0x1FF
      *        bit[31] = interrupt on completion = 0
      */
-    uint32_t dba = (uint32_t)(uintptr_t)buf;
+    /* Permanent aligned memory: late DMA after timeout cannot overwrite
+     * an expired caller stack. Failed descriptor slots are not reused. */
+    uint32_t dba = (uint32_t)(uintptr_t)ahci_data[buf_idx];
     ct[0x80] = (uint8_t)( dba        & 0xFF);
     ct[0x81] = (uint8_t)((dba >>  8) & 0xFF);
     ct[0x82] = (uint8_t)((dba >> 16) & 0xFF);
@@ -704,7 +732,7 @@ static int ahci_issue(uint8_t buf_idx, uint32_t pb,
     /* ── Command List Slot 0 ─────────────────────────────────────────────── */
     uint32_t *cl   = (uint32_t *)(uintptr_t)ahci_clb[buf_idx];
     uint32_t  ctba = (uint32_t)(uintptr_t)ct;
-    cl[0] = (1u   << 16)                       /* PRDTL = 1                 */
+    cl[0] = ((uint32_t)has_data << 16)          /* no PRDT for FLUSH          */
           | ((uint32_t)(write ? 1u : 0u) << 6) /* W (write direction)       */
           | 5u;                                 /* CFL = 5 dwords (20 bytes) */
     cl[1] = 0u;                                /* PRDBC — filled by HBA     */
@@ -720,14 +748,25 @@ static int ahci_issue(uint8_t buf_idx, uint32_t pb,
     ahci_w(pb, PxCI, 1u);
 
     /* ── Poll for completion (up to ~1 M iterations ≈ tens of ms) ────────── */
-    for (uint32_t i = 0; i < 1000000u; i++) {
-        if (!(ahci_r(pb, PxCI) & 1u)) break;
+    begin=timer_get_ticks();
+    while (ahci_r(pb,PxCI)&1) {
+        if ((ahci_r(pb,PxIS)&(1u<<30)) || timer_get_ticks()-begin>=3000) {
+            ahci_failed[buf_idx]=1;
+            (void)ahci_port_stop(pb);
+            return -1;
+        }
+        __asm__ volatile("hlt");
     }
 
     if (ahci_r(pb, PxCI) & 1u) return -1;          /* timed out            */
     uint32_t tfd = ahci_r(pb, PxTFD);
     if (tfd & 0x01u) return -1;                     /* ERR bit set          */
     if (tfd & 0x20u) return -1;                     /* DF  bit set          */
+    if (ahci_r(pb,PxIS)&(1u<<30)) return -1;
+    __asm__ volatile("":::"memory");
+    if (has_data && *(volatile uint32_t *)&cl[1]!=512) return -1;
+    if (has_data && !write)
+        for (unsigned i=0;i<512;i++) ((uint8_t *)buf)[i]=ahci_data[buf_idx][i];
     return 0;
 }
 
@@ -749,21 +788,26 @@ static int ahci_probe_hba(pci_device_t *hba, int slot, int slots_left) {
      * MMIO BARs have bit 0 clear; strip the flags (bits 3:0).
      */
     uint32_t abar = hba->bar[5] & 0xFFFFFFF0u;
-    if (abar == 0) return 0;    /* BAR not programmed */
+    if (abar == 0 || (hba->bar[5]&7)) return 0;
 
     /*
      * Enable MMIO + bus-mastering on the HBA.
      * Without memory-space enable the CPU reads all-zeros from ABAR.
      */
     pci_enable_busmaster(hba);
+    if (ahci_r(abar,0x10)>=0x00010200u && (ahci_r(abar,0x24)&1)) {
+        ahci_w(abar,0x28,ahci_r(abar,0x28)|2);
+        uint32_t begin=timer_get_ticks();
+        while (ahci_r(abar,0x28)&0x11) {
+            if (timer_get_ticks()-begin>=2000) return 0;
+            __asm__ volatile("hlt");
+        }
+    }
 
     /* Ensure AHCI mode is active (set GHC.AE).  Some chipsets come up with
      * AHCI disabled; writing AE switches the HBA into AHCI register mode.  */
     uint32_t ghc = ahci_r(abar, AHCI_GHC);
-    if (!(ghc & AHCI_GHC_AE)) {
-        ahci_w(abar, AHCI_GHC, ghc | AHCI_GHC_AE);
-        for (int i = 0; i < 10000; i++) __asm__ volatile ("nop");
-    }
+    ahci_w(abar,AHCI_GHC,(ghc|AHCI_GHC_AE)&~2u);
 
     uint32_t pi = ahci_r(abar, AHCI_PI);
     if (pi == 0) return 0;
@@ -775,6 +819,8 @@ static int ahci_probe_hba(pci_device_t *hba, int slot, int slots_left) {
         if (!(pi & (1u << port))) continue;
 
         uint32_t pb   = ahci_port_base(abar, port);
+        if (ahci_r(abar,0)&(1u<<27))
+            ahci_w(pb,PxCMD,ahci_r(pb,PxCMD)|2u); /* staggered spin-up */
         uint32_t ssts = ahci_r(pb, PxSSTS);
         uint8_t  det  = (uint8_t)(ssts & 0x0Fu);
 
@@ -793,9 +839,10 @@ static int ahci_probe_hba(pci_device_t *hba, int slot, int slots_left) {
 
         uint8_t bidx = (uint8_t)(slot - 4 + found);  /* index into AHCI buffer pool */
         if (bidx >= AHCI_MAX_PORTS) break;
+        if (ahci_failed[bidx]) break;
 
         /* ── Initialise port ───────────────────────────────────────────── */
-        ahci_port_stop(pb);
+        if (ahci_port_stop(pb)) continue;
 
         ahci_w(pb, PxCLB,  (uint32_t)(uintptr_t)ahci_clb[bidx]);
         ahci_w(pb, PxCLBU, 0u);
@@ -813,6 +860,8 @@ static int ahci_probe_hba(pci_device_t *hba, int slot, int slots_left) {
         /* ── IDENTIFY ─────────────────────────────────────────────────── */
         if (ahci_issue(bidx, pb, ATA_CMD_IDENTIFY, 0, 0, id_buf) != 0)
             continue;
+        if ((id_buf[106]&0xD000)==0x5000 &&
+            (id_buf[117]!=256 || id_buf[118]!=0)) continue;
 
         /* ── Fill drive slot ──────────────────────────────────────────── */
         ata_drive_t *drv = &g_drives[slot + found];
@@ -822,6 +871,13 @@ static int ahci_probe_hba(pci_device_t *hba, int slot, int slots_left) {
         drv->ahci_abar   = abar;
         drv->ahci_port   = port;
         pata_parse_identify(id_buf, drv);
+        if (!drv->total_sectors) {drv->present=0;continue;}
+        ahci_lba48[bidx]=(id_buf[83]&0xC400)==0x4400;
+        int valid=(id_buf[83]&0xC000)==0x4000;
+        ahci_flush[bidx]=valid && (id_buf[83]&(1u<<13)) ? ATA_CMD_FLUSH_EXT :
+                         valid && (id_buf[83]&(1u<<12)) ? ATA_CMD_FLUSH : 0;
+        ahci_readonly[bidx]=!ahci_flush[bidx] &&
+            (!valid || (id_buf[87]&0xC000)!=0x4000 || (id_buf[85]&(1u<<5)));
 
         found++;
     }
@@ -1010,7 +1066,7 @@ int ata_read_sector(uint8_t drv, uint32_t lba, uint8_t *buf) {
         uint8_t  bidx = drv - 4;
         uint32_t pb   = ahci_port_base(g_drives[drv].ahci_abar,
                                        g_drives[drv].ahci_port);
-        return ahci_issue(bidx, pb, ATA_CMD_READ, lba, 0, buf);
+        return ahci_issue(bidx, pb, ahci_lba48[bidx] ? 0x25 : ATA_CMD_READ, lba, 0, buf);
     }
 
     return pata_read(drv, lba, buf);
@@ -1032,7 +1088,17 @@ int ata_write_sector(uint8_t drv, uint32_t lba, const uint8_t *buf) {
                                        g_drives[drv].ahci_port);
         /* Cast away const — ahci_issue takes void*; we pass write=1 so
          * the HBA reads from the buffer, never writes to it.             */
-        return ahci_issue(bidx, pb, ATA_CMD_WRITE, lba, 1, (void *)buf);
+        if (ahci_readonly[bidx]) {
+            write_failure="SATA cached writes cannot be made durable: flush support unknown.";
+            return -1;
+        }
+        if (ahci_issue(bidx,pb,ahci_lba48[bidx] ? 0x35 : ATA_CMD_WRITE,lba,1,(void *)buf))
+            return -1;
+        if (ahci_flush[bidx] && ahci_issue(bidx,pb,ahci_flush[bidx],0,0,0)) {
+            write_failure="SATA write-cache flush failed.";
+            return -1;
+        }
+        return 0;
     }
 
     return pata_write(drv, lba, buf);
@@ -1041,9 +1107,9 @@ int ata_write_sector(uint8_t drv, uint32_t lba, const uint8_t *buf) {
 int ata_zero_sectors(uint8_t drv, uint32_t lba, uint32_t count) {
     if (drv>=ATA_MAX_DRIVES || !g_drives[drv].present || !count ||
         lba>=g_drives[drv].total_sectors ||
-        count>g_drives[drv].total_sectors-lba ||
-        lba>=0x10000000u || count>0x10000000u-lba) return -1;
+        count>g_drives[drv].total_sectors-lba) return -1;
     if (g_drives[drv].drive_type==ATA_TYPE_PATA) {
+        if (lba>=0x10000000u || count>0x10000000u-lba) return -1;
         while (count) {
             uint8_t chunk=count>128?128:count;
             if (pata_zero_batch(drv,lba,chunk)) return -1;

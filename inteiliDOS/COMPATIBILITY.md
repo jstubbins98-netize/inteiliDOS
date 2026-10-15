@@ -4,6 +4,11 @@ This edition favors standardized legacy PC interfaces over machine-specific
 drivers. Willburd the Setup Wizard generates `configurations/config.h` so each
 build enables only the compatible optional paths selected for its target.
 
+The hardware scope includes 1990s, 2000s, and early-2010s PCs.
+[MODERN_HARDWARE.md](MODERN_HARDWARE.md) describes the newer profiles, x86-64
+compatibility mode, native UHCI/xHCI keyboards, and SATA/AHCI HDD support.
+This is not a guarantee that every PC from those years has supported interfaces.
+
 ## 86Box CD-ROM configuration
 
 Use an **IDE/ATAPI** CD-ROM on one of the primary or secondary IDE positions
@@ -27,7 +32,7 @@ claim of testing every 86Box machine/controller combination.
 | Area | Baseline |
 |---|---|
 | CPU | Intel 80386-compatible, 32-bit protected mode |
-| RAM | 4 MB minimum; 8 MB recommended |
+| RAM | 8 MiB minimum for the current full build; 16 MiB+ recommended |
 | Firmware | PC-compatible BIOS |
 | Video | VGA-compatible color text mode at `0xB8000` |
 | Interrupts | Dual 8259 PIC |
@@ -43,13 +48,15 @@ claim of testing every 86Box machine/controller combination.
 3. **Disk boot:** the universal ISO lets GRUB use BIOS disk services. The raw
    floppy image uses `INT 13h AH=02h` CHS reads and detects geometry with
    `INT 13h AH=08h`.
-4. **Kernel storage:** the wizard enables PATA only for standard compatibility
-   ports `1F0h/3F6h` and `170h/376h`. Unsupported storage can be disabled so
-   later filesystem and setup calls do not probe ATA hardware.
+4. **Kernel storage:** select legacy PATA, PCI-native IDE/SATA compatibility,
+   or SATA/AHCI in Willburd. AHCI supports 512-byte logical-sector HDDs,
+   including 512e, with LBA48 where advertised. Unsupported storage can be
+   disabled so later filesystem and setup calls do not probe it.
 5. **Video:** the kernel keeps the firmware-established VGA text mode and
    writes through the standard text buffer.
-6. **Input:** PS/2 remains active on all builds. UHCI USB can be added by the
-   generated profile but is never the only keyboard path.
+6. **Input:** Willburd keeps PS/2 available. Native UHCI and xHCI boot-protocol
+   USB keyboards are optional. OHCI/EHCI-only ports and external USB hubs
+   need another input path, such as working BIOS legacy USB emulation.
 7. **Timing:** the PIT remains fixed at 1000 Hz because the kernel's sleep and
    polling APIs use one timer tick as one millisecond.
 
