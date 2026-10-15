@@ -521,18 +521,26 @@ static uint8_t ahci_fb [AHCI_MAX_PORTS][256]
     __attribute__((aligned(256)));
 static uint8_t ahci_ct [AHCI_MAX_PORTS][256]
     __attribute__((aligned(128)));
-static uint8_t ahci_data[AHCI_MAX_PORTS][512] __attribute__((aligned(512)));
+/* Permanent bounce buffers also cover one optical logical block. */
+static uint8_t ahci_data[AHCI_MAX_PORTS][2048] __attribute__((aligned(512)));
 static uint8_t ahci_lba48[AHCI_MAX_PORTS], ahci_flush[AHCI_MAX_PORTS];
 static uint8_t ahci_readonly[AHCI_MAX_PORTS], ahci_failed[AHCI_MAX_PORTS];
+static uint8_t ahci_optical[AHCI_MAX_PORTS];
+static int ahci_scanned;
 
 /* ── MMIO helpers ─────────────────────────────────────────────────────────── */
 
+#ifdef AHCI_TEST_IO
+static uint32_t ahci_r(uint32_t base,uint32_t off);
+static void ahci_w(uint32_t base,uint32_t off,uint32_t val);
+#else
 static inline uint32_t ahci_r(uint32_t base, uint32_t off) {
     return *(volatile uint32_t *)(uintptr_t)(base + off);
 }
 static inline void ahci_w(uint32_t base, uint32_t off, uint32_t val) {
     *(volatile uint32_t *)(uintptr_t)(base + off) = val;
 }
+#endif
 
 /* ── HBA generic register offsets ────────────────────────────────────────── */
 #define AHCI_GHC    0x04u   /* Global HBA Control                          */
@@ -658,14 +666,16 @@ static void ahci_port_start(uint32_t pb) {
  *   DW3  CTBAU (= 0, we are under 4 GB)
  *   DW4–DW7  reserved = 0
  */
-static int ahci_issue(uint8_t buf_idx, uint32_t pb,
+static int ahci_command(uint8_t buf_idx, uint32_t pb,
                       uint8_t ata_cmd, uint32_t lba,
-                      int write, void *buf) {
+                      int write, void *buf, const uint8_t *packet,
+                      unsigned bytes) {
     if (buf_idx>=AHCI_MAX_PORTS || ahci_failed[buf_idx]) return -1;
+    if (bytes>sizeof(ahci_data[0]) || (bytes && !buf)) return -1;
     int has_data=buf!=0, extended=ata_cmd==0x25 || ata_cmd==0x35;
     if (!extended && ata_cmd!=ATA_CMD_IDENTIFY && has_data && lba>=0x10000000u) return -1;
     if (write && has_data)
-        for (unsigned i=0;i<512;i++) ahci_data[buf_idx][i]=((const uint8_t *)buf)[i];
+        for (unsigned i=0;i<bytes;i++) ahci_data[buf_idx][i]=((const uint8_t *)buf)[i];
     uint32_t begin=timer_get_ticks();
     while (ahci_r(pb,PxTFD)&0x88) {
         if (timer_get_ticks()-begin>=3000) return -1;
@@ -706,7 +716,17 @@ static int ahci_issue(uint8_t buf_idx, uint32_t pb,
                : (uint8_t)(0xE0u | ((lba >> 24) & 0x0Fu)); /* R/W: + LBA[27:24] */
     ct[0x08] = 0;                                       /* LBA ext = 0      */
     if (extended) {ct[7]=0x40;ct[8]=(uint8_t)(lba>>24);}
-    ct[0x0C] = has_data && ata_cmd!=ATA_CMD_IDENTIFY ? 1 : 0;
+    ct[0x0C] = has_data && ata_cmd!=ATA_CMD_IDENTIFY && ata_cmd!=0xA1 ? 1 : 0;
+    if (packet) {
+        /* ATA PACKET with DMA; ACMD is a padded 12-byte SCSI CDB. */
+        ct[3]=has_data ? 1 : 0;
+        ct[4]=0;
+        ct[5]=(uint8_t)bytes;
+        ct[6]=(uint8_t)(bytes>>8);
+        ct[7]=0;
+        ct[12]=0;
+        for (unsigned i=0;i<12;i++) ct[0x40+i]=packet[i];
+    }
 
     /* ── PRDT entry at CT+0x80 ───────────────────────────────────────────── */
     /*
@@ -725,14 +745,15 @@ static int ahci_issue(uint8_t buf_idx, uint32_t pb,
     ct[0x82] = (uint8_t)((dba >> 16) & 0xFF);
     ct[0x83] = (uint8_t)((dba >> 24) & 0xFF);
     /* DBAU (0x84-0x87) and reserved (0x88-0x8B) already zeroed */
-    ct[0x8C] = 0xFF;    /* DBC[7:0]  = 511 & 0xFF */
-    ct[0x8D] = 0x01;    /* DBC[15:8] = 511 >> 8   */
+    ct[0x8C] = has_data ? (uint8_t)(bytes-1) : 0;
+    ct[0x8D] = has_data ? (uint8_t)((bytes-1)>>8) : 0;
     /* ct[0x8E–0x8F] = 0 (DBC[21:16] = 0, interrupt = 0) */
 
     /* ── Command List Slot 0 ─────────────────────────────────────────────── */
     uint32_t *cl   = (uint32_t *)(uintptr_t)ahci_clb[buf_idx];
     uint32_t  ctba = (uint32_t)(uintptr_t)ct;
     cl[0] = ((uint32_t)has_data << 16)          /* no PRDT for FLUSH          */
+          | (packet ? (1u<<5) : 0)            /* ATAPI command header A bit */
           | ((uint32_t)(write ? 1u : 0u) << 6) /* W (write direction)       */
           | 5u;                                 /* CFL = 5 dwords (20 bytes) */
     cl[1] = 0u;                                /* PRDBC — filled by HBA     */
@@ -745,11 +766,24 @@ static int ahci_issue(uint8_t buf_idx, uint32_t pb,
     ahci_w(pb, PxSERR, 0xFFFFFFFFu);
 
     /* ── Issue command slot 0 ────────────────────────────────────────────── */
+    __asm__ volatile("":::"memory");
     ahci_w(pb, PxCI, 1u);
 
     /* ── Poll for completion (up to ~1 M iterations ≈ tens of ms) ────────── */
     begin=timer_get_ticks();
     while (ahci_r(pb,PxCI)&1) {
+        if (packet && (ahci_r(pb,PxIS)&(1u<<30))) {
+            /* CHECK CONDITION (e.g. empty tray / UNIT ATTENTION) is normal
+             * ATAPI protocol, not a dead disk. Stop before reusing DMA
+             * memory, then permit REQUEST SENSE and bounded readiness retry. */
+            if (ahci_port_stop(pb)) ahci_failed[buf_idx]=1;
+            else {
+                ahci_w(pb,PxIS,0xFFFFFFFFu);
+                ahci_w(pb,PxSERR,0xFFFFFFFFu);
+                ahci_port_start(pb);
+            }
+            return -1;
+        }
         if ((ahci_r(pb,PxIS)&(1u<<30)) || timer_get_ticks()-begin>=3000) {
             ahci_failed[buf_idx]=1;
             (void)ahci_port_stop(pb);
@@ -764,10 +798,15 @@ static int ahci_issue(uint8_t buf_idx, uint32_t pb,
     if (tfd & 0x20u) return -1;                     /* DF  bit set          */
     if (ahci_r(pb,PxIS)&(1u<<30)) return -1;
     __asm__ volatile("":::"memory");
-    if (has_data && *(volatile uint32_t *)&cl[1]!=512) return -1;
+    if (has_data && *(volatile uint32_t *)&cl[1]!=bytes) return -1;
     if (has_data && !write)
-        for (unsigned i=0;i<512;i++) ((uint8_t *)buf)[i]=ahci_data[buf_idx][i];
+        for (unsigned i=0;i<bytes;i++) ((uint8_t *)buf)[i]=ahci_data[buf_idx][i];
     return 0;
+}
+
+static int ahci_issue(uint8_t buf_idx,uint32_t pb,uint8_t cmd,
+                      uint32_t lba,int write,void *buf) {
+    return ahci_command(buf_idx,pb,cmd,lba,write,buf,0,buf ? 512 : 0);
 }
 
 /* ── AHCI drive detection ─────────────────────────────────────────────────── */
@@ -836,6 +875,9 @@ static int ahci_probe_hba(pci_device_t *hba, int slot, int slots_left) {
             det = (uint8_t)(ahci_r(pb, PxSSTS) & 0x0Fu);
         }
         if (det != PXSSTS_DET_PRESENT) continue;   /* still not up */
+        uint32_t signature=ahci_r(pb,0x24); /* PxSIG: SATA ATA vs ATAPI */
+        if (signature!=0x00000101u && signature!=0xEB140101u) continue;
+        int optical=signature==0xEB140101u;
 
         uint8_t bidx = (uint8_t)(slot - 4 + found);  /* index into AHCI buffer pool */
         if (bidx >= AHCI_MAX_PORTS) break;
@@ -852,14 +894,30 @@ static int ahci_probe_hba(pci_device_t *hba, int slot, int slots_left) {
         ahci_w(pb, PxIS,   0xFFFFFFFFu);
         ahci_w(pb, PxSERR, 0xFFFFFFFFu);
         ahci_w(pb, PxIE,   0u);
+        uint32_t cmd=ahci_r(pb,PxCMD);
+        ahci_w(pb,PxCMD,optical ? cmd|(1u<<24) : cmd&~(1u<<24));
 
         ahci_port_start(pb);
 
         for (int i = 0; i < 50000; i++) __asm__ volatile ("nop");
 
         /* ── IDENTIFY ─────────────────────────────────────────────────── */
-        if (ahci_issue(bidx, pb, ATA_CMD_IDENTIFY, 0, 0, id_buf) != 0)
+        if (ahci_issue(bidx, pb, optical ? 0xA1 : ATA_CMD_IDENTIFY, 0, 0, id_buf) != 0)
             continue;
+        if (optical) {
+            /* 12-byte CD/DVD packet device with DMA support, even if empty.
+             * It owns an AHCI slot but is NEVER published as a writable HDD. */
+            if ((id_buf[0]&0xDF03)!=0x8500 || !(id_buf[49]&(1u<<8))) continue;
+            ata_drive_t *drv=&g_drives[slot+found];
+            drv->present=ATA_NOT_PRESENT;
+            drv->drive_type=ATA_TYPE_AHCI;
+            drv->drive_index=(uint8_t)(slot+found);
+            drv->ahci_abar=abar;
+            drv->ahci_port=port;
+            ahci_optical[bidx]=1;
+            found++;
+            continue;
+        }
         if ((id_buf[106]&0xD000)==0x5000 &&
             (id_buf[117]!=256 || id_buf[118]!=0)) continue;
 
@@ -930,6 +988,38 @@ static int ahci_detect(int first_free_slot) {
     }
 
     return total;
+}
+
+/* One controller owner: optical rescans must not rebase/reset HDD engines. */
+static void ahci_init_once(void) {
+#if CONFIG_ENABLE_AHCI
+    if (!ahci_scanned) {
+        ahci_scanned=1;
+        (void)ahci_detect(4);
+    }
+#endif
+}
+
+int ata_ahci_optical_present(uint8_t drive) {
+#if CONFIG_ENABLE_AHCI
+    ahci_init_once();
+    return drive>=4 && drive<ATA_MAX_DRIVES && ahci_optical[drive-4];
+#else
+    (void)drive;
+    return 0;
+#endif
+}
+
+int ata_ahci_packet(uint8_t drive,const uint8_t cdb[12],uint8_t *buf,unsigned bytes) {
+#if CONFIG_ENABLE_AHCI
+    if (!cdb || !ata_ahci_optical_present(drive)) return -1;
+    ata_drive_t *dev=&g_drives[drive];
+    return ahci_command(drive-4,ahci_port_base(dev->ahci_abar,dev->ahci_port),
+                        0xA0,0,0,buf,cdb,bytes);
+#else
+    (void)drive; (void)cdb; (void)buf; (void)bytes;
+    return -1;
+#endif
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1027,8 +1117,9 @@ int ata_detect(ata_drive_t out[ATA_MAX_DRIVES]) {
     return 0;
 #endif
 
-    /* Zero the entire drive table first */
+    /* Preserve the shared SATA inventory/engines after their first probe. */
     for (int i = 0; i < ATA_MAX_DRIVES; i++) {
+        if (i>=4 && ahci_scanned) continue;
         g_drives[i].present     = ATA_NOT_PRESENT;
         g_drives[i].drive_type  = ATA_TYPE_PATA;
         g_drives[i].drive_index = (uint8_t)i;
@@ -1043,7 +1134,9 @@ int ata_detect(ata_drive_t out[ATA_MAX_DRIVES]) {
 
     /* Probe AHCI (fills slots 4-7) only on configured PCI systems. */
 #if CONFIG_ENABLE_AHCI
-    total += ahci_detect(4);
+    ahci_init_once();
+    for (unsigned i=4;i<ATA_MAX_DRIVES;i++)
+        if (g_drives[i].present) total++;
 #endif
 
     /* Copy module table to caller's array */

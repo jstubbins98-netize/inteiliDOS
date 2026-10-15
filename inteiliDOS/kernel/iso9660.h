@@ -34,7 +34,7 @@ int iso9660_read_dir(uint8_t drive_index,
  *
  * Use this to navigate into subdirectories: pass the lba and size fields
  * from the parent directory's iso9660_dirent_t for the directory entry.
- *   drive_index : 0–3
+ *   drive_index : optical slot 0..CDROM_MAX_DRIVES-1 (IDE or SATA)
  *   dir_lba     : start sector of the directory extent
  *   dir_size    : byte length of the directory extent
  * Returns entry count (>= 0), or -1 on I/O error.

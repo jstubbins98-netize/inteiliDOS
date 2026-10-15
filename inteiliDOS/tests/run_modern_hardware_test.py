@@ -72,7 +72,11 @@ def main():
                   "-device","ahci,id=sata",
                   "-drive","file="+str(disk)+",if=none,id=satadisk,format=raw",
                   "-device","ide-hd,drive=satadisk,bus=sata.0")
-            guest=Guest(kernel,tmp/"disc.iso",False,tmp,extra_args=args,
+            sata_cd="--sata-optical" in sys.argv[2:]
+            if sata_cd:
+                args+=("-drive",f"file={tmp/'disc.iso'},if=none,id=optical,media=cdrom,format=raw",
+                       "-device","ide-cd,drive=optical,bus=sata.5")
+            guest=Guest(kernel,None if sata_cd else tmp/"disc.iso",False,tmp,extra_args=args,
                         qemu_binary="qemu-system-x86_64")
             guest.sock.settimeout(15)
             try:
@@ -104,7 +108,8 @@ def main():
                     time.sleep(.1)
                 assert result==63, f"{host}: SATA fixture failed with flags={result:#x}"
                 guest.key("esc")
-                print(f"PASS {host}/{cpu}: IA-32 on x86-64, native USB-only keyboard after mouse, report-ring wrap, AHCI inventory/read/write/flush beyond 128GiB, out-of-range rejection",flush=True)
+                print(f"PASS {host}/{cpu}: IA-32 on x86-64, native USB-only keyboard after mouse, report-ring wrap, AHCI inventory/read/write/flush beyond 128GiB, out-of-range rejection"+
+                      ("; test ELF loaded from SATA optical port 5" if sata_cd else ""),flush=True)
             finally:
                 guest.close()
             with disk.open("rb") as f:

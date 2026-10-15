@@ -92,12 +92,13 @@ static void lp_put_uint_r(int row, int col, uint32_t v, int w,
 #define LP_SRC_CDROM0   0
 #define LP_SRC_CDROM1   1
 #define LP_SRC_CDROM2   2
-#define LP_SRC_CDROM3   3
-#define LP_SRC_FLOPPY_A 4
-#define LP_SRC_COUNT    5
+#define LP_SRC_CDROM3   (CDROM_MAX_DRIVES-1) /* last optical slot, IDE or SATA */
+#define LP_SRC_FLOPPY_A CDROM_MAX_DRIVES
+#define LP_SRC_COUNT    (CDROM_MAX_DRIVES+1)
 
 static const char *lp_src_label[LP_SRC_COUNT] = {
-    "CD-ROM 0", "CD-ROM 1", "CD-ROM 2", "CD-ROM 3", "Floppy A:"
+    "CD0", "CD1", "CD2", "CD3",
+    "SATA4", "SATA5", "SATA6", "SATA7", "Floppy A:"
 };
 static int lp_src_is_cdrom(int src) { return src <= LP_SRC_CDROM3; }
 
@@ -382,6 +383,9 @@ static void lp_draw_source_bar(int src, const cdrom_drive_t *drives) {
     int col = 9;
     for (int i = 0; i < LP_SRC_COUNT && col < 72; i++) {
         if (lp_cd_elf_only && !lp_src_is_cdrom(i)) continue;
+        /* Hide unused sockets so SATA and floppy sources are never pushed
+         * off the 80-column bar by four absent legacy IDE positions. */
+        if (lp_src_is_cdrom(i) && i!=src && !drives[i].present) continue;
         vga_color_t fg = (i == src) ? VGA_COLOR_BLACK       : VGA_COLOR_LIGHT_CYAN;
         vga_color_t bg = (i == src) ? VGA_COLOR_LIGHT_CYAN  : VGA_COLOR_DARK_GREY;
 
@@ -825,7 +829,7 @@ static void launchpad_run_source(int initial_source, int elf_only) {
 
     /* Choose starting source: first CD-ROM that has a disc, else Floppy A:. */
     int src = LP_SRC_FLOPPY_A;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < CDROM_MAX_DRIVES; i++) {
         if ((uint8_t)i < CDROM_MAX_DRIVES && drives[i].present == CDROM_PRESENT) {
             src = i;
             if (drives[i].last_lba > 0) break;

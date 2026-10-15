@@ -1,5 +1,23 @@
 # Modern hardware
 
+For SATA optical coverage, see [SATA_OPTICAL.md](../SATA_OPTICAL.md). Run the
+complete-kernel CDROM test with `--sata` (and `--empty` for insertion after boot),
+and the modern hardware test with `--sata-optical` to load its HDD read/write
+fixture through a SATA optical drive on the same AHCI controller.
+`run_launchpad_floppy_test.py /tmp/legacy-build/inteilidOS.elf` verifies that
+expanding the optical slots does not alias the FAT12 floppy source: a native
+ELF is read from floppy, executed outside staging memory and returns to shell.
+
+The deterministic AHCI packet model needs no physical hardware:
+
+```sh
+gcc -O1 -g -ffunction-sections -fdata-sections -fno-pie -no-pie \
+  -DCONFIG_ENABLE_AHCI=1 -DCONFIG_ENABLE_ATA=1 \
+  tests/sata_optical_test.c kernel/sata_optical.c kernel/pci.c \
+  -Wl,--gc-sections -o /tmp/sata-optical-test
+/tmp/sata-optical-test
+```
+
 For installed-HDD startup and recovery regressions, see
 [BOOT_RECOVERY.md](../BOOT_RECOVERY.md). `run_boot_repair_test.py` covers cancelled
 and confirmed boot repair, backups, dirty-RAM cold boots and BIOS drive `0x81`.

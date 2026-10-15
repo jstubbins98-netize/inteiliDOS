@@ -29,7 +29,10 @@ static void drive_heading(unsigned i) {
     static const char *positions[]={
         "Primary master","Primary slave","Secondary master","Secondary slave"
     };
-    vga_printf("\nCD-ROM drive %u - %s (ATAPI)\n",i,positions[i]);
+    if (i<4)
+        vga_printf("\nCD-ROM drive %u - %s (IDE ATAPI)\n",i,positions[i]);
+    else
+        vga_printf("\nCD-ROM drive %u - SATA / AHCI optical (ATAPI)\n",i);
 }
 
 static void unavailable(void) {

@@ -25,8 +25,8 @@ int cdrom_read_sector(uint8_t i,uint32_t lba,uint8_t *buf) {
     buf[0]=1;memcpy(buf+1,"CD001",5);buf[6]=1;
     memset(buf+40,' ',32);memcpy(buf+40,"TEST_DISC",9);return 0;
 }
-int iso9660_read_dir(uint8_t i,iso9660_dirent_t *e) {
-    assert(i<4);
+int iso9660_read_dir(uint8_t i,iso9660_dirent_t e[ISO9660_MAX_FILES]) {
+    assert(i<CDROM_MAX_DRIVES);
     if (dir_error) return -1;
     memset(e,0,2*sizeof(*e));strcpy(e[0].name,"APPS");e[0].is_dir=1;
     strcpy(e[1].name,"HELLO.ELF");e[1].size=4096;return 2;

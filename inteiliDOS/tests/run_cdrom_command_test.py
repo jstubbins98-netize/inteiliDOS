@@ -15,6 +15,9 @@ def run(*args):
 
 def main():
     kernel=Path(sys.argv[1]).resolve()
+    sata="--sata" in sys.argv[2:]
+    empty="--empty" in sys.argv[2:]
+    if empty and not sata:raise SystemExit("--empty requires --sata")
     output=Path("generated-artifacts/cdrom-command").resolve()
     output.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="cdrom-command-") as folder:
@@ -35,13 +38,33 @@ def main():
         cd=t/"cd.iso"
         run("xorriso","-as","mkisofs","-quiet","-V","CDROM_TEST","-o",cd,root)
         digest=hashlib.sha256(cd.read_bytes()).digest()
-        g=Guest(kernel,cd,False,t)
+        disk=t/"hdd.raw"
+        with disk.open("wb") as f:f.truncate(8*1024*1024)
+        hdd_before=hashlib.sha256(disk.read_bytes()).digest()
+        sata_args=("-cpu","qemu64","-m","256","-device","qemu-xhci,id=usb",
+                   "-device","usb-kbd,bus=usb.0",
+                   "-device","ahci,id=sata",
+                   "-drive",("if=none,id=optical,media=cdrom" if empty else
+                             f"file={cd},if=none,id=optical,media=cdrom,format=raw"),
+                   "-device","ide-cd,drive=optical,bus=sata.0",
+                   "-drive",f"file={disk},if=none,id=harddisk,format=raw",
+                   "-device","ide-hd,drive=harddisk,bus=sata.1")
+        g=Guest(kernel,None if sata else cd,False,t,
+                extra_args=sata_args if sata else ())
         try:
             g.wait("Welcome to inteiliDOS")
             shell(g,"cls")
             shell(g,"cdrom")
+            if empty:
+                g.wait("SATA / AHCI optical")
+                g.wait("No readable data disc")
+                g.command("blockdev-change-medium",{"device":"optical",
+                          "filename":str(cd),"format":"raw"})
+                g.command("blockdev-close-tray",{"device":"optical"})
+                shell(g,"cls");shell(g,"cdrom")
             g.wait("volume: CDROM_TEST")
             g.wait("ATAPI")
+            if sata:g.wait("SATA / AHCI optical")
             shell(g,"cdrom /list")
             g.wait("NOTES.TXT");g.wait("<DIR> APPS")
             g.command("screendump",{"filename":str(output/"listing.ppm")})
@@ -66,7 +89,8 @@ def main():
             shell(g,"cls");shell(g,"cdrom");g.wait("volume: CDROM_TEST")
             shell(g,"cdrom /bad");g.wait("Unknown CDROM option")
             assert hashlib.sha256(cd.read_bytes()).digest()==digest
-            print("PASS: live CD info/listing, ELF-only browser, nested ELF execution, invalid ELF rejection, normal LaunchPad restoration, eject/reinsert and unchanged ISO")
+            assert hashlib.sha256(disk.read_bytes()).digest()==hdd_before
+            print(f"PASS: {'SATA/AHCI' if sata else 'IDE'} (boot-empty={empty}) live CD info/listing, ELF-only browser, nested ELF execution, invalid ELF rejection, normal LaunchPad restoration, eject/reinsert, unchanged ISO/HDD")
         finally:
             g.close()
 

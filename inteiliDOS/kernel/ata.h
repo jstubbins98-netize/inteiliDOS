@@ -58,6 +58,9 @@ typedef struct {
  *   Returns total number of drives found.
  */
 int  ata_detect(ata_drive_t out[ATA_MAX_DRIVES]);
+/* Shared AHCI transport for sata_optical.c; never exposes optical HDD writes. */
+int ata_ahci_optical_present(uint8_t drive);
+int ata_ahci_packet(uint8_t drive,const uint8_t cdb[12],uint8_t *buf,unsigned bytes);
 /* Snapshot the boot-time inventory without resetting/probing controllers. */
 int ata_get_drive(uint8_t index, ata_drive_t *out);
 

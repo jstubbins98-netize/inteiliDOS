@@ -120,6 +120,7 @@ set(KERNEL_C_SOURCES
     kernel/usb.c
     kernel/usb_xhci.c
     kernel/cdrom.c
+    kernel/sata_optical.c
     kernel/fs.c
     kernel/hda.c
     kernel/ac97.c

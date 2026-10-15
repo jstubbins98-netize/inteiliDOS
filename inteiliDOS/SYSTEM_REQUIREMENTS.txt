@@ -65,8 +65,11 @@ HDD and persistent storage
   SATA mechanical HDDs are supported in IDE-compatibility or AHCI mode.
   AHCI requires 512-byte logical sectors (512e allowed, native 4Kn unsupported).
   LBA48 removes the old 128 GiB AHCI limit; the sector API addresses just under
-  2 TiB. Writes must have verified cache durability. SATA/AHCI optical browsing,
-  RAID and NVMe are not supported. See MODERN_HARDWARE.md for details.
+  2 TiB. Writes must have verified cache durability. SATA/AHCI CD/DVD data-disc
+  reading requires PCI, AHCI and CD-ROM support enabled, plus a 12-byte ATAPI
+  DMA device with 2048-byte sectors. ISO9660 browsing, ELF loading and tray
+  eject/rescan are supported; UDF-only discs, burning, RAID and NVMe are not.
+  See SATA_OPTICAL.md and MODERN_HARDWARE.md for details.
   Small CHS-only IDE disks are supported, as are supported LBA IDE disks.
   SCSI and proprietary storage interfaces are not native HDD requirements
   that can simply be substituted for IDE.

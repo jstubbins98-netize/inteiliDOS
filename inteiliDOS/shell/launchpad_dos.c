@@ -2,6 +2,7 @@
  * Files are not copied from another medium or from host-side mock data. */
 #include "launchpad_dos.h"
 #include "../kernel/iso9660.h"
+#include "../kernel/cdrom.h"
 #include "../kernel/fat12.h"
 #include "../kernel/loader.h"
 #include <stddef.h>
@@ -25,7 +26,7 @@ static int slash(char c) { return c == '/' || c == '\\'; }
  * physical media behind LaunchPad's selected source. */
 static int resolve(const char *guest, char path[544]) {
     if (guest[0] && guest[1] == ':') {
-        if (upper(guest[0]) != (source < 4 ? 'D' : 'A')) return 15;
+        if (upper(guest[0]) != (source < CDROM_MAX_DRIVES ? 'D' : 'A')) return 15;
         guest += 2;
     }
     unsigned n = 0;
@@ -70,7 +71,7 @@ static int open_file(const char *guest, unsigned slot, uint32_t *size) {
         while (path[pos] && path[pos] != '/') component[n++] = path[pos++];
         component[n] = 0;
         if (!n) break;
-        if (source < 4) {
+        if (source < CDROM_MAX_DRIVES) {
             iso9660_dirent_t list[ISO9660_MAX_FILES];
             int count = lba ? iso9660_read_dir_at(source, lba, dir_size, list)
                             : iso9660_read_dir(source, list);
@@ -110,7 +111,7 @@ static int32_t read_file(unsigned slot, uint32_t offset, uint8_t *out, uint32_t 
     /* Existing drivers read prefixes. This is deliberately bounded and slower
      * than a sector cache, but uses actual medium contents for every read. */
     uint32_t prefix = offset+count;
-    int32_t bytes = source < 4 ? iso9660_read_file(source, &handles[slot].cd, scratch, prefix)
+    int32_t bytes = source < CDROM_MAX_DRIVES ? iso9660_read_file(source, &handles[slot].cd, scratch, prefix)
                               : fat12_read_file(0, &handles[slot].fat, scratch, prefix);
     if (bytes < 0 || (uint32_t)bytes < prefix) return -30;
     for (uint32_t i = 0; i < count; i++) out[i] = scratch[offset+i];
@@ -122,6 +123,6 @@ const dos_filesystem_t *launchpad_dos_source(int src, const char *directory) {
     unsigned i = 0;
     while (directory[i] && i+1 < sizeof(base)) { base[i] = directory[i]; i++; }
     base[i] = 0;
-    fs.drive = src < 4 ? 'D' : 'A';
+    fs.drive = src < CDROM_MAX_DRIVES ? 'D' : 'A';
     return &fs;
 }

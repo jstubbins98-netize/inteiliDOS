@@ -16,12 +16,14 @@
  * not successful packet identification; it may already have been overwritten
  * by BIOS CD reads (notably on 86Box).
  *
- * All I/O is 16-bit PIO.  No DMA, no IRQ — purely polling.
+ * IDE I/O is 16-bit PIO. SATA optical slots use sata_optical.c and the
+ * shared AHCI packet DMA transport. Both paths poll command completion.
  * The driver is self-contained: it re-declares the port-I/O inlines rather
  * than sharing ata.c's statics, so the two files compile independently.
  */
 
 #include "cdrom.h"
+#include "sata_optical.h"
 #include "ata.h"
 #include "vga.h"
 #include <stdint.h>
@@ -134,6 +136,13 @@ static int wait_drq(uint8_t d) {
 static int atapi_packet(uint8_t d, const uint8_t *cdb,
                          uint8_t *buf, uint16_t max_bytes) {
     if (d >= CDROM_MAX_DRIVES) return -1;
+    if (d>=4) {
+#if CONFIG_ENABLE_AHCI
+        return sata_optical_packet(d,cdb,buf,max_bytes);
+#else
+        return -1;
+#endif
+    }
 
     /* Drive select: bit7=1, bit6=0 (LBA), bit5=1, bit4=slave, bits3-0=0 */
     outb(BASE[d] + 6, (uint8_t)(0xA0 | (SLAV[d] << 4)));
@@ -220,6 +229,25 @@ int cdrom_detect(cdrom_drive_t out[CDROM_MAX_DRIVES]) {
         out[d].drive_index = d;
         out[d].last_lba    = 0;
         out[d].block_size  = CDROM_SECTOR_SIZE;
+        if (d>=4) {
+#if CONFIG_ENABLE_AHCI
+            if (sata_optical_present(d)) {
+                out[d].present=CDROM_PRESENT;
+                count++;
+                uint8_t cap[8]={0};
+                if (!read_capacity(d,cap)) {
+                    uint32_t size=((uint32_t)cap[4]<<24)|((uint32_t)cap[5]<<16)|
+                                  ((uint32_t)cap[6]<<8)|cap[7];
+                    if (size==CDROM_SECTOR_SIZE) {
+                        out[d].last_lba=((uint32_t)cap[0]<<24)|((uint32_t)cap[1]<<16)|
+                                        ((uint32_t)cap[2]<<8)|cap[3];
+                        out[d].block_size=size;
+                    }
+                }
+            }
+#endif
+            continue; /* Never index the four IDE port arrays with SATA slots. */
+        }
         if (ata_get_pata_ports(d, &BASE[d], &CTRL[d]) < 0) continue;
 
         /* Select drive */
@@ -298,6 +326,10 @@ int cdrom_detect(cdrom_drive_t out[CDROM_MAX_DRIVES]) {
 int cdrom_read_sector(uint8_t drive_index, uint32_t lba, uint8_t *buf) {
     if (drive_index >= CDROM_MAX_DRIVES) return -1;
     if (buf == (uint8_t *)0)            return -1;
+    if (drive_index>=4 &&
+        (!cdrom_tbl[drive_index].present || !cdrom_tbl[drive_index].last_lba ||
+         lba>cdrom_tbl[drive_index].last_lba ||
+         cdrom_tbl[drive_index].block_size!=CDROM_SECTOR_SIZE)) return -1;
 
     /*
      * READ (10) Command Descriptor Block — 10 bytes + 2 bytes zero padding.
@@ -378,6 +410,7 @@ uint32_t cdrom_rescan_media(uint8_t drive_index) {
         uint32_t bsz =
             ((uint32_t)cap_buf[4] << 24) | ((uint32_t)cap_buf[5] << 16) |
             ((uint32_t)cap_buf[6] <<  8) |  (uint32_t)cap_buf[7];
+        if (drive_index>=4 && bsz!=CDROM_SECTOR_SIZE) return 0;
         if (bsz == 0 || bsz > 4096) bsz = CDROM_SECTOR_SIZE;
         cdrom_tbl[drive_index].last_lba   = lba;
         cdrom_tbl[drive_index].block_size = bsz;

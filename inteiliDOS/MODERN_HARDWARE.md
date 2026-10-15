@@ -71,9 +71,11 @@ The 32-bit sector API addresses just under 2 TiB even on a larger disk.
 
 Support for a controller does not grant support for arbitrary existing
 FAT/NTFS/ext partitions. Existing native filesystem/install safety rules still
-apply. AHCI optical media, RAID, NVMe and SCSI drivers are not implemented.
-A BIOS may boot a SATA CD successfully even though the kernel cannot browse
-that AHCI optical drive afterwards. SMART diagnostics unavailable on a
+apply. SATA ATAPI CD/DVD optical drives on AHCI controllers support read-only
+2048-byte data sectors, ISO9660 browsing, LaunchPad ELF loading and software
+eject/rescan. See [SATA_OPTICAL.md](SATA_OPTICAL.md) for setup and limits.
+RAID, NVMe and generic SCSI controllers are not implemented.
+SMART diagnostics unavailable on a
 controller remain explicitly unavailable, not a fabricated healthy result.
 
 ## Verified coverage

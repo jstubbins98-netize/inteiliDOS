@@ -1,6 +1,6 @@
 # inteiliDOS
 
-> “The command line of the future.”
+> “The future still has a blinking cursor.”
 
 inteiliDOS is a freestanding, 32-bit x86 operating system written in C and NASM
 assembly. This edition is designed for broad compatibility with PC-compatible
@@ -235,6 +235,9 @@ sudo dd \
 ### CD-ROM
 
 At inteiliShell, use these commands with a detected ATAPI CD-ROM drive:
+
+Both IDE and [SATA/AHCI optical drives](SATA_OPTICAL.md) are supported. SATA
+optical support requires an AHCI-enabled profile and the CD-ROM driver enabled.
 
 | Command | Action |
 |---|---|

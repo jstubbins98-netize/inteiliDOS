@@ -2,6 +2,11 @@
 #include "../kernel/cdrom.h"
 #include <stdint.h>
 
+/* The fixture has interrupts masked; its PATA waits use bounded polling.
+ * These are deterministic poll ticks, not a claim about elapsed time. */
+uint32_t timer_get_ticks(void) { static uint32_t ticks; return ticks++; }
+void timer_sleep(uint32_t ms) { (void)ms; }
+
 static void outb(uint16_t port, uint8_t value) {
     __asm__ volatile ("outb %0,%1" :: "a"(value), "Nd"(port));
 }

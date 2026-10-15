@@ -1,6 +1,6 @@
 /*
  * inteiliDOS -- kernel/cdrom.h
- * ATAPI CD-ROM / DVD-ROM driver (PIO, no DMA)
+ * ATAPI CD-ROM / DVD-ROM driver (IDE PIO and SATA AHCI packet DMA)
  *
  * Works on top of the same IDE port pair as the ATA driver.  ATAPI devices
  * are identified using word 0 returned by IDENTIFY PACKET DEVICE. Reset
@@ -16,6 +16,8 @@
  *   2 = Secondary Master   (legacy base 0x170)
  *   3 = Secondary Slave    (legacy base 0x170)
  * PCI-native port mappings are shared with the ATA driver when enabled.
+ *   4..7 = detected AHCI SATA devices, shared with the HDD slot pool;
+ *          optical devices are never registered as writable HDDs.
  */
 
 #ifndef CDROM_H
@@ -28,7 +30,7 @@
 #define CDROM_PRESENT      1
 
 /* Maximum drives we track (matches ATA_MAX_DRIVES) */
-#define CDROM_MAX_DRIVES   4
+#define CDROM_MAX_DRIVES   8
 
 /* Standard CD-ROM logical block size (Mode 1 / Mode 2 Form 1) */
 #define CDROM_SECTOR_SIZE  2048
@@ -43,13 +45,13 @@
  */
 typedef struct {
     uint8_t  present;        /* CDROM_PRESENT or CDROM_NOT_PRESENT */
-    uint8_t  drive_index;    /* 0–3 (matches ata_drive_t index)    */
+    uint8_t  drive_index;    /* 0..3 IDE, 4..7 SATA AHCI */
     uint32_t last_lba;       /* last readable LBA (from READ CAPACITY) */
     uint32_t block_size;     /* bytes per sector reported by drive  */
 } cdrom_drive_t;
 
 /*
- * cdrom_detect  — scan all four IDE positions for ATAPI devices.
+ * cdrom_detect  — scan IDE positions and the shared SATA/AHCI inventory.
  *
  * Fills out[0..CDROM_MAX_DRIVES-1].  Drives that are not ATAPI have
  * out[i].present = CDROM_NOT_PRESENT.
@@ -64,7 +66,7 @@ int cdrom_detect(cdrom_drive_t out[CDROM_MAX_DRIVES]);
 /*
  * cdrom_read_sector  — read one 2048-byte CD-ROM sector.
  *
- * drive_index : 0–3
+ * drive_index : 0..CDROM_MAX_DRIVES-1
  * lba         : logical block address on the disc
  * buf         : caller-supplied buffer, must be at least CDROM_SECTOR_SIZE bytes
  * Returns 0 on success, -1 on error (drive absent, no disc, read error).
@@ -74,7 +76,7 @@ int cdrom_read_sector(uint8_t drive_index, uint32_t lba, uint8_t *buf);
 /*
  * cdrom_eject  — open the disc tray.
  *
- * drive_index : 0–3
+ * drive_index : 0..CDROM_MAX_DRIVES-1
  * Returns 0 on success, -1 if the command could not be sent or was rejected.
  * Some drives (especially laptop slim drives) do not support software eject.
  */
@@ -111,7 +113,7 @@ const cdrom_drive_t *cdrom_drives(void);
  * internal table's last_lba and block_size in place.
  *
  * Use this to detect a disc inserted after boot without a full rescan.
- *   drive_index : 0–3
+ *   drive_index : 0..CDROM_MAX_DRIVES-1
  * Returns the new last_lba (0 = no disc / tray empty), or 0 on error.
  */
 uint32_t cdrom_rescan_media(uint8_t drive_index);
