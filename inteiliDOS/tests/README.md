@@ -1,5 +1,41 @@
 # Modern hardware
 
+Application shortcuts are F2 Save, F3 Load, F10 Quit in iEdit and InteiliSheets.
+`python3 tests/run_app_function_keys_test.py /tmp/legacy-build/inteilidOS.elf`
+checks PS/2 shortcuts, real native C: saves/loads, active cell edits, cancelled
+dialogs, dirty-load/quit confirmation and persistence. The USB storage test
+below checks these same shortcuts with an xHCI keyboard and USB destinations.
+
+`python3 tests/run_msdos_usb_test.py /tmp/usb-build/inteilidOS.elf`
+uses the locally supplied, licensed `../MS-DOS_disks` images (or `--media DIR`).
+It checks real MS-DOS setup from multi-cluster USB FAT32 images, automatic
+and explicit drive selection, errors for missing/unmounted/corrupt media,
+Disk 2 swapping, F8, persistence after re-entry and after removing USB,
+and unchanged USB source images/native user files. Build with `--modern`
+to enable the xHCI driver. Only disposable test disks are modified.
+
+USB storage commands and support limits are documented in
+[USB_STORAGE.md](../USB_STORAGE.md). Run:
+
+```
+python3 tests/build_test_kernel.py /tmp/usb-build --modern
+python3 tests/run_usb_storage_test.py /tmp/usb-build/inteilidOS.elf
+```
+
+The regression first runs a deterministic host fault model with the real
+FatFs adapter (flush/disconnect errors, failed writes, unsupported media,
+4Kn rejection and size/LBA bounds). It then tests actual QEMU xHCI BOT
+devices and a USB-only keyboard: MBR FAT16 and raw FAT32, real DIR/TYPE,
+multi-cluster copies, shorter overwrites, iEdit save/open, blocked access
+after eject, remount, persisted data and independently checked FAT mirrors.
+Only disposable disk images are modified.
+
+It also covers the one-file USB copy chooser (including cancel and an untouched
+unselected file), USB device selection from all three apps, BASIC program
+save/load and execution, and Sheets CSV save/load with row positions preserved.
+The host dialog test checks native C:/D: selection, mounted-only USB drive
+labels, cancel, unavailable drives and filename bounds.
+
 For SATA optical coverage, see [SATA_OPTICAL.md](../SATA_OPTICAL.md). Run the
 complete-kernel CDROM test with `--sata` (and `--empty` for insertion after boot),
 and the modern hardware test with `--sata-optical` to load its HDD read/write

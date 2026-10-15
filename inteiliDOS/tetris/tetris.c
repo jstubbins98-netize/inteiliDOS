@@ -8,7 +8,7 @@
  * Controls:
  *   Left / Right     Move piece
  *   Up  / Z          Rotate clockwise (with simple wall-kick)
- *   Down             Soft drop (+1 pt per row)
+ *   Down             Soft drop (no score bonus)
  *   Space / Enter    Hard drop (+2 pts per row)
  *   P                Pause / resume
  *   Q / Escape       Quit
@@ -669,7 +669,7 @@ static void handle_key(int k)
             break;
         case KEY_DOWN:
             if (!collides(g.piece, g.rot, g.row + 1, g.col))
-                { g.row++; g.score++; g.dirty = 1; }
+                { g.row++; g.dirty = 1; }
             break;
         case ' ': case KEY_ENTER:
             do_hard_drop();

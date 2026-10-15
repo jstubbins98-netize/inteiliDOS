@@ -25,6 +25,15 @@ void *kcalloc(size_t n, size_t s) { return calloc(n,s); }
 void kfree(void *p) { free(p); }
 int kmemcmp(const void *a,const void *b,size_t n) { return memcmp(a,b,n); }
 int kstrcmp(const char *a,const char *b) { return strcmp(a,b); }
+char *kstrcpy(char *d,const char *s) { return strcpy(d,s); }
+const usb_volume_info_t *usb_storage_volumes(void) {
+    static usb_volume_info_t volumes[USB_STORAGE_MAX];return volumes;
+}
+int usb_file_read_at(const char *p,uint32_t o,uint8_t *b,uint32_t n,uint32_t *s) {
+    (void)p;(void)o;(void)b;(void)n;(void)s;
+    assert(!"unexpected USB read");return -1;
+}
+const char *usb_storage_error(int rc) {(void)rc;return "USB error";}
 void vga_puts(const char *s) {
     assert(output_len+strlen(s)<sizeof(output));
     strcpy(output+output_len,s);output_len+=strlen(s);

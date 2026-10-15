@@ -22,6 +22,15 @@ python3 cmake/create_msdos_cd.py /path/to/dos-disks /path/to/dos-media.iso
 Alternatively insert a 1.44 MB DOS Disk 1 floppy and run `MS-DOS /FLOPPY`.
 Keep the separate DOS media inserted for installation access. Images are read on demand, not
 embedded in the kernel or loaded entirely into the small native heap.
+For USB, put the same image filenames (or DISK1/2/3 and SUPPDISK aliases)
+in the drive root, run `USB /MOUNT`, then `MS-DOS /USB [USB0:..USB3:]`.
+The default searches mounted drives for Disk 1; F6 loads subsequent images
+from the selected drive. USB A: remains read-only and uses bounded random
+reads with a 2 KB cache, closing every FAT handle after each operation.
+It never allocates a full 1.44 MB floppy in the 2 MB native heap.
+Keep the drive connected until exiting with F8; the persistent DOS HDD
+remains on native storage. Missing or invalid explicit USB media is an error,
+not a fallback to CD or floppy.
 An already initialized virtual HDD can boot without the CD.
 
 ## Storage and controls

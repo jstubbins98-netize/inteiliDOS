@@ -21,8 +21,9 @@
  *   Q / Escape          Quit
  *   Delete / Ctrl+D     Clear selected cell
  *   Ctrl+Q / Q          Quit
- *   :save               Open save-to-file dialog
- *   :load               Open load-from-file dialog
+ *   F2                  Open save-to-file dialog
+ *   F3                  Open load-from-file dialog
+ *   F10                 Quit (confirm if unsaved)
  *
  * Keys (edit mode):
  *   Enter               Commit edit, move cursor down
@@ -31,6 +32,8 @@
  */
 
 #include "sheets.h"
+#include "storage_dialog.h"
+#include "../kernel/usb_storage.h"
 #include "../kernel/vga.h"
 #include "../kernel/keyboard.h"
 #include "../kernel/memory.h"
@@ -278,7 +281,7 @@ static void sh_draw_title(void) {
     const char *title = "  InteiliSheets 1.0";
     for (int i = 0; title[i]; i++)
         sh_poke(SH_TITLE_ROW, i, title[i], VGA_COLOR_BLACK, VGA_COLOR_LIGHT_CYAN);
-    const char *hints = "  :save / :load  |  Q=Quit";
+    const char *hints = "  F2:Save  F3:Load  F10:Quit";
     int hlen = sh_strlen(hints);
     int hcol = 80 - hlen;
     for (int i = 0; hints[i]; i++)
@@ -403,7 +406,7 @@ static void sh_draw_status(const char *msg) {
 static void sh_draw_hints(void) {
     sh_fill_row(SH_HINT_ROW, VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK);
     const char *h = "  ARROWS=Navigate  ENTER=Edit  DEL=Clear  "
-                    ":save=Save CSV  :load=Open CSV  Q/Esc=Quit";
+                    "F2=Save  F3=Load  F10=Quit";
     for (int i = 0; h[i] && i < 80; i++)
         sh_poke(SH_HINT_ROW, i, h[i], VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK);
 }
@@ -442,6 +445,8 @@ static void sh_redraw_all(const char *status_msg) {
 #define SH_ED_DOWN  3
 #define SH_ED_LEFT  4
 #define SH_ED_RIGHT 5
+#define SH_ED_SAVE  6
+#define SH_ED_LOAD  7
 
 /* Commit buf into the cell and update cached values. */
 static void sh_commit_cell(char *buf, int len) {
@@ -458,7 +463,7 @@ static int sh_edit_cell(void) {
     for (int i = 0; i <= SH_CMAX; i++) buf[i] = cell->str[i];
     int len = sh_strlen(buf);
 
-    sh_draw_status("  EDITING -- Enter/Arrows=Accept  Esc=Cancel  Ctrl+Q/Q=Quit");
+    sh_draw_status("  EDITING -- Enter/Arrows=Accept Esc=Cancel F2=Save F3=Load F10=Quit");
 
     while (1) {
         /* Redraw formula bar */
@@ -473,6 +478,10 @@ static int sh_edit_cell(void) {
 
         int k = keyboard_getchar();
 
+        if (k == KEY_F2 || k == KEY_F3 || k == KEY_F10) {
+            sh_commit_cell(buf, len);
+            return k == KEY_F2 ? SH_ED_SAVE : k == KEY_F3 ? SH_ED_LOAD : SH_ED_QUIT;
+        }
         /* Commit + directional navigation */
         if (k == KEY_UP)    { sh_commit_cell(buf, len); return SH_ED_UP;    }
         if (k == KEY_DOWN)  { sh_commit_cell(buf, len); return SH_ED_DOWN;  }
@@ -492,6 +501,7 @@ static int sh_edit_cell(void) {
 
         /* Ctrl+Q or Q — quit InteiliSheets */
         if (k == 0x11 || k == 'q' || k == 'Q') {
+            sh_commit_cell(buf, len);
             return SH_ED_QUIT;
         }
 
@@ -592,26 +602,15 @@ static void sh_save_csv(void) {
     }
     sh_ensure_csv(fn, (int)sizeof(fn));
 
-    /* Step 2 — device */
-    sh_fill_row(SH_STAT_ROW, VGA_COLOR_BLACK, VGA_COLOR_LIGHT_GREY);
-    const char *dlabel = "  Save to: [1] Internal HDD (C:\\)  [2] Other native HDD (D:\\)  [Esc] Cancel";
-    for (int i = 0; dlabel[i] && i < 80; i++)
-        sh_poke(SH_STAT_ROW, i, dlabel[i], VGA_COLOR_BLACK, VGA_COLOR_LIGHT_GREY);
-
-    int choice = 0;
-    for (;;) {
-        int k = keyboard_getchar();
-        if (k == '1') { choice = 1; break; }
-        if (k == '2') { choice = 2; break; }
-        if (k == KEY_ESCAPE) break;
-    }
+    int choice = storage_choose_target(fn, sizeof(fn), 1, sh_draw_status);
+    int is_usb = choice == 3;
     if (!choice) {
         sh_draw_status("  Save cancelled.");
         timer_sleep(900);
         return;
     }
 
-    const char *drive = (choice == 1) ? "C:\\" : "D:\\";
+    const char *drive = is_usb ? "" : (choice == 1) ? "C:\\" : "D:\\";
 
     /* Build full path string for the confirmation message */
     char path[80];
@@ -623,7 +622,8 @@ static void sh_save_csv(void) {
     /* Step 3 — generate CSV: "Row,A,B,C,D,E,F,G" header + non-empty data rows.
      * The "Row" column stores the 1-based row number so the file can be
      * re-imported to the correct grid positions by sh_load_csv().           */
-    #define SH_CSV_MAX 4096
+    /* Fits every cell in the complete 50x7 grid without truncation. */
+    #define SH_CSV_MAX 16384
     static char csv_buf[SH_CSV_MAX];   /* static to avoid large stack frame */
     int cp = 0;
 
@@ -673,7 +673,8 @@ static void sh_save_csv(void) {
 
     /* Step 4 — write CSV bytes to logical native volume */
     uint8_t drv = (uint8_t)(choice - 1);
-    int rc = fs_volume_write(drv, fn, (const uint8_t *)csv_buf, (uint32_t)cp);
+    int rc = is_usb ? usb_file_write(fn, (const uint8_t *)csv_buf, (uint32_t)cp) :
+                      fs_volume_write(drv, fn, (const uint8_t *)csv_buf, (uint32_t)cp);
 
     if (rc == FS_OK) sh_dirty = 0;
 
@@ -690,7 +691,7 @@ static void sh_save_csv(void) {
         const char *sfx = " rows)  [any key]";
         for (int i = 0; sfx[i] && mi < 79; i++) msg[mi++] = sfx[i];
     } else {
-        const char *err =
+        const char *err = is_usb ? usb_storage_error(rc) :
             (rc == FS_ERR_NODRV) ? "  Save failed: no drive found.  [any key]" :
             (rc == FS_ERR_FULL)  ? "  Save failed: native storage full.  [any key]" :
             (rc == FS_ERR_LAYOUT) ? "  Unsafe disk layout; back up first.  [any key]" :
@@ -714,11 +715,11 @@ static void sh_load_csv(void) {
     /* Warn if there is unsaved work */
     if (sh_dirty) {
         sh_fill_row(SH_STAT_ROW, VGA_COLOR_BLACK, VGA_COLOR_LIGHT_GREY);
-        const char *w = "  Unsaved changes! Ctrl+L again to discard and open.";
+        const char *w = "  Unsaved changes! F3/Ctrl+L again to discard and open.";
         for (int i = 0; w[i] && i < 80; i++)
             sh_poke(SH_STAT_ROW, i, w[i], VGA_COLOR_LIGHT_RED, VGA_COLOR_LIGHT_GREY);
         int k = keyboard_getchar();
-        if (k != 0x0C) {   /* anything other than Ctrl+L = abort */
+        if (k != KEY_F3 && k != 0x0C) {
             sh_draw_status("  Open cancelled.");
             timer_sleep(900);
             return;
@@ -734,19 +735,8 @@ static void sh_load_csv(void) {
     }
     sh_ensure_csv(fn, (int)sizeof(fn));
 
-    /* Step 2 — device */
-    sh_fill_row(SH_STAT_ROW, VGA_COLOR_BLACK, VGA_COLOR_LIGHT_GREY);
-    const char *dlabel = "  Load from: [1] Internal HDD (C:\\)  [2] Other native HDD (D:\\)  [Esc] Cancel";
-    for (int i = 0; dlabel[i] && i < 80; i++)
-        sh_poke(SH_STAT_ROW, i, dlabel[i], VGA_COLOR_BLACK, VGA_COLOR_LIGHT_GREY);
-
-    int choice = 0;
-    for (;;) {
-        int k = keyboard_getchar();
-        if (k == '1') { choice = 1; break; }
-        if (k == '2') { choice = 2; break; }
-        if (k == KEY_ESCAPE) break;
-    }
+    int choice = storage_choose_target(fn, sizeof(fn), 0, sh_draw_status);
+    int is_usb = choice == 3;
     if (!choice) {
         sh_draw_status("  Open cancelled.");
         timer_sleep(900);
@@ -754,14 +744,15 @@ static void sh_load_csv(void) {
     }
 
     /* Step 3 — read from ATA */
-    #define SH_CSV_MAX 8192
+    #define SH_CSV_MAX 16384
     static uint8_t csv_buf[SH_CSV_MAX];
     uint8_t drv = (uint8_t)(choice - 1);
     uint32_t read_len = 0;
-    int rc = fs_volume_read(drv, fn, csv_buf, SH_CSV_MAX - 1, &read_len);
+    int rc = is_usb ? usb_file_read(fn, csv_buf, SH_CSV_MAX - 1, &read_len) :
+                      fs_volume_read(drv, fn, csv_buf, SH_CSV_MAX - 1, &read_len);
 
     if (rc != FS_OK) {
-        const char *err =
+        const char *err = is_usb ? usb_storage_error(rc) :
             (rc == FS_ERR_NOTFOUND) ? "  Open failed: file not found.  [any key]" :
             (rc == FS_ERR_NODRV)    ? "  Open failed: no drive found.  [any key]" :
                                       "  Open failed: disk I/O error.  [any key]";
@@ -777,6 +768,7 @@ static void sh_load_csv(void) {
 
     uint32_t bp = 0;
     int csv_row = 0;   /* 0 = header, 1+ = data rows */
+    int row_header = 0;
     int grid_row = 0;
 
     while (bp <= read_len && grid_row < SH_ROWS) {
@@ -793,11 +785,24 @@ static void sh_load_csv(void) {
 
         if (li == 0 && bp >= read_len) break;  /* trailing blank line at EOF */
 
-        if (csv_row == 0) { csv_row++; continue; }  /* skip header row */
+        if (csv_row == 0) {
+            row_header = li >= 4 && kmemcmp(lbuf, "Row,", 4) == 0;
+            csv_row++; continue;
+        }
 
         /* Parse up to SH_COLS comma-separated fields */
         int col = 0;
         int p = 0;
+        if (row_header) {
+            int row = 0;
+            while (lbuf[p]>='0' && lbuf[p]<='9') {
+                if (row > SH_ROWS) break;
+                row = row*10 + lbuf[p++] - '0';
+            }
+            if (row<1 || row>SH_ROWS || lbuf[p]!=',') continue;
+            grid_row=row-1;
+            p++;
+        }
         while (col < SH_COLS) {
             while (lbuf[p] == ' ') p++;
 
@@ -839,7 +844,7 @@ static void sh_load_csv(void) {
     int mi = 0;
     const char *pfx = "  Opened: ";
     for (int i = 0; pfx[i] && mi < 79; i++) msg[mi++] = pfx[i];
-    const char *drive = (choice == 1) ? "C:\\" : "D:\\";
+    const char *drive = is_usb ? "" : (choice == 1) ? "C:\\" : "D:\\";
     for (int i = 0; drive[i] && mi < 79; i++) msg[mi++] = drive[i];
     for (int i = 0; fn[i]    && mi < 79; i++) msg[mi++] = fn[i];
     const char *sep = "  (";
@@ -854,6 +859,22 @@ static void sh_load_csv(void) {
 /* =========================================================================
  * Main entry point
  * ========================================================================= */
+static int sh_confirm_quit(void) {
+    if (!sh_dirty) return 1;
+    sh_draw_status("  Unsaved changes! F10/Ctrl+Q again quits; other key cancels.");
+    int k=keyboard_getchar();
+    return k==KEY_F10 || k==0x11;
+}
+
+/* Function keys work from both grid navigation and an active cell edit.
+ * The edit is committed first, so save/quit cannot silently lose its text. */
+static int sh_edit_action(int ed) {
+    if (ed==SH_ED_QUIT) return sh_confirm_quit();
+    if (ed==SH_ED_SAVE) sh_save_csv();
+    if (ed==SH_ED_LOAD) sh_load_csv();
+    return 0;
+}
+
 void sheets_run(void) {
     /* Initialise state */
     kmemset(sh_cells, 0, sizeof(sh_cells));
@@ -870,7 +891,17 @@ void sheets_run(void) {
 
         int k = keyboard_getchar();
 
-        if (k == 0x11) break;   /* Ctrl+Q — quit */
+        if (k == KEY_F10 || k == 0x11) {
+            if (sh_confirm_quit()) break;
+            sh_redraw_all("  Quit cancelled.");
+            continue;
+        }
+        if (k == KEY_F2 || k == 0x13) {
+            sh_save_csv();sh_redraw_all("  Ready");continue;
+        }
+        if (k == KEY_F3 || k == 0x0C) {
+            sh_load_csv();sh_redraw_all("  Ready");continue;
+        }
 
         /* ':' — command bar: type 'save' or 'load' then Enter */
         if (k == ':') {
@@ -944,11 +975,15 @@ void sheets_run(void) {
         }
 
         /* Q / Escape / Ctrl+Q — quit from navigation mode */
-        if (k == 'q' || k == 'Q' || k == KEY_ESCAPE || k == 0x11) break;
+        if (k == 'q' || k == 'Q' || k == KEY_ESCAPE) {
+            if (sh_confirm_quit()) break;
+            sh_redraw_all("  Quit cancelled.");
+            continue;
+        }
 
         if (k == KEY_ENTER || k == '\r') {
             int ed = sh_edit_cell();
-            if (ed == SH_ED_QUIT) break;
+            if (sh_edit_action(ed)) break;
             sh_redraw_all("  Ready");
             /* After Enter, advance down (same as before) */
             if (ed == SH_ED_DONE && sh_cur_row < SH_ROWS - 1) {
@@ -987,8 +1022,9 @@ void sheets_run(void) {
             cell->str[1] = '\0';
             sh_draw_fbar();
             int ed = sh_edit_cell();
-            if (ed == SH_ED_QUIT) break;
+            if (sh_edit_action(ed)) break;
             sh_redraw_all("  Ready");
+            if (ed==SH_ED_QUIT || ed==SH_ED_SAVE || ed==SH_ED_LOAD) continue;
             /* Advance after typing */
             if (sh_cur_row < SH_ROWS - 1) {
                 sh_cur_row++;

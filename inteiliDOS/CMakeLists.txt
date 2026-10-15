@@ -119,6 +119,8 @@ set(KERNEL_C_SOURCES
     kernel/pci.c
     kernel/usb.c
     kernel/usb_xhci.c
+    kernel/usb_storage.c
+    kernel/fatfs/ff.c
     kernel/cdrom.c
     kernel/sata_optical.c
     kernel/fs.c
@@ -140,6 +142,9 @@ set(SHELL_C_SOURCES
     shell/shell.c
     shell/commands.c
     shell/cdrom_command.c
+    shell/usb_command.c
+    shell/usb_file_picker.c
+    shell/storage_dialog.c
     shell/iedit.c
     shell/tour.c
     tetris/tetris.c

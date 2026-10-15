@@ -23,6 +23,14 @@ void *kmemset(void *d,int c,size_t n) {return memset(d,c,n);}
 int kmemcmp(const void *a,const void *b,size_t n) {return memcmp(a,b,n);}
 int kstrcmp(const char *a,const char *b) {return strcmp(a,b);}
 size_t kstrlen(const char *s) {return strlen(s);}
+char *kstrcpy(char *d,const char *s) {return strcpy(d,s);}
+static usb_volume_info_t usb_volumes[USB_STORAGE_MAX];
+const usb_volume_info_t *usb_storage_volumes(void) {return usb_volumes;}
+int usb_file_read_at(const char *p,uint32_t o,uint8_t *b,uint32_t n,uint32_t *s) {
+    (void)p;(void)o;(void)b;(void)n;(void)s;
+    assert(!"unexpected USB read");return -1;
+}
+const char *usb_storage_error(int rc) {(void)rc;return "USB error";}
 void vga_puts(const char *s) {assert(strlen(output)+strlen(s)<sizeof(output));strcat(output,s);}
 void vga_printf(const char *f,...) {
     va_list a;va_start(a,f);size_t n=strlen(output);
@@ -124,5 +132,12 @@ int main(void) {
     assert(!io_failed); /* optional A: failure does not terminate DOS C: */
     fixture();images[0]=1;
     assert(!prepare_disk(0,NULL) && !fdc_calls && !cd_calls);
+    fixture();images[0]=1;
+    const char *u[]={"/USB"};
+    assert(prepare_disk(1,u)==1 && strstr(output,"USB /MOUNT"));
+    assert(!cd_calls && !fdc_calls && !reserve_calls);
+    fixture();images[0]=1;
+    const char *bad_usb[]={"/USB","USB4:"};
+    assert(prepare_disk(2,bad_usb)==1 && strstr(output,"Usage:"));
     puts("PASS: CD-independent saved DOS startup, other-volume recovery, ambiguity/size/I/O protection and optional floppy failure");
 }

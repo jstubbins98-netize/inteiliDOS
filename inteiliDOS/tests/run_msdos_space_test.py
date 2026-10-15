@@ -39,7 +39,7 @@ def main():
         for mib, files, message in (
             (10, 1, "insufficient disk space"),
             (32, 15, "native file directory is full"),
-            (32, 1, "DOS boot disk missing"),
+            (32, 1, "Supply MS-DOS 6.22 Disk 1"),
         ):
             before, available = fixture(mib, files)
             path = tmp/"native.img"

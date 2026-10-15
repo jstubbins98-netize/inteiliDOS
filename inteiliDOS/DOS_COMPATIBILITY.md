@@ -34,7 +34,7 @@ or emulator. Compatibility is not guaranteed.
 The inteiliDOS build never bundles DOS images into its OS ISO or kernel.
 **MS-DOS installation disk images and game disk images are not included in
 this GitHub repository.** Users must supply their own licensed disk images
-separately on CD-ROM or floppy disk at runtime.
+separately on CD-ROM, floppy disk, or a supported USB drive at runtime.
 To optionally make a separate data CD from your four licensed images:
 
 ```sh
@@ -92,7 +92,42 @@ At inteiliShell:
 MS-DOS
 MS-DOS /FLOPPY
 MS-DOS /IMAGE GAME.IMG
+USB /MOUNT
+MS-DOS /USB
+MS-DOS /USB USB1:
 ```
+
+### DOS installation images on USB
+
+Copy your own licensed **1.44 MB FAT12 disk images** into the root of a
+supported FAT12/16/32 USB drive. Use `D6221.IMG`, `D6222.IMG`, `D6223.IMG`
+and `D622S.IMG`, or the aliases `DISK1.IMG`, `DISK2.IMG`, `DISK3.IMG`
+and `SUPPDISK.IMG`. Disk 1 is required; the others are optional.
+Do not write Disk 1 over the entire USB drive: these are ordinary image files
+inside its FAT filesystem.
+
+Run `USB /MOUNT` first, then `MS-DOS /USB`. It searches mounted drives in
+USB0: through USB3: order for Disk 1. Use `MS-DOS /USB USB1:` to choose a
+specific drive. Missing files can be skipped during that search, but a
+present, corrupt or unreadable image produces an error, not a silent fallback.
+An explicitly requested USB startup requires valid USB Disk 1 even when the
+virtual HDD already exists; plain `MS-DOS` still boots the saved HDD without
+installation media.
+
+The selected image appears as read-only DOS A:. F6 cycles the four image names
+on the **same USB drive**, accepting the aliases above. A failed swap leaves
+the previous image selected. F7 still switches to the physical floppy.
+Keep the USB drive inserted during use: images are streamed through a small
+cache, not loaded entirely into RAM. No image is bundled with the OS or
+modified, and there is no automatic bulk copy of the USB drive.
+
+DOS C: still uses `MSDOS622.HDD` on a safe native HDD with enough free space;
+this option does not place the virtual HDD or installed games on USB.
+F8 returns to inteiliShell as usual. Afterwards, `USB /EJECT` safely releases
+USB storage. USB controller/filesystem restrictions are unchanged; see
+`USB_STORAGE.md`.
+
+### CD images and physical floppies
 
 The `/IMAGE` form mounts a 360 KB, 720 KB, 1.2 MB or 1.44 MB floppy image from the CD's root as
 A:, while still booting DOS from C:. Game-image CDs do not need DOS installation

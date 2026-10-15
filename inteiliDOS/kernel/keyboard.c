@@ -89,7 +89,8 @@ static void keyboard_handler(registers_t *regs) {
         kb_buf_push((uint8_t)(KEY_F1 + (sc - 0x3B)));
         return;
     }
-    if (sc == 0x42) { kb_buf_push(KEY_F8); return; }
+    if (sc == 0x57) { kb_buf_push(KEY_F11); return; }
+    if (sc == 0x58) { kb_buf_push(KEY_F12); return; }
 
     if (sc >= 128) return;
 

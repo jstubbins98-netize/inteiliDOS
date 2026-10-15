@@ -14,6 +14,8 @@
 #include "filemanager.h"
 #include "launchpad.h"
 #include "cdrom_command.h"
+#include "usb_command.h"
+#include "../kernel/usb_storage.h"
 #include "setup.h"
 #include "health.h"
 #include "../want_you_gone_easter_egg/glados.h"
@@ -47,6 +49,7 @@ static void print_banner_line(const char *label, const char *val) {
 
 /* DIR -- list directory contents (simulated) */
 static int cmd_dir(int argc, const char *argv[]) {
+    if (argc && usb_path(argv[0])) return usb_command_list(argv[0]);
     (void)argc; (void)argv;
     vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     vga_printf(" Directory of %s\n\n", cwd);
@@ -84,6 +87,10 @@ static int cmd_dir(int argc, const char *argv[]) {
 
 /* CD -- change directory */
 static int cmd_cd(int argc, const char *argv[]) {
+    if (argc && usb_path(argv[0])) {
+        println("Use DIR USBn:\\PATH; USB paths do not change the native working directory.");
+        return 1;
+    }
     if (argc < 1) {
         vga_printf("Current directory: %s\n", cwd);
         return 0;
@@ -149,6 +156,7 @@ static int cmd_help(int argc, const char *argv[]) {
     println("  DISKCHECK - Check IDE hard disk health and geometry");
     println("  BOOTREPAIR - Confirmed native boot-sector repair; preserves files");
     println("  CDROM    - CD-ROM info; /EJECT, /LIST, /RUN");
+    println("  USB      - USB drive usage; /MOUNT, /EJECT");
 
     /* System */
     vga_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
@@ -175,6 +183,7 @@ static int cmd_help(int argc, const char *argv[]) {
     println("  DEMO     - inteiliDOS feature showcase");
     println("  HEALTH   - Live System Health / Disk Health / System Info");
     println("  MS-DOS   - MS-DOS 6.22 emulator; persistent C: drive; F8 returns here");
+    println("             MS-DOS /USB [USB0:..USB3:] - Read supplied DOS USB images");
 
     /* Games */
     vga_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
@@ -275,6 +284,7 @@ static int cmd_filemanager(int argc, const char *argv[]) {
 /* TYPE -- display file */
 static int cmd_type(int argc, const char *argv[]) {
     if (argc < 1) { println("Usage: TYPE <filename>"); return 1; }
+    if (usb_path(argv[0])) return usb_command_type(argv[0]);
     vga_printf("[Simulated] Contents of %s:\n", argv[0]);
     vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     println("  (File I/O requires IFS driver)");
@@ -285,6 +295,9 @@ static int cmd_type(int argc, const char *argv[]) {
 /* MKDIR */
 static int cmd_mkdir(int argc, const char *argv[]) {
     if (argc < 1) { println("Usage: MKDIR <dirname>"); return 1; }
+    if (usb_path(argv[0])) {
+        println("Creating USB directories is not available from this command.");return 1;
+    }
     vga_printf("Creating directory: %s\n", argv[0]);
     println("Done.");
     return 0;
@@ -293,18 +306,26 @@ static int cmd_mkdir(int argc, const char *argv[]) {
 /* COPY / MOVE / DELETE */
 static int cmd_copy(int argc, const char *argv[]) {
     if (argc < 2) { println("Usage: COPY <src> <dst>"); return 1; }
+    if (usb_path(argv[0]) || usb_path(argv[1]))
+        return usb_command_copy(argv[0],argv[1]);
     vga_printf("Copying %s -> %s\n", argv[0], argv[1]);
     println("Done.");
     return 0;
 }
 static int cmd_move(int argc, const char *argv[]) {
     if (argc < 2) { println("Usage: MOVE <src> <dst>"); return 1; }
+    if (usb_path(argv[0]) || usb_path(argv[1])) {
+        println("Moving USB files is not available; use COPY instead.");return 1;
+    }
     vga_printf("Moving %s -> %s\n", argv[0], argv[1]);
     println("Done.");
     return 0;
 }
 static int cmd_delete(int argc, const char *argv[]) {
     if (argc < 1) { println("Usage: DELETE <filename>"); return 1; }
+    if (usb_path(argv[0])) {
+        println("Deleting USB files is not available from this command.");return 1;
+    }
     vga_printf("Deleting: %s\n", argv[0]);
     println("Done.");
     return 0;
@@ -1325,6 +1346,7 @@ int nlp_translate(const char *input, char *out, int out_len) {
  * ========================================================================= */
 int command_dispatch(const char *cmd, int argc, const char *argv[]) {
     if (kstrcmp(cmd, "CDROM") == 0) return cdrom_command(argc,argv);
+    if (kstrcmp(cmd, "USB") == 0) return usb_command(argc,argv);
     if (kstrcmp(cmd, "BOOTREPAIR") == 0) {
         if (argc) {vga_puts("Usage: BOOTREPAIR (no arguments)\n");return -1;}
         return setup_repair_boot();

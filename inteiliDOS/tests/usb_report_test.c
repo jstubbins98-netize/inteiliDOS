@@ -19,6 +19,7 @@ int main(void) {
     assert(usb_process_boot_report(caps,zero));
     press(0,4,'A');press(2,4,'a');press(1,6,3);
     press(2,0x28,'\r');press(2,0x41,0x97);
+    for (uint8_t i=0;i<12;i++) press(0,0x3A+i,0x90+i);
     press(0,0x4F,0x83);press(0,0x50,0x82);
     press(0,0x51,0x81);press(0,0x52,0x80);
     uint8_t rollover[8]={0,0,1};
@@ -35,5 +36,5 @@ int main(void) {
     cfg[12]=0;cfg[19]=0;assert(usb_parse_boot_keyboard(cfg,sizeof(cfg),&info));
     cfg[19]=5;assert(usb_parse_boot_keyboard(cfg,sizeof(cfg)-1,&info));
     cfg[22]=7;assert(usb_parse_boot_keyboard(cfg,sizeof(cfg),&info));
-    puts("PASS: USB boot descriptors, mouse rejection, malformed descriptors, caps/shift/control, Enter/F8/arrows, held keys and rollover");
+    puts("PASS: USB boot descriptors, mouse rejection, malformed descriptors, caps/shift/control, Enter/F1-F12/arrows, held keys and rollover");
 }

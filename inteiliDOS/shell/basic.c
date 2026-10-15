@@ -40,6 +40,8 @@
  */
 
 #include "basic.h"
+#include "storage_dialog.h"
+#include "../kernel/usb_storage.h"
 #include "../kernel/vga.h"
 #include "../kernel/keyboard.h"
 #include "../kernel/memory.h"
@@ -1299,6 +1301,11 @@ static void basic_ensure_txt(char *buf, int maxbuf) {
     }
 }
 
+static void basic_storage_message(const char *message) {
+    bputs(message);
+    bputc('\n');
+}
+
 static void do_save(void) {
     /* Step 1 — filename */
     bputs("Filename (Enter to confirm, blank to cancel): ");
@@ -1315,18 +1322,11 @@ static void do_save(void) {
     }
     basic_ensure_txt(fn, (int)sizeof(fn));
 
-    /* Step 2 — device */
-    bputs("Save to: [1] Internal HDD (C:\\)  [2] Other native HDD (D:\\)  [Esc] Cancel: ");
-    int choice = 0;
-    for (;;) {
-        int c = keyboard_getchar();
-        if (c == '1') { bputc('1'); bputc('\n'); choice = 1; break; }
-        if (c == '2') { bputc('2'); bputc('\n'); choice = 2; break; }
-        if (c == 0x1B) { bputc('\n'); break; }   /* Escape */
-    }
+    int choice = storage_choose_target(fn, sizeof(fn), 1, basic_storage_message);
+    int is_usb = choice == 3;
     if (!choice) { bputs("Save cancelled.\n"); return; }
 
-    const char *drive = (choice == 1) ? "C:\\" : "D:\\";
+    const char *drive = is_usb ? "" : (choice == 1) ? "C:\\" : "D:\\";
 
     /* Step 3 — serialise program lines: "<linenum> <text>\n" per line */
     uint32_t bp = 0;
@@ -1350,7 +1350,8 @@ static void do_save(void) {
 
     /* Step 4 — write to logical native volume */
     uint8_t drv = (uint8_t)(choice - 1);
-    int rc = fs_volume_write(drv, fn, basic_save_buf, bp);
+    int rc = is_usb ? usb_file_write(fn, basic_save_buf, bp) :
+                      fs_volume_write(drv, fn, basic_save_buf, bp);
 
     /* Step 5 — result */
     vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
@@ -1367,7 +1368,8 @@ static void do_save(void) {
     } else {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         bputs("Save failed: ");
-        bputs((rc == FS_ERR_NODRV) ? "no drive found." :
+        bputs(is_usb ? usb_storage_error(rc) :
+              (rc == FS_ERR_NODRV) ? "no drive found." :
               (rc == FS_ERR_FULL)  ? "native storage full." :
               (rc == FS_ERR_LAYOUT) ? "unsafe disk layout; back up first." :
               (rc == FS_ERR_NODIR) ? "no native directory; disk unchanged." :
@@ -1393,26 +1395,21 @@ static void do_load(void) {
     }
     basic_ensure_txt(fn, (int)sizeof(fn));
 
-    /* Step 2 — device */
-    bputs("Load from: [1] Internal HDD (C:\\)  [2] Other native HDD (D:\\)  [Esc] Cancel: ");
-    int choice = 0;
-    for (;;) {
-        int c = keyboard_getchar();
-        if (c == '1') { bputc('1'); bputc('\n'); choice = 1; break; }
-        if (c == '2') { bputc('2'); bputc('\n'); choice = 2; break; }
-        if (c == 0x1B) { bputc('\n'); break; }   /* Escape */
-    }
+    int choice = storage_choose_target(fn, sizeof(fn), 0, basic_storage_message);
+    int is_usb = choice == 3;
     if (!choice) { bputs("Load cancelled.\n"); return; }
 
     /* Step 3 — read from ATA */
     uint8_t drv = (uint8_t)(choice - 1);
     uint32_t read_len = 0;
-    int rc = fs_volume_read(drv, fn, basic_save_buf, BASIC_SAVE_BUF - 1, &read_len);
+    int rc = is_usb ? usb_file_read(fn, basic_save_buf, BASIC_SAVE_BUF - 1, &read_len) :
+                      fs_volume_read(drv, fn, basic_save_buf, BASIC_SAVE_BUF - 1, &read_len);
 
     if (rc != FS_OK) {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         bputs("Load failed: ");
-        bputs((rc == FS_ERR_NOTFOUND) ? "file not found." :
+        bputs(is_usb ? usb_storage_error(rc) :
+              (rc == FS_ERR_NOTFOUND) ? "file not found." :
               (rc == FS_ERR_NODRV)    ? "no drive found." :
                                         "disk I/O error.");
         bputc('\n');
@@ -1464,7 +1461,7 @@ static void do_load(void) {
 
     /* Step 5 — confirmation */
     vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    const char *drive = (choice == 1) ? "C:\\" : "D:\\";
+    const char *drive = is_usb ? "" : (choice == 1) ? "C:\\" : "D:\\";
     bputs("Loaded: ");
     bputs(drive);
     bputs(fn);
@@ -1974,7 +1971,7 @@ static void do_help(void) {
     "\n"
     "  REPL commands (no line number):\n"
     "    RUN [lineno]  LIST [from[-to]]  NEW  HELP  BYE\n"
-    "    SAVE  — prompts for filename (.txt) and device (C:\\ or D:\\)\n"
+    "    SAVE  — prompts for filename (.txt/.bas) and device (C:, D:, USB)\n"
     "    LOAD  — prompts for filename and device, restores the program\n"
     "    CSAVE — saves program to cassette tape via PC speaker / USB audio\n"
     "    CLOAD — loads program from cassette tape via USB audio adapter\n"

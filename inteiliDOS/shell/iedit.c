@@ -9,6 +9,10 @@
  *   Row  24       Message bar (white on black)
  *
  * Key bindings:
+ *   F2               Save
+ *   F3               Load
+ *   F4               Delete current line
+ *   F10              Quit (asks confirmation if unsaved)
  *   Arrow keys       Move cursor
  *   Enter            Insert new line
  *   Backspace        Delete character before cursor
@@ -20,10 +24,12 @@
  */
 
 #include "iedit.h"
+#include "storage_dialog.h"
 #include "../kernel/vga.h"
 #include "../kernel/keyboard.h"
 #include "../kernel/memory.h"
 #include "../kernel/fs.h"
+#include "../kernel/usb_storage.h"
 #include <stdint.h>
 
 /* ---- Screen geometry ---- */
@@ -116,7 +122,7 @@ static void draw_title(void) {
         puts_at(col, 0, " *", VGA_COLOR_BLACK, VGA_COLOR_LIGHT_CYAN);
     }
     /* hints on the right */
-    const char *hints = "type 'save' or 'load' on a blank line  |  ^K:DelLine  ^Q:Quit";
+    const char *hints = "F2:Save  F3:Load  F4:DelLine  F10:Quit";
     int hcol = SCR_COLS - (int)kstrlen(hints) - 1;
     if (hcol > 30)
         puts_at(hcol, 0, hints, VGA_COLOR_BLACK, VGA_COLOR_LIGHT_CYAN);
@@ -330,8 +336,13 @@ static void iedit_ensure_txt(char *buf, int maxbuf) {
     }
 }
 
-/* Full save-to-file dialog triggered by Ctrl+S.
+/* Full save-to-file dialog triggered by F2 or Ctrl+S.
  * Steps: (1) ask for filename  (2) ask for device  (3) write to ATA disk. */
+static void iedit_storage_message(const char *message) {
+    set_msg(message);
+    draw_msg();
+}
+
 static void op_save_file(void) {
     /* Step 1 — filename */
     char fn[56];
@@ -341,23 +352,16 @@ static void op_save_file(void) {
     }
     iedit_ensure_txt(fn, (int)sizeof(fn));
 
-    /* Step 2 — device */
-    set_msg("Save to: [1] Internal HDD (C:\\)  [2] Other native HDD (D:\\)  [Esc] Cancel");
-    draw_msg();
-    int choice = 0;
-    for (;;) {
-        int c = keyboard_getchar();
-        if (c == '1') { choice = 1; break; }
-        if (c == '2') { choice = 2; break; }
-        if (c == KEY_ESCAPE) break;
-    }
+    /* An explicit USB path selects the mounted volume without changing C:/D:. */
+    int choice = storage_choose_target(fn, sizeof(fn), 1, iedit_storage_message);
+    int is_usb = choice == 3;
     if (!choice) {
         set_msg("Save cancelled.");
         return;
     }
 
     /* Build full path string for display */
-    const char *drive = (choice == 1) ? "C:\\" : "D:\\";
+    const char *drive = is_usb ? "" : (choice == 1) ? "C:\\" : "D:\\";
     char path[80];
     int pi = 0;
     for (int i = 0; drive[i] && pi < 78; i++) path[pi++] = drive[i];
@@ -375,7 +379,8 @@ static void op_save_file(void) {
 
     /* Step 4 — write to logical native volume */
     uint8_t drv = (uint8_t)(choice - 1);   /* choice 1 → C:, 2 → D: */
-    int rc = fs_volume_write(drv, fn, iedit_save_buf, bp);
+    int rc = is_usb ? usb_file_write(fn, iedit_save_buf, bp) :
+                      fs_volume_write(drv, fn, iedit_save_buf, bp);
 
     /* Update editor state only on success */
     if (rc == FS_OK) {
@@ -403,7 +408,7 @@ static void op_save_file(void) {
         const char *sfx = " lines)";
         for (int i = 0; sfx[i] && ml < SCR_COLS - 1; i++) msg[ml++] = sfx[i];
     } else {
-        const char *err =
+        const char *err = is_usb ? usb_storage_error(rc) :
             (rc == FS_ERR_NODRV) ? "Save failed: no drive found." :
             (rc == FS_ERR_FULL)  ? "Save failed: native storage full." :
             (rc == FS_ERR_LAYOUT) ? "Save blocked: unsafe disk layout; back up first." :
@@ -444,16 +449,16 @@ static void iedit_parse_buf(uint32_t read_len) {
     nlines = (row > 0) ? row : 1;
 }
 
-/* Full open-from-file dialog triggered by Ctrl+O.
+/* Full open-from-file dialog triggered by F3 or Ctrl+O.
  * Steps: (1) ask for filename  (2) ask for device  (3) read from ATA disk. */
 static void op_open_file(void) {
     /* Warn if there are unsaved changes */
     if (dirty) {
-        set_msg("Unsaved changes! Y or Ctrl+O to discard and open.");
+        set_msg("Unsaved changes! F3 or Y to discard and open; other key cancels.");
         draw_msg();
         /* Wait for confirmation */
         int c = keyboard_getchar();
-        if (c != 0x0F && c != 'y' && c != 'Y') {
+        if (c != KEY_F3 && c != 0x0F && c != 'y' && c != 'Y') {
             set_msg("Open cancelled.");
             return;
         }
@@ -467,16 +472,8 @@ static void op_open_file(void) {
     }
     iedit_ensure_txt(fn, (int)sizeof(fn));
 
-    /* Step 2 — device */
-    set_msg("Load from: [1] Internal HDD (C:\\)  [2] Other native HDD (D:\\)  [Esc] Cancel");
-    draw_msg();
-    int choice = 0;
-    for (;;) {
-        int c = keyboard_getchar();
-        if (c == '1') { choice = 1; break; }
-        if (c == '2') { choice = 2; break; }
-        if (c == KEY_ESCAPE) break;
-    }
+    int choice = storage_choose_target(fn, sizeof(fn), 0, iedit_storage_message);
+    int is_usb = choice == 3;
     if (!choice) {
         set_msg("Open cancelled.");
         return;
@@ -485,10 +482,11 @@ static void op_open_file(void) {
     /* Step 3 — read from ATA */
     uint8_t drv = (uint8_t)(choice - 1);
     uint32_t read_len = 0;
-    int rc = fs_volume_read(drv, fn, iedit_save_buf, IEDIT_SAVE_BUF - 1, &read_len);
+    int rc = is_usb ? usb_file_read(fn, iedit_save_buf, IEDIT_SAVE_BUF - 1, &read_len) :
+                      fs_volume_read(drv, fn, iedit_save_buf, IEDIT_SAVE_BUF - 1, &read_len);
 
     if (rc != FS_OK) {
-        const char *err =
+        const char *err = is_usb ? usb_storage_error(rc) :
             (rc == FS_ERR_NOTFOUND) ? "Open failed: file not found." :
             (rc == FS_ERR_NODRV)    ? "Open failed: no drive found." :
                                       "Open failed: disk I/O error.";
@@ -508,7 +506,7 @@ static void op_open_file(void) {
     int ml = 0;
     const char *pfx = "Opened: ";
     for (int i = 0; pfx[i] && ml < SCR_COLS - 1; i++) msg[ml++] = pfx[i];
-    const char *drive = (choice == 1) ? "C:\\" : "D:\\";
+    const char *drive = is_usb ? "" : (choice == 1) ? "C:\\" : "D:\\";
     for (int i = 0; drive[i] && ml < SCR_COLS - 1; i++) msg[ml++] = drive[i];
     for (int i = 0; fn[i]    && ml < SCR_COLS - 1; i++) msg[ml++] = fn[i];
     const char *lbl = "  (";
@@ -541,7 +539,7 @@ void iedit_run(const char *name) {
     fname[63] = '\0';
 
     /* Welcome message */
-    set_msg("iEdit  |  type 'save' or 'load' on a blank line  |  Ctrl+K: Del line  Ctrl+Q: Quit");
+    set_msg("iEdit  |  F2: Save  F3: Load  F4: Delete line  F10: Quit");
     redraw();
 
     int quit_pending = 0;   /* set when user needs to confirm quit */
@@ -550,10 +548,10 @@ void iedit_run(const char *name) {
         int c = keyboard_getchar();
         msgline[0] = '\0';      /* clear message on each keystroke */
 
-        /* ---- Ctrl combinations ---- */
-        if (c == 0x11) {        /* Ctrl+Q */
+        /* ---- Function keys and Ctrl aliases ---- */
+        if (c == KEY_F10 || c == 0x11) {
             if (dirty && !quit_pending) {
-                set_msg("Unsaved changes! Press Ctrl+Q again to quit without saving.");
+                set_msg("Unsaved changes! F10/Ctrl+Q again quits without saving.");
                 quit_pending = 1;
                 redraw();
                 continue;
@@ -562,7 +560,13 @@ void iedit_run(const char *name) {
         }
         quit_pending = 0;
 
-        if (c == 0x0B) {        /* Ctrl+K: delete line */
+        if (c == KEY_F2 || c == 0x13) {
+            op_save_file();
+        }
+        else if (c == KEY_F3 || c == 0x0F) {
+            op_open_file();
+        }
+        else if (c == KEY_F4 || c == 0x0B) { /* F4 / Ctrl+K: delete line */
             op_delete_line();
         }
 
@@ -639,6 +643,11 @@ void iedit_run(const char *name) {
                 (ln[2]=='i'||ln[2]=='I') &&
                 (ln[3]=='t'||ln[3]=='T')) {
                 tlen[cur_row] = 0; ln[0] = '\0';
+                if (dirty) {
+                    set_msg("Unsaved changes! F10/Ctrl+Q again quits without saving.");
+                    quit_pending = 1;
+                    scroll_view();redraw();continue;
+                }
                 break;
             }
         }

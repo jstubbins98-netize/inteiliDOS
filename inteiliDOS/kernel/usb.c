@@ -346,10 +346,10 @@ static const char hid_normal[0x53] = {
     /*0x3F*/ '\x95',                        /* 3F: F6                      */
     /*0x40*/ '\x96',                        /* 40: F7                      */
     /*0x41*/ '\x97',                        /* 41: F8 = KEY_F8             */
-    /*0x42*/ 0,                             /* 42: F9  (not mapped)        */
-    /*0x43*/ 0,                             /* 43: F10                     */
-    /*0x44*/ 0,                             /* 44: F11                     */
-    /*0x45*/ 0,                             /* 45: F12                     */
+    /*0x42*/ '\x98',                        /* 42: F9                      */
+    /*0x43*/ '\x99',                        /* 43: F10                     */
+    /*0x44*/ '\x9A',                        /* 44: F11                     */
+    /*0x45*/ '\x9B',                        /* 45: F12                     */
     /*0x46*/ 0,                             /* 46: Print Screen            */
     /*0x47*/ 0,                             /* 47: Scroll Lock             */
     /*0x48*/ 0,                             /* 48: Pause                   */
@@ -424,6 +424,7 @@ int usb_process_boot_report(const uint8_t cur[8], const uint8_t prev[8]) {
  * Timer callback — checks for completed interrupt TD every 8 ms
  * ========================================================================= */
 static void usb_timer_tick(void) {
+    usb_xhci_poll();
     if (!usb_ready) return;
 
     /* Check only on every 8th millisecond */
@@ -704,9 +705,9 @@ static void uhci_try_keyboard(pci_device_t uhci_pci,unsigned port) {
 void usb_keyboard_init(void) {
     usb_ready=0;usb_caps=0;
     usb_status="No supported USB keyboard found (PS/2 fallback)";
+    timer_register_secondary(usb_timer_tick);
     if (usb_xhci_init()) {
         usb_status="xHCI USB keyboard active";
-        timer_register_secondary(usb_xhci_poll);
         vga_puts("  xHCI USB keyboard detected and active.\n");
         return;
     }
