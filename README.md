@@ -10,15 +10,13 @@ native 64-bit kernel. They must provide legacy BIOS/CSM boot and compatible
 VGA/PIC/PIT interfaces.
 
 Source is now in `inteiliDOS/`. Willburd has `legacy`, `2000s`, `2010s`, and
-`x86_64` profiles. See [modern hardware setup](MODERN_HARDWARE.md) for USB
-keyboard, SATA mechanical HDD, firmware requirements, and verified boundaries.
+`x86_64` profiles.
 
 It is not Linux, DOS, or a hosted application. The boot code, kernel, device
 drivers, shell, applications, and games run directly on the computer.
 
 `MS-DOS` opens a separate MS-DOS 6.22 software emulator with a persistent
-private C: drive; F8 returns to inteiliShell. See
-[DOS emulator setup, media controls, and compatibility](kernel/msdos/README.md).
+private C: drive; F8 returns to inteiliShell.
 
 ## Compatibility baseline
 
@@ -46,7 +44,7 @@ Kernel C code is compiled with:
 The operating system does not require CPUID, CMOV, MMX, SSE, APIC, USB, ACPI,
 or PCI to start. Optional drivers can use later hardware when it is present.
 
-See [COMPATIBILITY.md](COMPATIBILITY.md) for detailed boundaries and testing
+See COMPATIBILITY.md for detailed boundaries and testing
 recommendations.
 
 ## Features
@@ -316,7 +314,7 @@ channels, verified CPU readings when available, fan RPM/status and warnings.
 Existing BIOS-controlled cooling is unchanged. **Automatic fan activation is
 not supported**; this is not a guaranteed overheating safeguard.
 
-See [THERMAL_MONITORING.md](THERMAL_MONITORING.md) for hardware support,
+See THERMAL_MONITORING.md for hardware support,
 the requested OEM model limitations, advisory thresholds and diagnostics.
 
 ## Known boundaries
@@ -337,4 +335,4 @@ inteiliDOS is open-source software. You may study, modify, use, and distribute
 the source and compiled images. Redistributed versions must clearly credit
 Inteilix Software Corporation as the original author.
 
-See [for_developers.md](for_developers.md) for development details.
+See for_developers.md for development details.
