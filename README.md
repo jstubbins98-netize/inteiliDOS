@@ -89,7 +89,6 @@ space.
 - InteiliFile Manager
 - SETUP disk installation utility
 - Tetris
-- TOUR text adventure
 - Daisy Bell and Want You Gone audio demonstrations
 - KCS cassette `CSAVE` and `CLOAD` support
 
