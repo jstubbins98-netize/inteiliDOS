@@ -21,6 +21,7 @@ MAIN FEATURES
 - MS-DOS 6.22 emulator: a separate software PC with a persistent virtual
   HDD for installed programs and saves. Supply installation images on CD,
   floppy or USB; MS-DOS /USB reads images from a mounted USB drive.
+  MS-DOS /USB USB0:\GAME.IMG loads a USB game disk image as DOS drive A:.
   Press F8 to return to inteiliShell.
 - System Health: system, disk, computer-information and cooling tabs,
   with live diagnostics and readings where supported sensors are available.
@@ -71,6 +72,7 @@ DOCUMENTATION
 -------------
 
 Repository paths:
+  manual/manual.md                  Comprehensive manual.
   inteiliDOS/BUILD.md                Build instructions.
   inteiliDOS/SYSTEM_REQUIREMENTS.txt Detailed requirements.
   inteiliDOS/MODERN_HARDWARE.md       Hardware profiles and firmware guidance.
@@ -78,6 +80,5 @@ Repository paths:
   inteiliDOS/DOS_COMPATIBILITY.md     DOS setup, controls and limitations.
   inteiliDOS/for_developers.md        Development reference.
 
-LICENSE
--------------
-Mozilla Public License Version 2.0
+License and attribution information is included in the source documentation
+and the comprehensive manual.

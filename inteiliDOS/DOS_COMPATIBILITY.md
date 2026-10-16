@@ -95,6 +95,7 @@ MS-DOS /IMAGE GAME.IMG
 USB /MOUNT
 MS-DOS /USB
 MS-DOS /USB USB1:
+MS-DOS /USB USB0:\ZORK.IMG
 ```
 
 ### DOS installation images on USB
@@ -110,7 +111,7 @@ Run `USB /MOUNT` first, then `MS-DOS /USB`. It searches mounted drives in
 USB0: through USB3: order for Disk 1. Use `MS-DOS /USB USB1:` to choose a
 specific drive. Missing files can be skipped during that search, but a
 present, corrupt or unreadable image produces an error, not a silent fallback.
-An explicitly requested USB startup requires valid USB Disk 1 even when the
+An explicitly requested USB installation-media startup requires valid USB Disk 1 even when the
 virtual HDD already exists; plain `MS-DOS` still boots the saved HDD without
 installation media.
 
@@ -126,6 +127,39 @@ this option does not place the virtual HDD or installed games on USB.
 F8 returns to inteiliShell as usual. Afterwards, `USB /EJECT` safely releases
 USB storage. USB controller/filesystem restrictions are unchanged; see
 `USB_STORAGE.md`.
+
+### Game images on USB
+
+After creating the saved DOS C: installation, copy a game floppy image onto
+a supported USB drive as an ordinary file. Use a short 8.3 filename, such as
+`ZORK.IMG`. Supported image sizes are 360 KB, 720 KB, 1.2 MB and 1.44 MB.
+Raw EXE files on the USB filesystem are not mapped directly into DOS; put the
+game files inside a FAT floppy image.
+
+```text
+USB /MOUNT
+MS-DOS /USB USB0:\ZORK.IMG
+```
+
+Inside DOS, run:
+
+```text
+A:
+DIR
+ZORK1
+```
+
+Replace the USB volume, filename and game command as appropriate. The selected
+image becomes read-only A:; it need not contain DOS system files or share a
+USB drive with DOS installation images. C: remains the persistent native-HDD
+DOS installation. Copy games to C: to install them or store saves there.
+Games requiring writes to A: are not supported.
+
+Keep the USB drive connected while playing. F6 does not replace a selected
+USB game image with installation media. F7 switches A: to the physical floppy;
+F8 returns to inteiliShell. To select another USB game image, exit with F8 and
+run the command with its path. Missing or invalid images produce an error
+instead of silently selecting another disk. Run `USB /EJECT` after exiting DOS.
 
 ### CD images and physical floppies
 

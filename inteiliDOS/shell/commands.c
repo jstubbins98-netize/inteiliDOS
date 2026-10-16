@@ -184,6 +184,7 @@ static int cmd_help(int argc, const char *argv[]) {
     println("  HEALTH   - Live System Health / Disk Health / System Info");
     println("  MS-DOS   - MS-DOS 6.22 emulator; persistent C: drive; F8 returns here");
     println("             MS-DOS /USB [USB0:..USB3:] - Read supplied DOS USB images");
+    println("             MS-DOS /USB USB0:\\GAME.IMG - Load a USB game disk as A:");
 
     /* Games */
     vga_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);

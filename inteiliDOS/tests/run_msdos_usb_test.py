@@ -68,10 +68,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("kernel", nargs="?", type=Path)
     parser.add_argument("--media", type=Path, default=ROOT.parent / "MS-DOS_disks")
+    parser.add_argument("--game", type=Path, default=ROOT.parent /
+                        "attached_assets/0_Zork_Trilogy_1791773796909.img")
     args = parser.parse_args()
     names = ("Disk1.img", "Disk2.img", "Disk3.img", "Suppdisk.img")
     images = {name.upper(): (args.media / name).read_bytes() for name in names}
     original = {name: hashlib.sha256(value).digest() for name, value in images.items()}
+    game=args.game.read_bytes()
     output = ROOT.parent / "generated-artifacts/msdos-usb"
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="msdos-usb-") as folder:
@@ -82,6 +85,8 @@ def main():
         safe = protected(native)
         empty, source = tmp / "empty.img", tmp / "source.img"
         fat_image(empty, 16, True)
+        add_files(empty, {"ZORK.IMG": game, "BAD.IMG": bytes(512)})
+        game_hash=hashlib.sha256(empty.read_bytes()).digest()
         fat_image(source, 32)
         add_files(source, images)
         source_hash = hashlib.sha256(source.read_bytes()).digest()
@@ -92,6 +97,8 @@ def main():
             shell(g, "usb /mount"); g.wait("USB1:")
             shell(g, "ms-dos /usb USB4:"); g.wait("Usage: MS-DOS")
             shell(g, "ms-dos /usb USB0:"); g.wait("USB Disk 1 missing")
+            shell(g, "ms-dos /usb USB0:\\ZORK.IMG")
+            g.wait("install DOS first");g.wait("C:\\>")
             shell(g, "ms-dos /usb")
             g.wait("MS-DOS 6.22 -", timeout=180); g.wait("C:\\>")
             clear_dos(g)
@@ -114,11 +121,23 @@ def main():
             clear_dos(g)
             shell(g, "type c:\\usbtest.txt"); g.wait("USB-INSTALL-SAVED")
             g.key("f8"); g.wait("Returned from MS-DOS")
+            # The saved C: boots with a 360K game image on a different USB
+            # volume, without requiring DOS installation images on that drive.
+            shell(g, "ms-dos /usb USB0:\\MISSING.IMG")
+            g.wait("cannot read USB game image");g.wait("C:\\>")
+            shell(g, "ms-dos /usb USB0:\\BAD.IMG")
+            g.wait("invalid USB floppy image");g.wait("C:\\>")
+            shell(g, "ms-dos /usb USB0:\\ZORK.IMG")
+            g.wait("MS-DOS 6.22 -", timeout=90);g.wait("C:\\>")
+            clear_dos(g)
+            from run_msdos_zork_test import play
+            play(g, output, "usb-zork")
             shell(g, "usb /eject"); g.wait("safe to remove")
             shell(g, "hello"); g.wait("Hello!")
         finally:
             g.close()
         assert hashlib.sha256(source.read_bytes()).digest() == source_hash
+        assert hashlib.sha256(empty.read_bytes()).digest() == game_hash
         assert protected(native) == safe
 
         # Saved DOS C: must still boot after all USB media is removed.

@@ -8,9 +8,11 @@ below checks these same shortcuts with an xHCI keyboard and USB destinations.
 
 `python3 tests/run_msdos_usb_test.py /tmp/usb-build/inteilidOS.elf`
 uses the locally supplied, licensed `../MS-DOS_disks` images (or `--media DIR`).
+Pass `--game /path/to/ZORK.IMG` for the supplied 360 KB Zork Trilogy image.
 It checks real MS-DOS setup from multi-cluster USB FAT32 images, automatic
 and explicit drive selection, errors for missing/unmounted/corrupt media,
 Disk 2 swapping, F8, persistence after re-entry and after removing USB,
+USB game directory reading and Zork gameplay, missing/invalid game refusal,
 and unchanged USB source images/native user files. Build with `--modern`
 to enable the xHCI driver. Only disposable test disks are modified.
 

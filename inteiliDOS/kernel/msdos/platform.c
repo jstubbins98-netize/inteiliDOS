@@ -29,7 +29,7 @@ static int disc = -1, media_index, physical, pending = -1, io_failed;
 static int auto_media, physical_ready;
 static int media_changed;
 static int usb_drive = -1;
-static char usb_image[32];
+static char usb_image[128];
 static uint16_t screen[2000], saved[2000];
 static int row, col, save_row, save_col, region_top, region_bottom;
 static uint8_t attr, ansi, bright;
@@ -277,6 +277,34 @@ static int select_usb_media(int selected) {
     return -1;
 }
 
+/* Game media need not contain DOS system files. Match the supported floppy
+ * geometries, and stream sectors through the same bounded USB cache. */
+static int load_usb_game(const char *path) {
+    uint8_t boot[512];
+    uint32_t size=0;
+    if (kstrlen(path)>=sizeof(usb_image)) {
+        vga_puts("MS-DOS: USB image path is too long.\n");return -1;
+    }
+    int rc=usb_file_read_at(path,0,boot,sizeof(boot),&size);
+    if (rc) {
+        vga_printf("MS-DOS: cannot read USB game image: %s\n",usb_storage_error(rc));
+        return -1;
+    }
+    unsigned total=u16(boot+19),track=u16(boot+24);
+    if (boot[510]!=0x55 || boot[511]!=0xaa || u16(boot+11)!=512 ||
+        u16(boot+26)!=2 || size!=total*512u ||
+        !((track==9 && (total==720 || total==1440)) ||
+          (track==15 && total==2400) || (track==18 && total==2880))) {
+        vga_puts("MS-DOS: invalid USB floppy image; use 360K, 720K, 1.2M or 1.44M FAT media.\n");
+        return -1;
+    }
+    kstrcpy(usb_image,path);
+    usb_drive=path[3]-'0';floppy_size=size;media_index=-1;physical=0;
+    media_cached_lba=0xffffffff;media_changed=1;
+    vga_printf("MS-DOS: loaded %s as read-only A:.\n",path);
+    return 0;
+}
+
 static int ensure_physical_floppy(void) {
     /* Unlike LaunchPad, entering MS-DOS need not have initialized the FDC.
      * BIOS leftovers are not a usable controller contract (notably in 86Box).
@@ -413,11 +441,15 @@ int msdos_pc_poll(const uint8_t *ram, const uint8_t *ports) {
     if (key==KEY_F8 || io_failed) return 1;
     if (key==KEY_F1+5) {
         auto_media=0;
+        if (usb_image[0] && media_index<0) {
+            vga_puts("MS-DOS: USB game image selected; F7 selects floppy, F8 exits.\n");
+        } else {
         int next=(floppy_size || physical) ? (media_index+1)%4 : 0;
         if (usb_drive>=0 ? load_usb_media(next) :
             ((disc<0 && find_install_cd()) || load_media(next,media_names[next]))) {
             vga_puts("MS-DOS: could not load next installation disk.\n");
             /* Optional A: media failure must not stop the saved DOS C:. */
+        }
         }
     } else if (key==KEY_F1+6) {
         auto_media=physical_ready=0;physical=1;media_changed=1;pending=-1;
@@ -590,15 +622,21 @@ static int prepare_disk(int argc, const char *argv[]) {
     int use_usb=(argc==1 || argc==2) &&
         (!kstrcmp(argv[0],"/USB") || !kstrcmp(argv[0],"/usb"));
     int selected_usb=-1;
+    int usb_game=0;
     if (use_usb && argc==2) {
         const char *p=argv[1];
-        if (kstrlen(p)!=5 || (p[0]!='U' && p[0]!='u') ||
+        unsigned len=kstrlen(p);
+        if (len<5 || (p[0]!='U' && p[0]!='u') ||
             (p[1]!='S' && p[1]!='s') || (p[2]!='B' && p[2]!='b') ||
             p[3]<'0' || p[3]>='0'+USB_STORAGE_MAX || p[4]!=':') use_usb=0;
-        else selected_usb=p[3]-'0';
+        else if (len==5) selected_usb=p[3]-'0';
+        else if (len>6 && (p[5]=='\\' || p[5]=='/')) {
+            selected_usb=p[3]-'0';usb_game=1;
+        } else use_usb=0;
     }
     if (argc && !use_floppy && !use_image && !use_usb) {
-        vga_puts("Usage: MS-DOS [/FLOPPY | /IMAGE <CD image> | /USB [USB0:..USB3:]]\n");return 1;
+        vga_puts("Usage: MS-DOS [/FLOPPY | /IMAGE <CD image> | /USB [USB0:..USB3:]]\n"
+                 "       MS-DOS /USB USB0:\\GAME.IMG\n");return 1;
     }
     floppy_size=0; disc=-1; pending=-1; io_failed=0; media_index=0;physical=0;
     auto_media=physical_ready=0;
@@ -636,7 +674,12 @@ static int prepare_disk(int argc, const char *argv[]) {
     }
     /* Explicit USB selection must succeed even with a saved C:. Never
      * silently fall back to CD/floppy or reserve a new HDD for bad USB media. */
-    if (use_usb && select_usb_media(selected_usb)) return 1;
+    if (usb_game && existing<0) {
+        vga_puts("MS-DOS: install DOS first using Disk 1; a game image cannot create DOS C:.\n");
+        return 1;
+    }
+    if (use_usb && (usb_game ? load_usb_game(argv[1]) :
+                              select_usb_media(selected_usb))) return 1;
     if (existing<0 && reserve_disk(candidate)) return 1;
     if (existing<0) {
         if (use_usb) {

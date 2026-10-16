@@ -2,7 +2,7 @@
 
 USB drive mounting, saving and safe removal: [USB_STORAGE.md](USB_STORAGE.md).
 
-> “The command line of the future!”
+> “The future still has a blinking cursor.”
 
 inteiliDOS is a freestanding, 32-bit x86 operating system written in C and NASM
 assembly. This edition is designed for broad compatibility with PC-compatible
@@ -89,7 +89,8 @@ space.
 - InteiliFile Manager
 - SETUP disk installation utility
 - Tetris
-- Daisy Bell and Want You Gone audio demonstrations
+- TOUR text adventure
+- Daisy Bell and Still Alive audio demonstrations
 - KCS cassette `CSAVE` and `CLOAD` support
 
 Hardware-dependent applications remain available but may report that their

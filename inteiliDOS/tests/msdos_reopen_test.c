@@ -25,9 +25,17 @@ int kstrcmp(const char *a,const char *b) {return strcmp(a,b);}
 size_t kstrlen(const char *s) {return strlen(s);}
 char *kstrcpy(char *d,const char *s) {return strcpy(d,s);}
 static usb_volume_info_t usb_volumes[USB_STORAGE_MAX];
+static uint8_t usb_game_data[1474560];
+static uint32_t usb_game_size;
+static int usb_read_error;
 const usb_volume_info_t *usb_storage_volumes(void) {return usb_volumes;}
 int usb_file_read_at(const char *p,uint32_t o,uint8_t *b,uint32_t n,uint32_t *s) {
-    (void)p;(void)o;(void)b;(void)n;(void)s;
+    if (usb_game_size || usb_read_error) {
+        assert(!strcmp(p,"USB1:\\GAME.IMG"));
+        if (usb_read_error) return usb_read_error;
+        assert(o<=usb_game_size && n<=usb_game_size-o);
+        memcpy(b,usb_game_data+o,n);*s=usb_game_size;return 0;
+    }
     assert(!"unexpected USB read");return -1;
 }
 const char *usb_storage_error(int rc) {(void)rc;return "USB error";}
@@ -95,6 +103,7 @@ int fdc_read_sector(uint8_t d,uint32_t lba,uint8_t *b) {
 static void fixture(void) {
     memset(images,0,sizeof(images));output[0]=0;
     cd_calls=boot_calls=reserve_calls=fdc_calls=0;key=-1;
+    usb_game_size=0;usb_read_error=0;
 }
 int main(void) {
     fixture();images[0]=1;expected_drive=0;
@@ -139,5 +148,35 @@ int main(void) {
     fixture();images[0]=1;
     const char *bad_usb[]={"/USB","USB4:"};
     assert(prepare_disk(2,bad_usb)==1 && strstr(output,"Usage:"));
+    const char *game_args[]={"/USB","USB1:\\GAME.IMG"};
+    fixture();
+    assert(prepare_disk(2,game_args)==1 && strstr(output,"install DOS first"));
+    assert(!reserve_calls && !cd_calls && !fdc_calls);
+    for (int i=0;i<4;i++) {
+        static const unsigned totals[]={720,1440,2400,2880};
+        static const unsigned tracks[]={9,9,15,18};
+        fixture();images[0]=1;
+        usb_game_size=totals[i]*512;
+        memset(usb_game_data,0,sizeof(usb_game_data));
+        w16(usb_game_data+11,512);w16(usb_game_data+19,totals[i]);
+        w16(usb_game_data+24,tracks[i]);w16(usb_game_data+26,2);
+        usb_game_data[510]=0x55;usb_game_data[511]=0xaa;
+        usb_game_data[2047]=0x12;usb_game_data[2048]=0x34;
+        assert(!prepare_disk(2,game_args));
+        unsigned total,track;
+        assert(msdos_pc_floppy_params(&total,&track));
+        assert(total==totals[i] && track==tracks[i]);
+        assert(read_floppy(2047,sector,2)==0 && sector[0]==0x12 && sector[1]==0x34);
+        assert(read_floppy(usb_game_size-1,sector,2)==-1);
+        assert(!msdos_pc_disk(1,0,sector,512,1)); /* no USB image writes */
+        key=KEY_F6;assert(!msdos_pc_poll(ram,ports));
+        assert(media_index==-1 && !strcmp(usb_image,"USB1:\\GAME.IMG"));
+        assert(!reserve_calls && !cd_calls && !fdc_calls);
+        usb_game_data[510]=0;
+        assert(prepare_disk(2,game_args)==1 && strstr(output,"invalid USB floppy"));
+    }
+    fixture();images[0]=1;usb_read_error=-4;
+    assert(prepare_disk(2,game_args)==1 && strstr(output,"cannot read USB game"));
     puts("PASS: CD-independent saved DOS startup, other-volume recovery, ambiguity/size/I/O protection and optional floppy failure");
+    puts("PASS: USB game geometries, cache boundaries, read-only media, F6 preservation and refusal before HDD creation");
 }
