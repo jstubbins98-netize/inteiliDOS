@@ -19,6 +19,7 @@
 
 #include "usb.h"
 #include "usb_xhci.h"
+#include "usb_ehci.h"
 #include "pci.h"
 #include "keyboard.h"
 #include "timer.h"
@@ -706,6 +707,7 @@ void usb_keyboard_init(void) {
     usb_ready=0;usb_caps=0;
     usb_status="No supported USB keyboard found (PS/2 fallback)";
     timer_register_secondary(usb_timer_tick);
+    usb_ehci_init(); /* route companion ports before UHCI owns a keyboard */
     if (usb_xhci_init()) {
         usb_status="xHCI USB keyboard active";
         vga_puts("  xHCI USB keyboard detected and active.\n");

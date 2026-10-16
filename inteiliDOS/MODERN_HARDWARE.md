@@ -48,9 +48,12 @@ assuming that the first USB device is a keyboard. Caps/Shift/Ctrl, function keys
 arrows and report rollover handling use the shared decoder. System Health's
 System Info tab shows the initialized keyboard backend.
 
-USB storage on direct xHCI root ports supports FAT12/16/32 read/write via
+USB storage on direct xHCI or EHCI high-speed root ports supports FAT12/16/32 read/write via
 `USB /MOUNT` and `USB /EJECT`; see [USB_STORAGE.md](USB_STORAGE.md).
-The current driver does not implement OHCI, EHCI, external hubs,
+EHCI hands low/full-speed keyboard ports to their companions before UHCI
+startup; it does not implement HID input itself. Mount/eject leave companion
+keyboard ports alone. The current keyboard driver does not implement OHCI,
+EHCI HID, external hubs,
 arbitrary report-protocol keyboards, or keyboard hotplug/reconnection. Keep the
 keyboard attached before boot; reboot after moving it. xHCI ports must already
 be routed to that controller. Vendor-specific EHCI/xHCI port-routing registers

@@ -10,8 +10,11 @@ ABI, LaunchPad ELF32 loading and the DOS emulator remain 32-bit.
 
 USB boot-keyboard parsing/report translation is shared by UHCI and xHCI.
 xHCI uses identity-mapped, aligned DMA below 4 GiB, BIOS ownership handoff,
-command/transfer/event rings and bounded polling. No hubs or OHCI/EHCI drivers
-are implemented. Failed controller DMA must be quiesced before reusing buffers.
+command/transfer/event rings and bounded polling. EHCI high-speed BOT storage
+uses a polled asynchronous QH/qTD schedule and shares BOT/FAT code with xHCI.
+Initialize EHCI port routing before the UHCI keyboard, not during rescans.
+No hubs, OHCI, or EHCI HID input are implemented. Failed controller DMA must
+be quiesced before reusing buffers.
 
 AHCI uses single-sector DMA bounce buffers, bounds-checked LBA48 commands and
 advertised cache-flush commands. A timeout disables that descriptor slot;

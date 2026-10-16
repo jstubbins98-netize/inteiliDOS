@@ -120,6 +120,9 @@ set(KERNEL_C_SOURCES
     kernel/pci.c
     kernel/usb.c
     kernel/usb_xhci.c
+    kernel/usb_ehci.c
+    kernel/usb_bot.c
+    kernel/usb_transport.c
     kernel/usb_storage.c
     kernel/fatfs/ff.c
     kernel/cdrom.c

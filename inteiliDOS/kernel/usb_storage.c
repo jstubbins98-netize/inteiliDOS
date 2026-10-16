@@ -3,7 +3,7 @@
  * survive eject. No autoformat, no write cache outside FatFs, no IRQ I/O.
  */
 #include "usb_storage.h"
-#include "usb_xhci.h"
+#include "usb_transport.h"
 #include "memory.h"
 #include "timer.h"
 #include "fatfs/ff.h"
@@ -20,12 +20,12 @@ static uint32_t be32(const uint8_t *p) {
 }
 static int sync_disk(unsigned i) {
     uint8_t cdb[10]={0x35};
-    return usb_xhci_storage_command(i,cdb,10,0,0,0);
+    return usb_transport_command(i,cdb,10,0,0,0);
 }
 static int capacity(unsigned i, uint32_t *sectors) {
     for (unsigned attempt=0;attempt<3;attempt++) {
         uint8_t cdb[10]={0x25}, data[8];
-        int result=usb_xhci_storage_command(i,cdb,10,data,8,0);
+        int result=usb_transport_command(i,cdb,10,data,8,0);
         if (!result) {
             uint32_t last=be32(data);
             if (be32(data+4)!=512 || last==0xFFFFFFFF || !last) return -3;
@@ -33,7 +33,7 @@ static int capacity(unsigned i, uint32_t *sectors) {
         }
         if (result!=-2) return -1;
         uint8_t sense_cdb[6]={3,0,0,0,18,0},sense[18];
-        if (usb_xhci_storage_command(i,sense_cdb,6,sense,18,0)) return -1;
+        if (usb_transport_command(i,sense_cdb,6,sense,18,0)) return -1;
         unsigned key=sense[2]&15;
         if (key!=6 && key!=2) return -1;
         timer_sleep(100);
@@ -42,7 +42,7 @@ static int capacity(unsigned i, uint32_t *sectors) {
 }
 DSTATUS disk_status(BYTE drive) {
     return drive<USB_STORAGE_MAX && volumes[drive].sectors &&
-           usb_xhci_storage_present(drive) ? 0 : STA_NOINIT;
+           usb_transport_present(drive) ? 0 : STA_NOINIT;
 }
 DSTATUS disk_initialize(BYTE drive) { return disk_status(drive); }
 static DRESULT disk_transfer(BYTE drive,BYTE *buffer,LBA_t lba,UINT count,int write) {
@@ -53,7 +53,7 @@ static DRESULT disk_transfer(BYTE drive,BYTE *buffer,LBA_t lba,UINT count,int wr
         uint8_t cdb[10]={write ? 0x2A : 0x28,0,
                          (uint8_t)(lba>>24),(uint8_t)(lba>>16),
                          (uint8_t)(lba>>8),(uint8_t)lba,0,0,1,0};
-        if (usb_xhci_storage_command(drive,cdb,10,buffer,512,write)) return RES_ERROR;
+        if (usb_transport_command(drive,cdb,10,buffer,512,write)) return RES_ERROR;
     }
     return RES_OK;
 }
@@ -84,17 +84,18 @@ int usb_storage_mount_all(void) {
     /* Finish any previous metadata/cache sync before forgetting its mapping.
      * On failure do not rescan/remap a possibly still-dirty live device. */
     for (unsigned i=0;i<USB_STORAGE_MAX;i++)
-        if (volumes[i].mounted && usb_xhci_storage_present(i) && sync_disk(i)) {
+        if (volumes[i].mounted && usb_transport_present(i) && sync_disk(i)) {
             volumes[i].status="Drive flush failed; not remounted";return -1;
         }
     for (unsigned i=0;i<USB_STORAGE_MAX;i++) {
         char path[3];volume_name(i,path);f_mount(0,path,0);
         kmemset(&volumes[i],0,sizeof(volumes[i]));
     }
-    if (usb_xhci_storage_scan()<0) return -1;
+    usb_transport_forget_absent();
+    if (usb_transport_scan()<0) return -1;
     int mounted=0;
     for (unsigned i=0;i<USB_STORAGE_MAX;i++) {
-        if (!usb_xhci_storage_present(i)) continue;
+        if (!usb_transport_present(i)) continue;
         volumes[i].detected=1;
         int rc=capacity(i,&volumes[i].sectors);
         if (rc) {
@@ -119,14 +120,14 @@ int usb_storage_eject_all(void) {
     /* Include drives plugged in since the last /MOUNT, even if no volume has
      * been mounted. The scan leaves all connected, owned slots untouched.
      * There are no open FatFs handles or deferred metadata between calls. */
-    int scanned=usb_xhci_storage_scan();
+    int scanned=usb_transport_scan();
     if (scanned<0) {
         for (unsigned i=0;i<USB_STORAGE_MAX;i++)
             if (volumes[i].detected) failures=1;
     }
     for (unsigned i=0;i<USB_STORAGE_MAX;i++) {
-        if (!volumes[i].detected && !usb_xhci_storage_present(i)) continue;
-        if (!usb_xhci_storage_present(i)) {
+        if (!volumes[i].detected && !usb_transport_present(i)) continue;
+        if (!usb_transport_present(i)) {
             volumes[i].status="Drive disconnected or failed; safe eject not confirmed";
             volumes[i].mounted=0;
             char path[3];volume_name(i,path);f_mount(0,path,0);
@@ -135,7 +136,7 @@ int usb_storage_eject_all(void) {
         if (sync_disk(i)) {
             volumes[i].status="Flush failed; DO NOT remove drive";failures++;continue;
         }
-        if (usb_xhci_storage_release(i)) {
+        if (usb_transport_release(i)) {
             volumes[i].status="USB disconnect failed; DO NOT remove drive";failures++;continue;
         }
         char path[3];volume_name(i,path);f_mount(0,path,0);
@@ -158,7 +159,7 @@ int usb_path(const char *p) {
 static int path_for(const char *src,char out[128],unsigned *drive) {
     if (!usb_path(src) || src[3]<'0' || src[3]>'3' || src[4]!=':') return -100;
     unsigned i=src[3]-'0';
-    if (!volumes[i].mounted || !usb_xhci_storage_present(i)) return -101;
+    if (!volumes[i].mounted || !usb_transport_present(i)) return -101;
     size_t len=kstrlen(src+5);
     if (len>123) return -100;
     volume_name(i,out);

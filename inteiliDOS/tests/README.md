@@ -88,6 +88,24 @@ and disposable. The 140 GiB test disks are sparse, not full allocations.
 To reuse a build: `python3 tests/run_modern_hardware_test.py /tmp/build/inteilidOS.elf`.
 Build that kernel with `python3 tests/build_test_kernel.py /tmp/build --modern`.
 
+# xHCI firmware startup and Intel port routing
+
+```sh
+gcc -O1 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+  tests/usb_xhci_init_test.c -Wl,--gc-sections -o /tmp/usb-xhci-init-test
+/tmp/usb-xhci-init-test
+```
+
+This runs the actual driver against a PCI/MMIO register model. It checks
+Intel `8086:1e31` routing masks/order and unrelated-bit preservation,
+nonmatching-controller isolation, rejected routing writes, initial CNR
+readiness, BIOS ownership refusal, bounded halt/reset/start failures,
+unavailable MMIO, unsupported page sizes, no rescan reset, and DMA timeout
+quarantine. It does not prove physical laptop compatibility.
+`run_usb_storage_test.py` additionally exercises real emulated xHCI/BOT
+read/write/mount/eject operations and USB keyboard isolation with a modern
+test kernel.
+
 # Background thermal monitoring
 
 `thermal_test.c` runs the real background service and SMBus state machine

@@ -2,7 +2,7 @@
 
 Rebuild inteiliDOS with **PCI support enabled** and boot the updated kernel.
 The `2000s` and `2010s` build profiles enable PCI; use a machine with an xHCI
-controller for USB storage. Native USB keyboard support is recommended, but
+or EHCI controller for USB storage. Native USB keyboard support is recommended, but
 a PS/2 keyboard can also operate these commands. Updating only the MBR/VBR
 with `BOOTREPAIR` does not install the new kernel drivers.
 
@@ -18,9 +18,10 @@ USB /EJECT
 
 - **USB** displays usage and the current support limits, without mounting,
   ejecting or changing a drive.
-- **USB /MOUNT** scans the first supported xHCI controller's direct root
-  ports and mounts detected FAT volumes for reading and saving. Up to four
-  storage devices plus one boot-protocol keyboard are supported. Each drive
+- **USB /MOUNT** scans the first supported xHCI and first supported EHCI
+  controller's direct root ports and mounts detected FAT volumes for reading
+  and saving. Up to four mounted storage devices across both controllers,
+  plus one UHCI/xHCI boot-protocol keyboard, are supported. Each drive
   receives an explicit `USB0:` through `USB3:` identifier; they never replace
   the installed native `C:` or `D:` volumes. Repeating `/MOUNT` refreshes
   media, without resetting live controller engines or the keyboard.
@@ -107,8 +108,21 @@ floppy image as DOS A:. See `DOS_COMPATIBILITY.md`.
 
 ## Supported hardware and media
 
+- Intel 7-series/Panther Point xHCI (`8086:1e31`, including HM76-based
+  machines) receives an initial port-routing handoff. Switchable USB 2
+  data lines and USB 3 SuperSpeed terminations are enabled using the
+  chipset's advertised routing masks. Other controller IDs are not given
+  Intel-specific register writes. Routing is not repeated on mount/eject.
 - xHCI 1.x controller with MMIO and DMA below 4 GiB, 4 KiB page support and
   bounded scratchpad requirements. One controller is managed.
+- EHCI 1.0 controller with MMIO and DMA below 4 GiB. One controller is managed,
+  independently of xHCI. Direct **USB 2.0 high-speed (480 Mb/s)** BOT drives
+  work without any xHCI controller. USB 1.x/full-speed storage is unsupported.
+  EHCI firmware ownership must be released before register/schedule changes.
+  Initial port routing and companion handoff happen before UHCI keyboard
+  startup; mount/eject never reroute ports or reset the controller. Companion-
+  owned ports are left alone. EHCI does not supply a keyboard driver itself:
+  use a UHCI companion keyboard, xHCI keyboard on another controller, or PS/2.
 - Direct root-port USB mass storage using **SCSI transparent Bulk-Only
   Transport (BOT)**, alternate setting zero, one bulk IN/OUT pair, **LUN 0**.
   USB 2 devices can work on xHCI ports when firmware routes them there.
@@ -118,12 +132,40 @@ floppy image as DOS A:. See `DOS_COMPATIBILITY.md`.
   directory updates and synchronization.
 - **8.3 short filenames**. Use short aliases for files that have long names.
 
-Not supported: UHCI/OHCI/EHCI **storage** (UHCI keyboards still work),
+Not supported: UHCI/OHCI **storage** (UHCI keyboards still work),
 external hubs, UAS-only devices, other LUNs, GPT, NTFS, exFAT, native 4Kn
 sectors, above-4-GiB controller BARs, and filesystem formatting.
 Drive IDs can change after physical unplug/replacement; check `/MOUNT`
 output instead of assuming a USB number permanently identifies a device.
 Moving or reconnecting the keyboard still requires reboot.
+
+### If no drive is detected
+
+`USB /MOUNT` reports the controller's initialization status, PCI location
+and vendor/device ID (when found), connected-port count and enumeration
+failures. EHCI reports its own status and PCI/port details separately, so an
+absent xHCI controller is not a storage failure when EHCI is running.
+Failed xHCI command/transfer events also show a completion code;
+zero indicates a timeout. These distinguish a controller that is absent
+or disabled in the build, BIOS ownership refusal, readiness/reset/start
+failure, and a controller that runs but cannot enumerate the device.
+
+On Intel 7-series systems, firmware can route even the USB 2 wires of a
+USB 3 socket to EHCI. The initial handoff above addresses that case; using
+a different port alone does not necessarily change the routing.
+FAT32/MBR formatting cannot fix a controller initialization failure, so do
+not reformat a drive merely because no supported storage was detected.
+An update to this driver requires rebuilding and booting the updated OS;
+it does not patch an older installed HDD copy automatically.
+
+If BIOS ownership is not released, initialization stops rather than forcing
+ownership. A DMA retirement/command timeout requires reboot; rescanning does
+not reset the controller or recycle potentially active DMA buffers. EHCI
+waits for its asynchronous schedule to stop before reusing queue heads or
+transfer descriptors; a transport error isolates that storage device. Failed
+transports cannot be reported safely ejected.
+Intel routing and firmware-delay paths are register-model tested; success
+on a physical Lenovo G580 has not yet been confirmed.
 
 ## Safety and limitations
 
@@ -148,17 +190,30 @@ multitasking, hub-aware general USB stack.
 
 ```
 python3 tests/build_test_kernel.py /tmp/usb-build --modern
+python3 tests/run_usb_controller_tests.py
 python3 tests/run_usb_storage_test.py /tmp/usb-build/inteilidOS.elf
+python3 tests/run_usb_storage_test.py /tmp/usb-build/inteilidOS.elf --ehci
+python3 tests/run_usb_mixed_test.py /tmp/usb-build/inteilidOS.elf
 python3 tests/run_modern_hardware_test.py /tmp/usb-build/inteilidOS.elf
 ```
 
-The USB regression uses disposable QEMU images and a USB-only keyboard:
+The USB regression runs on either xHCI or an EHCI-only storage controller
+with a companion UHCI USB 1.1 keyboard (no xHCI, PS/2 disabled in the kernel).
+It uses disposable QEMU images and a USB-only keyboard:
 two real BOT devices, an MBR FAT16 volume and an unpartitioned FAT32 volume,
 mount, directory/file reads, multi-cluster copy, shorter overwrite, iEdit
 save/open, eject, remount, and independent checks of persisted file contents
 and FAT mirrors. It also verifies one-file chooser selection/cancel, untouched
 unselected files, USB device dialogs in iEdit/BASIC/Sheets, BASIC execution
-after reloading, and spreadsheet CSV round trips. A deterministic host fault model verifies failed flush and
+after reloading, and spreadsheet CSV round trips. Host controller models
+verify BIOS ownership refusal, malformed capabilities, bounded startup
+failures, no rescan reset, targeted port eject and DMA retirement quarantine.
+Shared BOT tests reject invalid signatures, tags, residue and phase status;
+mixed-controller binding tests keep live volumes stable.
+The mixed-controller QEMU test copies files in both directions, physically
+removes/reinserts the EHCI device, checks honest failed-eject reporting, and
+keeps the xHCI keyboard working throughout.
+A deterministic filesystem fault model verifies failed flush and
 disconnect handling, unsupported media, 4Kn rejection, failed-write quarantine
 and size/LBA bounds. Physical controller
 handoff, electrical disconnect behavior and real drives remain unverified.

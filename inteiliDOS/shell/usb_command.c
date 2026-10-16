@@ -1,5 +1,7 @@
 #include "usb_command.h"
 #include "../kernel/usb_storage.h"
+#include "../kernel/usb_xhci.h"
+#include "../kernel/usb_ehci.h"
 #include "../kernel/fs.h"
 #include "../kernel/memory.h"
 #include "../kernel/vga.h"
@@ -24,8 +26,8 @@ static void usage(void) {
              "Examples: DIR USB0:    TYPE USB0:\\NOTES.TXT\n"
              "          COPY USB0:\\NOTES.TXT USB1:\\NOTES.TXT\n"
              "iEdit/BASIC/Sheets: choose [3] USB in the save/open device dialog.\n"
-             "Requires xHCI, direct root port, SCSI bulk-only USB storage.\n"
-             "FAT12/16/32; 8.3 names. NTFS/exFAT, hubs, UHCI/OHCI/EHCI storage\n"
+             "Requires xHCI or EHCI (USB 2 high-speed), direct root port, BOT.\n"
+             "FAT12/16/32; 8.3 names. NTFS/exFAT, hubs, UHCI/OHCI storage\n"
              "and UAS-only drives are not supported. USB keyboards stay active.\n");
 }
 static void statuses(void) {
@@ -46,8 +48,27 @@ int usb_command(int argc,const char *argv[]) {
     if (option(argv[0],"/MOUNT")) {
         int result=usb_storage_mount_all();
         statuses();
+        const usb_xhci_info_t *controller=usb_xhci_info();
+        vga_printf("USB controller: %s\n",controller->status);
+        if (controller->found) {
+            vga_printf("PCI %02X:%02X.%u ID %04X:%04X; connected ports: %u\n",
+                       controller->bus,controller->device,controller->function,
+                       controller->vendor_id,controller->device_id,
+                       controller->connected_ports);
+            vga_printf("Failed ports: %u; Intel port routing: %s\n",
+                       controller->failed_ports,controller->intel_routing ? "enabled" : "not applied");
+            if (controller->event_type)
+                vga_printf("Last failed event: %u; completion code: %u (0 = timeout)\n",
+                           controller->event_type,controller->completion_code);
+        }
+        const usb_ehci_info_t *ehci=usb_ehci_info();
+        vga_printf("EHCI controller: %s\n",ehci->status);
+        if (ehci->found)
+            vga_printf("EHCI PCI %02X:%02X.%u ID %04X:%04X; connected ports: %u\n"
+                       "EHCI failed ports: %u\n",ehci->bus,ehci->device,ehci->function,
+                       ehci->vendor_id,ehci->device_id,ehci->connected_ports,ehci->failed_ports);
         if (result<0) {
-            vga_puts("USB mount unavailable: no usable xHCI controller, or drive/controller error.\n");
+            vga_puts("USB mount unavailable; controller details shown above.\n");
             return -1;
         }
         vga_printf("%u USB drive(s) mounted.\n",(unsigned)result);
