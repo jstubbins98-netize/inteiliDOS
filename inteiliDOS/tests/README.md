@@ -1,5 +1,12 @@
 # Modern hardware
 
+`python3 tests/run_setup_lock_test.py /tmp/legacy-build/inteilidOS.elf`
+installs to a disposable HDD, checks the per-copy lock, cold-boots the real
+MBR/VBR twice, verifies SETUP and INSTALL-OS refuse without any disk changes,
+and confirms the separate installation-media copy remains usable.
+The generated kernel-header directory is required for the focused test:
+`gcc -O1 -ffunction-sections -fdata-sections -I/tmp/legacy-build tests/setup_lock_test.c -Wl,--gc-sections -o /tmp/setup-lock-test && /tmp/setup-lock-test`.
+
 `python3 tests/run_launchpad_usb_test.py /tmp/usb-build/inteilidOS.elf`
 checks large (>64 KiB) native ELF execution from FAT16/FAT32 USB, nested
 folders, source switching, invalid-file refusal, Battery tab navigation,

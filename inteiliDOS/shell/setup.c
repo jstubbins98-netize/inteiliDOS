@@ -56,6 +56,12 @@
  * own startup code — the installer need not write it to disk.            */
 extern uint32_t _kernel_data_end;
 
+/* Nonzero .data value: BSS is cleared at boot and cannot hold this policy.
+ * Only the installed disk copy is changed, never the running installer. */
+#define SW_SETUP_ALLOWED 0x53545550u
+#define SW_SETUP_LOCKED  0x4c4f434bu
+static volatile uint32_t setup_install_state = SW_SETUP_ALLOWED;
+
 /* =========================================================================
  * VGA helpers (direct writes — no libc)
  * ========================================================================= */
@@ -1163,6 +1169,23 @@ static uint32_t sw_get_part_lba(void) {
 }
 
 /* Draw the installation progress screen and execute each step */
+/* Commit the per-installation lock only after all installation writes pass.
+ * Preserve every other byte in the target kernel sector and verify it. */
+static int sw_commit_setup_lock(uint32_t part_lba, uint32_t offset) {
+    uint8_t check[512];
+    if (offset>=SW_KERNEL_SECTORS*512u || (offset%512u)>508u) return -1;
+    uint32_t lba=part_lba+1+offset/512u, state;
+    if (ata_read_sector((uint8_t)sw_drive,lba,sw_sector)) return -1;
+    kmemcpy(&state,sw_sector+offset%512u,4);
+    if (state!=SW_SETUP_ALLOWED) return -1;
+    state=SW_SETUP_LOCKED;
+    kmemcpy(sw_sector+offset%512u,&state,4);
+    if (ata_write_sector((uint8_t)sw_drive,lba,sw_sector) ||
+        ata_read_sector((uint8_t)sw_drive,lba,check)) return -1;
+    for (unsigned i=0;i<512;i++) if (check[i]!=sw_sector[i]) return -1;
+    return 0;
+}
+
 static int sw_stage_install(void) {
     sw_draw_frame();
     sw_draw_header(5, 5);
@@ -1429,8 +1452,24 @@ static int sw_stage_install(void) {
             vok = (sw_sector[0x1FE] == 0x55 && sw_sector[0x1FF] == 0xAA);
         }
         if (!vok) {
-            sw_content_line(7, "  WARNING: Boot signature verification failed.",
-                            VGA_COLOR_BROWN, VGA_COLOR_BLUE);
+            sw_content_line(7, "  ERROR: Boot signature verification failed.",
+                            VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+            keyboard_getchar();
+            return 0;
+        }
+    });
+
+    STEP(95, "  Disabling SETUP on the installed HDD...", {
+        uintptr_t address=(uintptr_t)&setup_install_state;
+        if (address<SW_KERNEL_RAM_ADDR ||
+            address+4>(uintptr_t)&_kernel_data_end ||
+            sw_commit_setup_lock(part_lba,(uint32_t)(address-SW_KERNEL_RAM_ADDR))) {
+            sw_content_line(7, "  ERROR: Installed SETUP lock could not be verified.",
+                            VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+            sw_content_line(8, "  Installation is incomplete. Boot installation media to retry.",
+                            VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            keyboard_getchar();
+            return 0;
         }
     });
 
@@ -1488,6 +1527,11 @@ static int sw_stage_install(void) {
  * Main entry point
  * ========================================================================= */
 void setup_run(void) {
+    if (setup_install_state!=SW_SETUP_ALLOWED) {
+        vga_puts("SETUP is disabled on this installed HDD.\n"
+                 "Boot inteiliDOS installation media to install or reinstall.\n");
+        return;
+    }
     /* Blank screen */
     for (int r = 0; r < 25; r++)
         for (int c = 0; c < 80; c++)

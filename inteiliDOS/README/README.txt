@@ -31,6 +31,8 @@ MAIN FEATURES
 - PS/2 and supported USB keyboards, built-in games, demos and audio
   Easter eggs.
 - Willburd build configuration and a text-mode installation wizard.
+  After a successful installation, SETUP and INSTALL-OS are disabled in that
+  HDD's installed copy. Boot installation media to reinstall or install elsewhere.
 
 HARDWARE AND LIMITATIONS
 -----------------------
