@@ -6,6 +6,7 @@
 #include "../kernel/memory.h"
 #include "../kernel/timer.h"
 #include "../kernel/thermal.h"
+#include "../kernel/battery.h"
 #include "../kernel/usb.h"
 #include "../kernel/vga.h"
 
@@ -132,6 +133,9 @@ static const char *disk_message(const disk_t *d) {
     return "Available checks passed; failures can still occur.";
 }
 static void draw(uint32_t now) {
+    battery_snapshot_t battery;
+    battery_snapshot(&battery);
+    int battery_live=battery.status==BATTERY_OK && now-battery.sampled_ms<10000;
     thermal_snapshot_t cooling;
     thermal_snapshot(&cooling);
     int cooling_live = cooling.status == THERMAL_OK &&
@@ -150,14 +154,17 @@ static void draw(uint32_t now) {
                 (total && free<256);
     bad |= cooling.cooling_needed != 0;
     warnings |= !cooling_live;
+    warnings |= battery_live && ((battery.percent_valid && battery.percent<=10 &&
+                                 battery.discharging) ||
+                                (battery.health_valid && battery.health_percent<60));
     /* Clear cells directly to avoid flickering and scroll at row 24. */
     volatile uint16_t *vram = (volatile uint16_t *)0xB8000;
     for (unsigned i=0; i<2000; i++) vram[i] = 0x0F20;
     line(0); vga_set_color(VGA_COLOR_WHITE,VGA_COLOR_BLUE);
     vga_puts(" SYSTEM HEALTH | inteiliDOS ");
-    static const char *tabs[] = {"1 Health dashboard","2 Disk health","3 System info","4 Cooling"};
+    static const char *tabs[] = {"1 Dashboard","2 Disk health","3 System info","4 Cooling","5 Battery"};
     line(2);
-    for (unsigned i=0; i<4; i++) {
+    for (unsigned i=0; i<5; i++) {
         vga_set_color(i==page ? VGA_COLOR_BLACK : VGA_COLOR_LIGHT_CYAN,
                       i==page ? VGA_COLOR_LIGHT_CYAN : VGA_COLOR_BLACK);
         vga_printf(" %s ",tabs[i]);
@@ -243,7 +250,7 @@ static void draw(uint32_t now) {
         line(19); vga_puts("Temperature/fan diagnostics: Cooling tab | CPU load: unavailable.");
         line(20); vga_puts("Inventory is boot-time; reboot after attaching new hardware.");
         line(21); vga_printf("Keyboard: %s",usb_keyboard_status());
-    } else {
+    } else if (page==3) {
         line(6); vga_printf("Background thermal monitor: every %u ms | checks: %u",
                            THERMAL_INTERVAL_MS,cooling.checks);
         line(7); vga_printf("Sensor: %s",cooling.sensor);
@@ -280,9 +287,43 @@ static void draw(uint32_t now) {
                             cooling.samples ? now-cooling.last_sample_ms : 0,
                             cooling.samples ? "" : " (no reading yet)");
         line(22); vga_puts("Not a guaranteed overheating safeguard. Never disable BIOS protection.");
+    } else {
+        line(6);vga_puts("Battery percentage: ");
+        if (battery_live && battery.percent_valid) vga_printf("%u%%",battery.percent);
+        else vga_puts("Unavailable");
+        line(8);vga_puts("Battery health (full / design capacity): ");
+        if (battery_live && battery.health_valid) vga_printf("%u%%",battery.health_percent);
+        else vga_puts("Unavailable");
+        line(10);vga_puts("Power status: ");
+        if (!battery_live) vga_puts("Unavailable");
+        else vga_puts(battery.fully_charged ? "Fully charged" :
+                      battery.discharging ? "Discharging" :
+                      "Not discharging (charging / idle)");
+        line(12);
+        if (battery_live && battery.health_valid)
+            vga_printf("Full capacity: %u | design: %u %s",battery.full_capacity,
+                       battery.design_capacity,battery.capacity_energy ? "x 10 mWh" : "mAh");
+        else vga_puts("Capacity information: unavailable");
+        line(14);
+        if (!battery_live) status(battery.status==BATTERY_WAITING ?
+            "Waiting for a supported Smart Battery reading." :
+            "No readable battery data; presence and health are unknown.",0,1);
+        else if (battery.percent_valid && battery.percent<=10 && battery.discharging)
+            status("Low battery: connect external power and save your work.",0,1);
+        else if (battery.health_valid && battery.health_percent<60)
+            status("Reduced capacity: consider battery service/replacement.",0,1);
+        else vga_puts("Health percentage estimates retained capacity, not electrical safety.");
+        line(16);vga_puts("Source: Smart Battery at SMBus 0x0B; read-only, every 5 seconds.");
+        line(17);vga_puts("Supported: firmware-enabled Intel PIIX4 / selected ICH controllers.");
+        line(18);vga_puts("ACPI-only / embedded-controller batteries are not supported.");
+        line(19);vga_puts("No readings can mean a desktop, unsupported hardware or read failure.");
+        line(20);vga_puts("No charging, firmware, battery-mode or fan settings are changed.");
+        line(21);
+        if (battery_live) vga_printf("Last successful sample: %u ms ago",now-battery.sampled_ms);
+        else vga_puts("Battery readings unavailable; no percentage is assumed.");
     }
     line(23); vga_set_color(VGA_COLOR_LIGHT_CYAN,VGA_COLOR_BLACK);
-    vga_puts("Tab/Left/Right or 1-4: tabs | R: read-only recheck | Esc/Q: quit");
+    vga_puts("Tab/Left/Right or 1-5: tabs | R: read-only recheck | Esc/Q: quit");
     vga_set_cursor(24,0);
 }
 
@@ -293,6 +334,7 @@ void health_run(void) {
         if (ata_get_drive(i,&info)==0) disks[count++].info=info;
     }
     cpu_info();
+    battery_init();
     vga_clear(); line(6); vga_puts("System Health: checking disks (read-only)...");
     refresh_disks();
     uint32_t painted=timer_get_ticks();
@@ -302,17 +344,19 @@ void health_run(void) {
         if (key>=0) {
             keys++; repaint=1;
             if (key==KEY_ESCAPE || key=='q' || key=='Q') break;
-            if (key=='\t' || key==KEY_RIGHT) page=(page+1)%4;
-            if (key==KEY_LEFT) page=(page+3)%4;
-            if (key>='1' && key<='4') page=key-'1';
+            if (key=='\t' || key==KEY_RIGHT) page=(page+1)%5;
+            if (key==KEY_LEFT) page=(page+4)%5;
+            if (key>='1' && key<='5') page=key-'1';
             if (page==1 && count && key==KEY_UP) selected=(selected+count-1)%count;
             if (page==1 && count && key==KEY_DOWN) selected=(selected+1)%count;
             if (key=='r' || key=='R') refresh_disks();
         }
         uint32_t now=timer_get_ticks();
+        battery_poll(now);
         if (now-disk_tick>=5000) { refresh_disks(); now=timer_get_ticks(); repaint=1; }
         if (repaint || now-painted>=500) { draw(now); updates++; painted=now; }
         __asm__ volatile("hlt");
     }
+    battery_shutdown();
     vga_set_color(VGA_COLOR_WHITE,VGA_COLOR_BLACK); vga_clear();
 }

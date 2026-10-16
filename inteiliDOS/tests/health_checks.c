@@ -5,6 +5,12 @@
 
 int cdrom_count(void) { return 0; }
 uint32_t timer_get_ticks(void) { return 1000; }
+static battery_snapshot_t test_battery;
+void battery_snapshot(battery_snapshot_t *out) {*out=test_battery;}
+void thermal_snapshot(thermal_snapshot_t *out) {
+    *out=(thermal_snapshot_t){.status=THERMAL_OK,.last_sample_ms=1000};
+}
+const char *usb_keyboard_status(void) {return "Test keyboard";}
 static void log(const char *s) {
     while (*s) { __asm__ volatile("outb %0,$0xE9" :: "a"((uint8_t)*s)); s++; }
 }
@@ -86,10 +92,26 @@ void test_main(void) {
     draw(1000); CHECK(screen_has("inspect drive cooling"));
     disks[0].smart.temperature_valid=0; disks[0].first_ok=0;
     draw(1000); CHECK(screen_has("PROBLEM DETECTED") && screen_has("READ ERROR"));
+    page=4;count=0;
+    draw(1000);CHECK(screen_has("Battery percentage: Unavailable"));
+    CHECK(screen_has("Battery health (full / design capacity): Unavailable"));
+    test_battery=(battery_snapshot_t){.status=BATTERY_OK,.percent_valid=1,
+        .health_valid=1,.percent=75,.health_percent=80,.full_capacity=4000,
+        .design_capacity=5000,.sampled_ms=1000,.discharging=1};
+    draw(1000);CHECK(screen_has("Battery percentage: 75%"));
+    CHECK(screen_has("Battery health (full / design capacity): 80%"));
+    CHECK(screen_has("Discharging"));
+    test_battery.percent=5;draw(1000);CHECK(screen_has("Low battery:"));
+    test_battery.percent=75;test_battery.health_percent=50;
+    draw(1000);CHECK(screen_has("Reduced capacity:"));
+    test_battery.status=BATTERY_READ_ERROR;
+    draw(1000);CHECK(screen_has("Battery percentage: Unavailable"));
+    test_battery.status=BATTERY_OK;
+    draw(12000);CHECK(screen_has("Battery percentage: Unavailable"));
     page=0; count=0; heap_head->magic=0;
     draw(1000); CHECK(screen_has("PROBLEM DETECTED") && screen_has("Heap error"));
     heap_head->magic=HEAP_MAGIC; free_pages=1;
     draw(1000); CHECK(screen_has("Low allocatable memory"));
-    log("PASS: SMART validation, heap bounds, alerts and unavailable monitoring\n");
+    log("PASS: SMART validation, heap bounds, alerts, battery rendering and unavailable/stale monitoring\n");
     finish(1);
 }

@@ -1,5 +1,17 @@
 # Modern hardware
 
+`python3 tests/run_launchpad_usb_test.py /tmp/usb-build/inteilidOS.elf`
+checks large (>64 KiB) native ELF execution from FAT16/FAT32 USB, nested
+folders, source switching, invalid-file refusal, Battery tab navigation,
+keyboard preservation and unchanged USB media.
+
+`gcc -O1 -Wall -Wextra -Werror -ffunction-sections -fdata-sections tests/battery_test.c -Wl,--gc-sections -o /tmp/battery-test && /tmp/battery-test`
+checks read-only Smart Battery transactions, capacity units/ratios,
+unavailable/invalid/busy/error/timeout cases and freshness invalidation.
+`run_health_test.py` additionally checks rendered percentages, low-battery
+and wear warnings, stale-data handling, navigation and non-destructive disks.
+Physical laptop battery compatibility still requires hardware testing.
+
 Application shortcuts are F2 Save, F3 Load, F10 Quit in iEdit and InteiliSheets.
 `python3 tests/run_app_function_keys_test.py /tmp/legacy-build/inteilidOS.elf`
 checks PS/2 shortcuts, real native C: saves/loads, active cell edits, cancelled

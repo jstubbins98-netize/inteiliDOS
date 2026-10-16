@@ -112,6 +112,7 @@ set(KERNEL_C_SOURCES
     kernel/isr.c
     kernel/timer.c
     kernel/thermal.c
+    kernel/battery.c
     kernel/thermal_hw.c
     kernel/keyboard.c
     kernel/memory.c

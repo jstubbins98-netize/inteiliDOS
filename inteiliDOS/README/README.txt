@@ -13,7 +13,8 @@ MAIN FEATURES
   InteiliSheets spreadsheet, InteiliFile Manager and InteiliTalk speech.
   iEdit and InteiliSheets use F2 to save, F3 to load and F10 to quit.
   In iEdit, F4 deletes the current line.
-- LaunchPad: runs native programs from CD-ROM or floppy disk.
+- LaunchPad: runs native programs from CD-ROM, floppy disk or USB.
+  Press U in LaunchPad to select USB; browse folders and press Enter to run.
 - Storage: native HDD files, IDE and supported SATA hard drives,
   floppy access, ISO 9660 CDs, and IDE/SATA optical-drive support.
 - USB storage: mount supported FAT12/16/32 drives, choose individual files
@@ -23,8 +24,9 @@ MAIN FEATURES
   floppy or USB; MS-DOS /USB reads images from a mounted USB drive.
   MS-DOS /USB USB0:\GAME.IMG loads a USB game disk image as DOS drive A:.
   Press F8 to return to inteiliShell.
-- System Health: system, disk, computer-information and cooling tabs,
+- System Health: system, disk, computer-information, cooling and battery tabs,
   with live diagnostics and readings where supported sensors are available.
+  Battery percentage and capacity health require a supported Smart Battery.
 - Background temperature monitoring and warnings on supported hardware.
 - PS/2 and supported USB keyboards, built-in games, demos and audio
   Easter eggs.

@@ -72,6 +72,14 @@ static void ticks(uint32_t start,uint32_t end) {
     for (uint32_t t=start;t<end;t++) thermal_tick(t);
 }
 int main(void) {
+    reset();
+    assert(thermal_hw_bus_claim(0x500));
+    ticks(0,100);
+    assert(snapshot().status==THERMAL_WAITING && !transactions);
+    thermal_hw_bus_release();ticks(100,540);
+    assert(snapshot().status==THERMAL_OK);
+    reset();thermal_tick(0);
+    assert(!thermal_hw_bus_claim(0x500)); /* don't interrupt an active sample */
     reset();ticks(0,100);
     thermal_snapshot_t s=snapshot();
     assert(s.status==THERMAL_OK && s.samples==1 && s.checks==1);

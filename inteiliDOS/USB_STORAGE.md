@@ -88,8 +88,22 @@ save/load/quit action. Escape cancels filename/device dialogs.
 There is no implicit current USB working directory. Use explicit `USBn:`
 paths. USB paths are not connected to the old simulated MOVE/DELETE/MKDIR
 commands; those operations report unavailable rather than claiming success.
-USB files are not yet integrated into the graphical File Manager,
-LaunchPad or the MS-DOS emulator.
+USB files are not yet integrated into the graphical File Manager.
+
+## LaunchPad programs
+
+Run `LAUNCHPAD`, then press **U** to mount/select USB storage. Press U again
+to cycle mounted USB drives, or use **F2** to cycle all media sources.
+Use arrows and **Enter** to browse folders or launch a native ELF32/IPGM
+program. **Backspace/Left** goes up a folder; **F3** refreshes the source.
+Programs are streamed into the existing separate staging buffer, so the
+64 KiB document limit does not apply; the LaunchPad limit is 4 MiB.
+USB filenames remain 8.3 names, with up to eight folder levels.
+**Esc** exits LaunchPad; run `USB /EJECT` before removing the drive.
+
+This runs native inteiliDOS programs, not Windows executables. DOS programs
+run through `MS-DOS`; `MS-DOS /USB USB0:\GAME.IMG` mounts a USB-hosted game
+floppy image as DOS A:. See `DOS_COMPATIBILITY.md`.
 
 ## Supported hardware and media
 
