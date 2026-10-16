@@ -382,10 +382,75 @@ static void intel_route_ports(const pci_device_t *device) {
     if (changed) timer_sleep(100); /* allow switched ports to reconnect */
 }
 
+/* xHCI USBLEGCTLSTS: preserve reserved fields, disable all legacy SMI
+ * enables, acknowledge the three W1C SMI event flags. Same bit definitions
+ * as Linux xhci-ext-caps.h; do not write ones into reserved bits.
+ */
+#define LEGACY_SMI_PRESERVE 0x000e1feeu
+#define LEGACY_SMI_ENABLES  0x0001e011u
+#define LEGACY_SMI_EVENTS   0xe0000000u
+static int disable_legacy_smi(uint32_t ext) {
+    uint32_t ctl=rd(ext+4);
+    if (ctl==0xffffffffu) {
+        info.status="xHCI legacy control registers unavailable";return -1;
+    }
+    wr(ext+4,(ctl&LEGACY_SMI_PRESERVE)|LEGACY_SMI_EVENTS);
+    info.legacy_control=rd(ext+4);
+    if (info.legacy_control==0xffffffffu ||
+        (info.legacy_control&LEGACY_SMI_ENABLES)) {
+        info.status="Cannot disable xHCI firmware USB interrupts";return -1;
+    }
+    return 0;
+}
+static int legacy_handoff(const pci_device_t *device,uint32_t ext,uint32_t value) {
+    const uint32_t bios=1u<<16, os=1u<<24;
+    info.legacy_present=1;
+    info.legacy_support=value;info.legacy_control=rd(ext+4);
+    wr(ext,value|os);
+    info.status="BIOS did not release xHCI ownership";
+    if (wait_bits(ext,bios,0,5000)) {
+        info.legacy_support=rd(ext);
+        /* Known Panther Point firmware can leave BIOS-owned stuck even
+         * after the OS semaphore request. Use the standard legacy takeover
+         * sequence only on this documented controller, only at initial boot,
+         * before this driver has submitted any DMA or claimed a keyboard.
+         */
+        if (device->vendor_id!=0x8086 || device->device_id!=0x1e31) return -1;
+        if (disable_legacy_smi(ext)) return -1;
+        value=rd(ext);
+        if (value==0xffffffffu || (value&255)!=1) {
+            info.status="Invalid xHCI legacy ownership register";return -1;
+        }
+        wr(ext,(value|os)&~bios);
+        info.status="Intel BIOS ownership fallback rejected";
+        int result=wait_bits(ext,bios|os,os,100);
+        info.legacy_support=rd(ext);
+        if (result) return -1;
+        timer_sleep(20);
+        info.legacy_support=rd(ext);
+        info.legacy_control=rd(ext+4);
+        if ((info.legacy_support&(bios|os))!=os ||
+            info.legacy_control==0xffffffffu ||
+            (info.legacy_control&LEGACY_SMI_ENABLES)) {
+            info.status="Firmware reclaimed xHCI after ownership fallback";
+            return -1;
+        }
+        info.bios_handoff_fallback=1;
+        return 0;
+    }
+    info.legacy_support=rd(ext);
+    if ((info.legacy_support&(bios|os))!=os) {
+        info.status="xHCI OS ownership request was rejected";return -1;
+    }
+    return disable_legacy_smi(ext);
+}
+
 static int controller(const pci_device_t *device) {
     info.found=1;info.vendor_id=device->vendor_id;info.device_id=device->device_id;
     info.bus=device->bus;info.device=device->device;info.function=device->function;
     info.intel_routing=0;
+    info.legacy_present=info.bios_handoff_fallback=0;
+    info.legacy_support=info.legacy_control=0;
     info.status="Unsupported or unassigned xHCI MMIO address";
     if ((device->bar[0]&1) || !(device->bar[0]&0xFFFFFFF0u) ||
         ((device->bar[0]&6)==4 && device->bar[1])) return 0;
@@ -401,15 +466,12 @@ static int controller(const pci_device_t *device) {
     doorbell=base+(rd(base+0x14)&~3u);
     interrupter=base+(rd(base+0x18)&~31u)+0x20;
     stride=(hcc&4) ? 16 : 8;
-    /* Respect BIOS ownership before stopping or resetting the controller. */
+    /* Complete and verify ownership before touching operational registers. */
     uint32_t ext=base+((hcc>>16)*4);
     for (unsigned n=0;(hcc>>16) && n<64;n++) {
         uint32_t v=rd(ext);
         if ((v&255)==1) {
-            wr(ext,v|(1u<<24));
-            info.status="BIOS did not release xHCI ownership";
-            if (wait_bits(ext,1u<<16,0,5000)) return 0;
-            wr(ext+4,0);
+            if (legacy_handoff(device,ext,v)) return 0;
             break;
         }
         unsigned next=(v>>8)&255;
@@ -417,7 +479,7 @@ static int controller(const pci_device_t *device) {
         ext+=next*4;
     }
     /* Real controllers need CNR clear BEFORE operational register writes,
-     * not only after HCRST. Do not force a still-firmware-owned controller.
+     * not only after HCRST. Never reset a still-firmware-owned controller.
      */
     info.status="xHCI controller not ready (CNR timeout)";
     if (wait_bits(op+4,1u<<11,0,5000)) return 0;

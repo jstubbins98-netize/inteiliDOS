@@ -9,6 +9,8 @@ typedef struct {
     uint8_t bus, device, function, found;
     unsigned connected_ports, failed_ports, intel_routing;
     unsigned completion_code, event_type;
+    unsigned legacy_present, bios_handoff_fallback;
+    uint32_t legacy_support, legacy_control;
 } usb_xhci_info_t;
 const usb_xhci_info_t *usb_xhci_info(void);
 /* Synchronous, LUN-0 SCSI bulk-only storage on direct xHCI root ports.

@@ -99,7 +99,9 @@ gcc -O1 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
 This runs the actual driver against a PCI/MMIO register model. It checks
 Intel `8086:1e31` routing masks/order and unrelated-bit preservation,
 nonmatching-controller isolation, rejected routing writes, initial CNR
-readiness, BIOS ownership refusal, bounded halt/reset/start failures,
+readiness, normal ownership release and the Intel-only timeout fallback,
+SMI-enable readback and W1C event handling, rejected ownership requests,
+firmware ownership reclaim, nonmatching-controller refusal, bounded halt/reset/start failures,
 unavailable MMIO, unsupported page sizes, no rescan reset, and DMA timeout
 quarantine. It does not prove physical laptop compatibility.
 `run_usb_storage_test.py` additionally exercises real emulated xHCI/BOT

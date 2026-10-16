@@ -158,8 +158,21 @@ not reformat a drive merely because no supported storage was detected.
 An update to this driver requires rebuilding and booting the updated OS;
 it does not patch an older installed HDD copy automatically.
 
-If BIOS ownership is not released, initialization stops rather than forcing
-ownership. A DMA retirement/command timeout requires reboot; rescanning does
+If BIOS ownership is not released after five seconds, Intel `8086:1e31`
+has a one-time firmware-handoff fallback. It disables and verifies legacy
+USB SMI enables, acknowledges pending SMI events, sets OS-owned and clears
+BIOS-owned, then checks ownership again after a settling interval.
+Controller reset, DMA setup and port routing occur only after those checks
+succeed. Other controller IDs retain the normal refusal behavior.
+If the registers reject the writes, or firmware reclaims ownership, startup
+stops with an explicit error. `USB /MOUNT` shows the ownership/control
+registers and reports when the Intel fallback was applied.
+
+The fallback affects firmware USB emulation for this OS session; it does
+not change saved BIOS settings, disk partitions or files. Native keyboard
+drivers handle input after takeover. It is never repeated on mount/eject.
+
+A DMA retirement/command timeout requires reboot; rescanning does
 not reset the controller or recycle potentially active DMA buffers. EHCI
 waits for its asynchronous schedule to stop before reusing queue heads or
 transfer descriptors; a transport error isolates that storage device. Failed

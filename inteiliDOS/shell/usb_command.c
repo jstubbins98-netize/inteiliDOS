@@ -57,6 +57,12 @@ int usb_command(int argc,const char *argv[]) {
                        controller->connected_ports);
             vga_printf("Failed ports: %u; Intel port routing: %s\n",
                        controller->failed_ports,controller->intel_routing ? "enabled" : "not applied");
+            if (controller->legacy_present) {
+                vga_printf("xHCI ownership: %08X; legacy control: %08X\n",
+                           controller->legacy_support,controller->legacy_control);
+                if (controller->bios_handoff_fallback)
+                    vga_puts("BIOS handoff: Intel ownership fallback applied.\n");
+            }
             if (controller->event_type)
                 vga_printf("Last failed event: %u; completion code: %u (0 = timeout)\n",
                            controller->event_type,controller->completion_code);
