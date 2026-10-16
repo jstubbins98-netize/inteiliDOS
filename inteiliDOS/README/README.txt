@@ -79,5 +79,6 @@ Repository paths:
   inteiliDOS/DOS_COMPATIBILITY.md     DOS setup, controls and limitations.
   inteiliDOS/for_developers.md        Development reference.
 
-License and attribution information is included in the source documentation
-and the comprehensive manual.
+LICENSE
+-------------
+Mozilla Public License Version 2.0
