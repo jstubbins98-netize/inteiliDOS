@@ -50,11 +50,14 @@ def add_files(path, files):
     path.write_bytes(b)
 
 
-def start(kernel, native, folder, sticks=()):
+def start(kernel, native, folder, sticks=(), sata=False):
     folder.mkdir()
     args = ["-cpu", "core2duo", "-m", "256", "-device", "qemu-xhci,id=usb",
-            "-device", "usb-kbd,bus=usb.0,port=2",
-            "-drive", f"file={native},if=ide,index=1,format=raw"]
+            "-device", "usb-kbd,bus=usb.0,port=2"]
+    args += (["-device","ahci,id=sata",
+              "-drive",f"file={native},if=none,id=native,format=raw",
+              "-device","ide-hd,drive=native,bus=sata.0"] if sata else
+             ["-drive",f"file={native},if=ide,index=1,format=raw"])
     for i, stick in enumerate(sticks):
         args += ["-drive", f"if=none,id=stick{i},file={stick},format=raw",
                  "-device", f"usb-storage,id=usbdrive{i},drive=stick{i},bus=usb.0,port={1 if i == 0 else 3}"]
@@ -67,6 +70,7 @@ def start(kernel, native, folder, sticks=()):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("kernel", nargs="?", type=Path)
+    parser.add_argument("--sata", action="store_true", help="Use a native AHCI HDD")
     parser.add_argument("--media", type=Path, default=ROOT.parent / "MS-DOS_disks")
     parser.add_argument("--game", type=Path, default=ROOT.parent /
                         "attached_assets/0_Zork_Trilogy_1791773796909.img")
@@ -75,7 +79,7 @@ def main():
     images = {name.upper(): (args.media / name).read_bytes() for name in names}
     original = {name: hashlib.sha256(value).digest() for name, value in images.items()}
     game=args.game.read_bytes()
-    output = ROOT.parent / "generated-artifacts/msdos-usb"
+    output = ROOT.parent / ("generated-artifacts/msdos-usb"+("-sata" if args.sata else ""))
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="msdos-usb-") as folder:
         tmp = Path(folder)
@@ -90,7 +94,7 @@ def main():
         fat_image(source, 32)
         add_files(source, images)
         source_hash = hashlib.sha256(source.read_bytes()).digest()
-        g = start(kernel, native, tmp / "install", (empty, source))
+        g = start(kernel, native, tmp / "install", (empty, source), args.sata)
         try:
             shell(g, "ms-dos /usb")
             g.wait("USB drive not mounted"); g.wait("C:\\>")
@@ -99,17 +103,27 @@ def main():
             shell(g, "ms-dos /usb USB0:"); g.wait("USB Disk 1 missing")
             shell(g, "ms-dos /usb USB0:\\ZORK.IMG")
             g.wait("install DOS first");g.wait("C:\\>")
+            if args.sata:
+                shell(g,"ms-dos /usb")
+                g.wait("DOS HDD clear:",timeout=90)
+                g.command("screendump",{"filename":str(output/"creating-disk.ppm")})
+                g.key("f8");g.wait("cancelled with F8",timeout=30);g.wait("C:\\>")
+                assert protected(native)==safe
+                with native.open("rb") as f:
+                    f.seek(2048*512)
+                    assert b"MSDOS622.HDD" not in f.read(512)
             shell(g, "ms-dos /usb")
             g.wait("MS-DOS 6.22 -", timeout=180); g.wait("C:\\>")
             clear_dos(g)
             shell(g, "ver"); g.wait("MS-DOS Version 6.22")
             clear_dos(g)
-            shell(g, "dir a:"); g.wait("COMMAND"); g.wait("C:\\>")
+            # Restrict listings so the target entry cannot scroll off-screen.
+            shell(g, "dir a:\\command.com"); g.wait("COMMAND"); g.wait("C:\\>")
             clear_dos(g)
             g.key("f6")
-            shell(g, "dir a:")
-            # Disk 2 contains EXPAND.EXE; Disk 1 does not.
-            g.wait("EXPAND"); g.wait("C:\\>")
+            shell(g, "dir a:\\choice.com")
+            # Disk 2 contains CHOICE.COM; EXPAND.EXE is on Disk 1.
+            g.wait("CHOICE"); g.wait("C:\\>")
             clear_dos(g)
             shell(g, "echo USB-INSTALL-SAVED>c:\\usbtest.txt")
             g.wait("C:\\>"); clear_dos(g)
@@ -141,7 +155,7 @@ def main():
         assert protected(native) == safe
 
         # Saved DOS C: must still boot after all USB media is removed.
-        g = start(kernel, native, tmp / "saved")
+        g = start(kernel, native, tmp / "saved", sata=args.sata)
         try:
             shell(g, "ms-dos")
             g.wait("MS-DOS 6.22 -", timeout=90); g.wait("C:\\>")
@@ -156,7 +170,7 @@ def main():
         fat_image(bad, 16, True)
         add_files(bad, {"D6221.IMG": bytes(512)})
         bad_hash = hashlib.sha256(bad.read_bytes()).digest()
-        g = start(kernel, native, tmp / "invalid", (bad,))
+        g = start(kernel, native, tmp / "invalid", (bad,), args.sata)
         try:
             shell(g, "usb /mount"); g.wait("USB0:")
             shell(g, "ms-dos /usb USB0:")

@@ -11,11 +11,13 @@ static uint8_t forbidden_cmos(uint8_t reg) {
 #define MSDOS_TEST_CMOS forbidden_cmos
 #include "../kernel/msdos/platform.c"
 
-static char output[8192];
+static char output[32768];
 static size_t output_len;
 static uint8_t floppy[FLOPPY_BYTES];
 static unsigned media_reads;
 static int cancel, fail_media;
+static unsigned key_polls, cancel_after_polls;
+static const char *cancel_phase;
 static int floppy_ready;
 static int controller_configured, init_failure, floppy_read_error;
 static unsigned fdc_initializations, floppy_reads;
@@ -47,7 +49,11 @@ void vga_printf(const char *fmt,...) {
 void vga_set_cursor(int r,int c) { (void)r;(void)c; }
 void vga_get_cursor(int *r,int *c) { *r=*c=0; }
 uint32_t timer_get_ticks(void) { return 0; }
-int keyboard_poll(void) { return cancel ? KEY_F8 : -1; }
+int keyboard_poll(void) {
+    ++key_polls;
+    return cancel || (cancel_after_polls && key_polls>=cancel_after_polls) ||
+           (cancel_phase && strstr(output,cancel_phase)) ? KEY_F8 : -1;
+}
 int msdos_cpu_run(uint32_t n) { (void)n;assert(!"refused disk booted");return 0; }
 void msdos_devices_restore(void) {}
 int iso9660_find_file(uint8_t d,const char *name,iso9660_dirent_t *e) {
@@ -94,6 +100,7 @@ static void fixture(uint32_t sectors) {
     memset(disk+446,0,sizeof(native_part_t)); /* no overlapping foreign partition */
     fs_volume_count=0;
     output_len=0;output[0]=0;media_reads=0;cancel=fail_media=floppy_ready=0;
+    key_polls=cancel_after_polls=0;cancel_phase=0;
     controller_configured=init_failure=floppy_read_error=physical_ready=0;
     fdc_initializations=floppy_reads=0;
     uint8_t keep[512];memset(keep,0x79,sizeof(keep));
@@ -169,9 +176,20 @@ int main(void) {
     assert(fs_image_open(0,IMAGE_NAME,&image)==FS_ERR_NOTFOUND);kept();
 
     fixture(32*2048);cancel=1;
-    assert(msdos_run(0,NULL)==1 && writes==128);
+    assert(msdos_run(0,NULL)==1 && !writes);
     assert(strstr(output,"cancelled with F8") && !strstr(output,"disk I/O failure"));
     assert(fs_image_open(0,IMAGE_NAME,&image)==FS_ERR_NOTFOUND);kept();
+
+    fixture(32*2048);cancel_after_polls=3;
+    assert(msdos_run(0,NULL)==1 && writes==128);
+    assert(strstr(output,"cancelled with F8"));
+    assert(fs_image_open(0,IMAGE_NAME,&image)==FS_ERR_NOTFOUND);kept();
+    for (unsigned i=0;i<2;i++) {
+        fixture(32*2048);cancel_phase=i ? "DOS HDD FAT:" : "DOS HDD copy:";
+        assert(msdos_run(0,NULL)==1 && writes>=DISK_SECTORS);
+        assert(strstr(output,"cancelled with F8"));
+        assert(fs_image_open(0,IMAGE_NAME,&image)==FS_ERR_NOTFOUND);kept();
+    }
 
     /* Enough space: exercise real initialization and publication, without
      * entering the guest or touching physical VGA/CMOS from this host test. */
@@ -179,6 +197,8 @@ int main(void) {
     assert(!reserve_disk(0) && !write_attempts);
     disc=0;assert(!load_media(0,media_names[0]));
     assert(!seed_disk());
+    assert(strstr(output,"DOS HDD clear: 100%") && strstr(output,"DOS HDD copy: 100%"));
+    assert(strstr(output,"DOS HDD ready; starting MS-DOS 6.22"));
     assert(fs_image_open(0,IMAGE_NAME,&image)==FS_OK);
     assert(image.sectors==DISK_SECTORS && image.start==allowed_start+1);
     assert(sector(image.start)[510]==0x55 && sector(image.start)[511]==0xaa);

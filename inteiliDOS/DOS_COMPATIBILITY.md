@@ -31,6 +31,16 @@ or emulator. Compatibility is not guaranteed.
 4. Type `MS-DOS` at inteiliShell. The emulator creates its private DOS HDD,
    installs the boot files and Disk 1 utilities, and starts the DOS `C:\>` prompt.
 
+First-time creation clears about 16 MiB in the reserved private image.
+The status line shows progress for clearing, system-file copying and FAT
+metadata. SATA clearing uses bounded write batches with a cache flush after
+each batch, rather than a flush after every sector. Existing native files
+and physical disk partitions are not reformatted.
+Press **F8** to cancel during initialization. An incomplete image is not
+published as `MSDOS622.HDD`; the next attempt starts initialization again.
+Real disk/media errors still abort with the failing phase rather than
+continuing into DOS with an incomplete disk.
+
 The inteiliDOS build never bundles DOS images into its OS ISO or kernel.
 **MS-DOS installation disk images and game disk images are not included in
 this GitHub repository.** Users must supply their own licensed disk images

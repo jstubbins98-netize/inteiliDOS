@@ -88,6 +88,28 @@ and disposable. The 140 GiB test disks are sparse, not full allocations.
 To reuse a build: `python3 tests/run_modern_hardware_test.py /tmp/build/inteilidOS.elf`.
 Build that kernel with `python3 tests/build_test_kernel.py /tmp/build --modern`.
 
+# DOS HDD creation on SATA
+
+```sh
+gcc -O1 -Wall -Wextra -Werror -DCONFIG_ENABLE_PCI_IDE=1 \
+  -ffunction-sections -fdata-sections tests/ahci_zero_test.c \
+  -Wl,--gc-sections -o /tmp/ahci-zero-test
+/tmp/ahci-zero-test
+python3 tests/run_msdos_usb_test.py /tmp/build/inteilidOS.elf --sata
+```
+
+The register-model test checks four-sector DMA commands, sector-count and
+PRDT lengths, one flush per at-most-128-sector batch, LBA28/LBA48 bounds,
+uncached/readonly drives, and data/short-transfer/flush failures. Optical
+ports are not writable through this API.
+The full-kernel SATA test uses locally supplied DOS images on USB and a
+disposable AHCI disk. It cancels during visible clearing, retries, reaches
+the real DOS prompt, runs DOS and a USB game, and verifies persistence
+without USB plus unchanged native/source data. The host
+`msdos_space_test.c` also covers cancellation before writing, after a
+partial clear, during system-file copying and during FAT creation, with no
+incomplete image published.
+
 # xHCI firmware startup and Intel port routing
 
 ```sh

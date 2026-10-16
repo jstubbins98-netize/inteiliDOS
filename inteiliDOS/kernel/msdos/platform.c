@@ -518,6 +518,16 @@ static int reserve_disk(uint8_t drive) {
 }
 /* Extract FAT12 files directly from the user's boot disk into the private
  * FAT16 volume. IO.SYS is first, contiguous, and starts at cluster two. */
+static int seed_file(const uint8_t *e) {
+    return e[0] && e[0]!=0xe5 && !(e[11]&0x18) && e[11]!=15 && u32(e+28) &&
+           kmemcmp(e,"AUTOEXECBAT",11) && kmemcmp(e,"CONFIG  SYS",11) &&
+           kmemcmp(e,"SETUP   ",8) && kmemcmp(e,"DRVSPACEBIN",11);
+}
+static void seed_progress(int row,const char *phase,uint32_t done,uint32_t total) {
+    vga_set_cursor(row,0);
+    vga_printf("DOS HDD %s: %u%% (%u/%u KiB)  F8 cancels          ",
+               phase,total ? done*100/total : 100,done/1024,total/1024);
+}
 static int seed_disk(void) {
     uint8_t sector[512];
     uint8_t *fat=kcalloc(1,32*512), *root=kcalloc(1,32*512);
@@ -528,21 +538,40 @@ static int seed_disk(void) {
     int rc=FS_ERR_IO;
     const char *phase="read system disk";
     uint32_t progress=0;
+    int progress_row=0, progress_col=0, progress_active=0;
+    uint32_t copy_total=0, copy_done=0, shown_percent=0;
     if (read_floppy(19*512,source_root,224*32) ||
         read_floppy(512,source_fat,9*512) ||
         kmemcmp(source_root,"IO      SYS",11) ||
         kmemcmp(source_root+32,"MSDOS   SYS",11)) goto done;
+    for (unsigned i=0;i<224 && source_root[i*32];i++) {
+        const uint8_t *e=source_root+i*32;
+        if (!seed_file(e)) continue;
+        uint32_t size=u32(e+28);
+        if (size>FLOPPY_BYTES-copy_total) goto done;
+        copy_total+=size;
+    }
     kmemset(sector,0,512);
     vga_puts("Creating private DOS disk (native files are kept; F8 cancels)...\n");
+    vga_get_cursor(&progress_row,&progress_col);
+    progress_active=1;
+    seed_progress(progress_row,"clear",0,DISK_SECTORS*512);
     phase="clear private disk";
     for (uint32_t n=0;n<DISK_SECTORS;n+=128) {
         progress=n;
         uint32_t count=DISK_SECTORS-n;
         if (count>128) count=128;
+        if (keyboard_poll()==KEY_F8) {rc=SEED_CANCELLED;goto done;}
         if (fs_image_zero(&hard,n,count)) goto done;
+        uint32_t percent=(n+count)*100/DISK_SECTORS;
+        if (percent!=shown_percent) {
+            seed_progress(progress_row,"clear",(n+count)*512,DISK_SECTORS*512);
+            shown_percent=percent;
+        }
         if (keyboard_poll()==KEY_F8) {rc=SEED_CANCELLED;goto done;}
     }
     phase="boot sectors";
+    seed_progress(progress_row,"boot",0,1024);
     kmemcpy(sector,msdos_mbr,msdos_mbr_size);
     sector[446]=0x80; sector[448]=2; sector[450]=4;
     sector[451]=0; sector[452]=0xbf; sector[453]=7;
@@ -559,14 +588,14 @@ static int seed_disk(void) {
     if (put_sector(1,sector)) goto done;
     w16(fat,0xfff8); w16(fat+2,0xffff);
     unsigned cluster=2, entry=0;
+    shown_percent=0;
+    seed_progress(progress_row,"copy",0,copy_total);
     for (unsigned i=0;i<224;i++) {
         phase="copy system files";progress=i;
         const uint8_t *e=source_root+i*32;
         if (!e[0]) break;
-        if (e[0]==0xe5 || e[11]&0x18 || e[11]==15) continue;
-        /* Setup is for real disks; ship a command prompt on virtual C instead. */
-        if (!kmemcmp(e,"AUTOEXECBAT",11) || !kmemcmp(e,"CONFIG  SYS",11) ||
-            !kmemcmp(e,"SETUP   ",8) || !kmemcmp(e,"DRVSPACEBIN",11)) continue;
+        /* Setup is for real disks; ship a prompt on virtual C instead. */
+        if (!seed_file(e)) continue;
         uint32_t size=u32(e+28), left=size, src=u16(e+26);
         if (!size) continue;
         uint32_t count=(size+2047)/2048;
@@ -576,6 +605,7 @@ static int seed_disk(void) {
         for (uint32_t c=0;c<count;c++) {
             w16(fat+cluster*2,c+1==count?0xffff:cluster+1);
             for (unsigned s=0;s<4;s++) {
+                if (keyboard_poll()==KEY_F8) {rc=SEED_CANCELLED;goto done;}
                 kmemset(sector,0,512);
                 unsigned chunk=left>512?512:left;
                 if (chunk) {
@@ -587,6 +617,12 @@ static int seed_disk(void) {
                     left-=chunk;
                 }
                 if (put_sector(98+(cluster-2)*4+s,sector)) goto done;
+                copy_done+=chunk;
+                uint32_t percent=copy_total ? copy_done*100/copy_total : 100;
+                if (percent!=shown_percent) {
+                    seed_progress(progress_row,"copy",copy_done,copy_total);
+                    shown_percent=percent;
+                }
             }
             ++cluster;
         }
@@ -594,6 +630,7 @@ static int seed_disk(void) {
     }
     /* Add a startup file without any 386 memory managers or disk drivers. */
     phase="startup and FAT";
+    seed_progress(progress_row,"FAT",0,96*512);
     const char *startup="@ECHO OFF\r\nPROMPT $P$G\r\nPATH C:\\\r\nECHO MS-DOS 6.22 - F6 swap disks, F7 floppy, F8 exit\r\n";
     uint8_t *e=root+entry*32;
     kmemcpy(e,"AUTOEXECBAT",11); e[11]=32;
@@ -602,12 +639,20 @@ static int seed_disk(void) {
     kmemcpy(sector,startup,kstrlen(startup));
     if (put_sector(98+(cluster-2)*4,sector)) goto done;
     for (unsigned s=0;s<32;s++) {
+        if (keyboard_poll()==KEY_F8) {rc=SEED_CANCELLED;goto done;}
         if (put_sector(2+s,fat+s*512) || put_sector(34+s,fat+s*512) ||
             put_sector(66+s,root+s*512)) goto done;
     }
     phase="publish virtual disk";
+    if (keyboard_poll()==KEY_F8) {rc=SEED_CANCELLED;goto done;}
+    seed_progress(progress_row,"FAT",96*512,96*512);
     rc=fs_image_publish(IMAGE_NAME,&hard);
 done:
+    if (progress_active) {
+        vga_set_cursor(progress_row,0);
+        vga_puts(rc ? "DOS HDD creation stopped.                                      \n" :
+                      "DOS HDD ready; starting MS-DOS 6.22...                         \n");
+    }
     if (rc) vga_printf("DOS disk initialization failed: %s (%u, code %d).\n",phase,progress,rc);
     kfree(fat);kfree(root);kfree(source_root);kfree(source_fat);return rc;
 }
