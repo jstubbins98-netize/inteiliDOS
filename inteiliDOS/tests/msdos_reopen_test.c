@@ -48,6 +48,13 @@ void vga_get_cursor(int *r,int *c) {*r=*c=0;}
 void vga_set_cursor(int r,int c) {(void)r;(void)c;}
 uint32_t timer_get_ticks(void) {return 0;}
 int keyboard_poll(void) {int k=key;key=-1;return k;}
+int keyboard_poll_event(keyboard_event_t *e) {
+    int k=keyboard_poll();
+    if (k<0) return 0;
+    *e=(keyboard_event_t){.character=(uint8_t)k};
+    return 1;
+}
+void keyboard_current_event(keyboard_event_t *e) {*e=(keyboard_event_t){0};}
 void msdos_devices_restore(void) {}
 int msdos_devices_graphics(void) {return 0;}
 void msdos_devices_update(const uint8_t *a,const uint8_t *b) {(void)a;(void)b;}
@@ -106,6 +113,19 @@ static void fixture(void) {
     usb_game_size=0;usb_read_error=0;
 }
 int main(void) {
+    /* Guest installers use F10 (BIOS scan 44h). Do not truncate the
+     * SDL-style function-key mapping at the reserved F8 exit shortcut. */
+    const int guest_keys[]={KEY_F1,KEY_F2,KEY_F3,KEY_F4,KEY_F5,KEY_F9,KEY_F10};
+    for (unsigned i=0;i<sizeof(guest_keys)/sizeof(guest_keys[0]);i++) {
+        fixture();pending=-1;delivered_keyboard_state=0;io_failed=0;last_refresh=0;
+        key=guest_keys[i];
+        assert(!msdos_pc_poll(NULL,NULL));
+        unsigned scan=0x3b+guest_keys[i]-KEY_F1;
+        assert((unsigned)msdos_pc_key()==((scan<<8) | (scan<<24)));
+        assert(msdos_pc_key()==-1);
+    }
+    key=KEY_F8;
+    assert(msdos_pc_poll(NULL,NULL)==1 && msdos_pc_key()==-1);
     fixture();images[0]=1;expected_drive=0;
     assert(!prepare_disk(0,NULL) && hard.drive==expected_drive && !cd_calls);
     /* Prefer the current C: image, even if another native disk has one. */

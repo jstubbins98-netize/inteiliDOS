@@ -7,6 +7,8 @@
 
 #include "msdos.h"
 #include "bios.h"
+#include "bios_keyboard.h"
+#include "keyboard_input.h"
 #include "../memory.h"
 #define NO_GRAPHICS 1
 
@@ -140,7 +142,7 @@
 #ifdef _WIN32
 #define KEYBOARD_DRIVER kbhit() && (mem[0x4A6] = getch(), pc_interrupt(7))
 #else
-#define KEYBOARD_DRIVER ((scratch_int = msdos_pc_key()) >= 0 && (CAST(short)mem[0x4A6] = scratch_int, pc_interrupt(7)))
+#define KEYBOARD_DRIVER ((scratch_int = msdos_pc_key()) >= 0 && (CAST(short)mem[0x4A6] = scratch_int, CAST(short)regs8[MSDOS_KEYBOARD_MAILBOX] = (unsigned)scratch_int >> 16, pc_interrupt(7)))
 #endif
 
 // Keyboard driver for SDL
@@ -320,6 +322,32 @@ CAST(unsigned)regs16[REG_AX] = sectors;
 	// Load BIOS image into F000:0100, and set IP to 0100
 reg_ip = 0x100;
 kmemcpy(regs8 + reg_ip, msdos_bios, msdos_bios_size);
+
+/* These ROM-specific hooks must never silently patch a different BIOS.
+ * Keep the original ROM and instruction decoder tables untouched elsewhere. */
+static const unsigned char int9_original[] = {0x88,0xc7,0x26,0xa0,0xa6,0x00};
+static const unsigned char int16_original[] = {0x80,0xfc,0x00,0x74,0x10};
+static const unsigned char int7_original[] = {0x1e,0x06,0x50};
+int keyboard_rom_ok = msdos_bios_size == 7665;
+for (unsigned i=0; i<sizeof(int7_original); ++i)
+keyboard_rom_ok &= regs8[0x332+i] == int7_original[i];
+for (unsigned i=0; i<sizeof(int9_original); ++i)
+keyboard_rom_ok &= regs8[0x658+i] == int9_original[i];
+for (unsigned i=0; i<sizeof(int16_original); ++i)
+keyboard_rom_ok &= regs8[0xeac+i] == int16_original[i];
+if (!keyboard_rom_ok) {
+static const char error[] = "MS-DOS: incompatible keyboard BIOS.\r\n";
+for (unsigned i=0; error[i]; ++i) msdos_pc_putchar(error[i]);
+kfree(mem);
+return -1;
+}
+for (unsigned i=0; i<msdos_bios_keyboard_size;) {
+unsigned offset = msdos_bios_keyboard[i] | (msdos_bios_keyboard[i+1]<<8);
+unsigned length = msdos_bios_keyboard[i+2] | (msdos_bios_keyboard[i+3]<<8);
+i += 4;
+kmemcpy(regs8 + offset, msdos_bios_keyboard + i, length);
+i += length;
+}
 
 	// Load instruction decoding helper table
 	for (int i = 0; i < 20; i++)

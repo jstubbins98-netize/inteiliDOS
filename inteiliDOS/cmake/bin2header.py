@@ -38,6 +38,7 @@ def main():
         else:
             lines[-1] = lines[-1].rstrip()
 
+    lines[-1] = lines[-1].rstrip()
     lines.append("};")
     lines.append(f"static const uint32_t {array_name}_size = {len(data)};")
     lines.append("")

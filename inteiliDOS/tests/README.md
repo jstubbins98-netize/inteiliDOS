@@ -333,7 +333,29 @@ checks live updates and compares full disk-image hashes before/after.
 
 ```bash
 python3 tests/run_msdos_reopen_test.py
+python3 tests/run_msdos_function_keys_test.py \
+  /tmp/legacy-build/inteilidOS.elf /tmp/modern-build/inteilidOS.elf
+python3 tests/run_keyboard_modifiers_test.py
+python3 tests/run_msdos_modifiers_test.py \
+  /tmp/legacy-build/inteilidOS.elf /tmp/modern-build/inteilidOS.elf
 ```
+
+`run_msdos_function_keys_test.py` uses locally supplied DOS images and
+disposable disks to run a COM fixture under real DOS 6.22. It checks exact
+INT 16h scan/ASCII results for F10, F9, F1 and F5 with PS/2 and xHCI USB
+keyboards, plus F8 exit and continued shell keyboard operation. It does not
+require or redistribute Mario Teaches Typing.
+
+`run_keyboard_modifiers_test.py` runs the real PS/2 decoder/shared queue
+and USB report translator without port I/O. It checks modifier snapshots,
+independent sides, E0/Pause/PrintScreen handling, mixed input sources,
+unchanged legacy reads and BIOS encoding. `run_msdos_modifiers_test.py`
+runs 45 exact BIOS-key/held-state/release cases on each keyboard profile,
+alternating legacy/enhanced INT 16h peek/read APIs and checking `02h`/`12h`
+flags. A DOS INT 9h hook independently observes physical make codes.
+It also checks modifier-only transitions, modified reserved controls,
+shell typing, native editor F10 and protected native disk bytes.
+Screenshots go to `generated-artifacts/msdos-modifiers/`.
 
 This host test checks CD-independent disk selection, recovery from another
 native volume, ambiguous/invalid/unreadable-image refusal, and nonfatal

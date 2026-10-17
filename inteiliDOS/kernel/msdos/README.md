@@ -56,6 +56,16 @@ An already initialized virtual HDD can boot without the CD.
   not an application-specific save command. Completed sector writes are
   committed to the private HDD, which persists across emulator visits and
   host restarts.
+- F1-F5 and F9-F12 reach DOS applications. F11/F12 return BIOS codes
+  `8500h`/`8600h` through both legacy INT 16h `00h`/`01h` and enhanced
+  `10h`/`11h` read/check services. F6/F7/F8 remain reserved host controls.
+- PS/2 and USB keys carry event-time Shift/Ctrl/Alt snapshots and physical
+  key positions. DOS receives BIOS modified function-key codes (for example
+  Shift-F1=`5400h`, Ctrl-F1=`5E00h`, Alt-F1=`6800h`) and correct control-letter,
+  punctuation, Tab and arrow combinations. Ctrl takes precedence over Alt,
+  then Shift, for function-key combinations. INT 16h `02h`/`12h` and BIOS data
+  flags track held/released left/right modifiers, even without a printable key.
+  F6/F7/F8 remain reserved with modifiers too.
 - Text, PC speaker, CGA and Hercules displays are supported. CGA/Hercules
   graphics are rendered through native VGA; font and DAC palette are restored
   on return. No guest PIC/PIT write changes the host's timer or keyboard IRQs.
@@ -79,6 +89,39 @@ disk swaps, and preservation of a native file. Screenshots are generated
 outside source control in `generated-artifacts/msdos622`.
 
 ## Provenance and licenses
+
+### Keyboard BIOS compatibility overlay
+
+The original ROM in `bios.h` is retained unchanged. `bios_keyboard.asm`
+adds INT 7h input delivery, INT 9h BIOS-word insertion and INT 16h enhanced
+read/check/shift-state dispatch. The interpreter
+checks the original hook instructions and ROM size before applying the
+overlay; a different ROM fails explicitly instead of receiving stale hooks.
+The extension lives at F000:2000, with a private input mailbox at F000:2400,
+past the ROM and its RTC scratch area. It retains physical key make/break
+delivery through guest INT 9h hooks and the original ring-pointer wrapping,
+without changing the instruction decoder tables or key-release filtering.
+The host translates physical positions to BIOS scan:ASCII words separately
+from legacy character reads; native `keyboard_poll`/`keyboard_getchar`
+consumers keep their old character/shortcut values and skip state-only input.
+The original pending-slot and BIOS-buffer capacity limits are unchanged.
+Regenerate the checked-in overlay header from the project directory:
+
+```sh
+nasm -f bin kernel/msdos/bios_keyboard.asm -o /tmp/msdos-keyboard.bin
+python3 cmake/bin2header.py /tmp/msdos-keyboard.bin msdos_bios_keyboard kernel/msdos/bios_keyboard.h
+```
+
+`tests/run_msdos_function_keys_test.py` verifies header reproducibility,
+real DOS legacy/enhanced peek/read/empty-buffer behavior for both PS/2 and
+USB-only profiles, reserved media keys, F8 exit, and native file preservation.
+`tests/run_keyboard_modifiers_test.py` checks the actual PS/2 decoder and USB
+report translator with the shared queue on the host.
+`tests/run_msdos_modifiers_test.py` checks 45 exact BIOS key/state combinations
+per keyboard type under real DOS 6.22 in QEMU, including legacy/enhanced
+peek/read/empty behavior, physical scans observed by a guest IRQ1 hook,
+modifier-only transitions, independent left/right releases, modified host
+controls, and return to shell typing/native editor shortcuts.
 
 The interpreter is adapted from Adrian Cable's MIT-licensed 8086tiny
 revision 1.25, retrieved from

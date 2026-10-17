@@ -7,6 +7,7 @@
 #include "../memory.h"
 #include "../timer.h"
 #include "../keyboard.h"
+#include "keyboard_input.h"
 #include "../vga.h"
 #include "../iso9660.h"
 #include "../fdc.h"
@@ -26,6 +27,7 @@ static iso9660_dirent_t floppy_entry;
 static uint8_t media_cache[2048];
 static uint32_t media_cached_lba;
 static int disc = -1, media_index, physical, pending = -1, io_failed;
+static int delivered_keyboard_state = -1;
 static int auto_media, physical_ready;
 static int media_changed;
 static int usb_drive = -1;
@@ -434,10 +436,24 @@ int msdos_pc_disk(int drive, uint32_t offset, uint8_t *data,
     }
     return 1;
 }
-/* Encode SDL-style BIOS key events; no guest access to the host IRQ queue. */
-int msdos_pc_key(void) {int k=pending;pending=-1;return k;}
+/* Deliver one key with its original modifier snapshot. An idle resync also
+ * repairs a missed modifier release if the existing pending slot was busy,
+ * and initializes a new guest while a modifier is already physically held. */
+int msdos_pc_key(void) {
+    int k=pending;pending=-1;
+    if (k<0) {
+        keyboard_event_t state;
+        keyboard_current_event(&state);
+        unsigned current=msdos_keyboard_state(&state);
+        if ((int)current==delivered_keyboard_state) return -1;
+        k=(int)(current | MSDOS_KEY_STATE_ONLY);
+    }
+    delivered_keyboard_state=k & MSDOS_KEY_STATE_MASK;
+    return k;
+}
 int msdos_pc_poll(const uint8_t *ram, const uint8_t *ports) {
-    int key=keyboard_poll();
+    keyboard_event_t event;
+    int key=keyboard_poll_event(&event) ? event.character : -1;
     if (key==KEY_F8 || io_failed) return 1;
     if (key==KEY_F1+5) {
         auto_media=0;
@@ -454,13 +470,8 @@ int msdos_pc_poll(const uint8_t *ram, const uint8_t *ports) {
     } else if (key==KEY_F1+6) {
         auto_media=physical_ready=0;physical=1;media_changed=1;pending=-1;
     }
-    else if (key>=0 && pending<0) {
-        int symbol=key;
-        if (key>=KEY_UP && key<=KEY_RIGHT) {
-            static const unsigned s[]={273,274,276,275};
-            symbol=s[key-KEY_UP];
-        } else if (key>=KEY_F1 && key<KEY_F8) symbol=282+key-KEY_F1;
-        pending=0x400|symbol; /* key down, no SDL modifier flags */
+    else if (key>0 && pending<0) {
+        pending=msdos_keyboard_encode(&event);
     }
     uint32_t now=timer_get_ticks();
     if (now-last_refresh>=16) {
@@ -683,7 +694,8 @@ static int prepare_disk(int argc, const char *argv[]) {
         vga_puts("Usage: MS-DOS [/FLOPPY | /IMAGE <CD image> | /USB [USB0:..USB3:]]\n"
                  "       MS-DOS /USB USB0:\\GAME.IMG\n");return 1;
     }
-    floppy_size=0; disc=-1; pending=-1; io_failed=0; media_index=0;physical=0;
+    floppy_size=0; disc=-1; pending=-1; delivered_keyboard_state=-1;
+    io_failed=0; media_index=0;physical=0;
     auto_media=physical_ready=0;
     usb_drive=-1;usb_image[0]=0;media_changed=0;
     int existing=-1, candidate=-1;

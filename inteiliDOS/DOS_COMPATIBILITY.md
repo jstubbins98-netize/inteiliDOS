@@ -199,6 +199,10 @@ BIOS reports change-line support so DOS invalidates cached media information.
 | F7 | Select the real 1.44 MB floppy drive as A: |
 | F8 | Stop the guest and return to inteiliShell |
 
+F10 is passed through to DOS applications, including installers that require
+it to confirm installation. F9 is also passed through; F6, F7 and F8 remain
+reserved for the emulator controls above.
+
 The emulator reports media changes to DOS so its cached A: directory is
 invalidated after a swap. A missing disk or read error is reported to DOS.
 Writes to either image-backed or physical A: media are rejected.
