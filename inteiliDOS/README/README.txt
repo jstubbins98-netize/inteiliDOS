@@ -76,6 +76,7 @@ DOCUMENTATION
 -------------
 
 Repository paths:
+  manual/manual.md                  Comprehensive manual.
   inteiliDOS/BUILD.md                Build instructions.
   inteiliDOS/SYSTEM_REQUIREMENTS.txt Detailed requirements.
   inteiliDOS/MODERN_HARDWARE.md       Hardware profiles and firmware guidance.
@@ -83,6 +84,5 @@ Repository paths:
   inteiliDOS/DOS_COMPATIBILITY.md     DOS setup, controls and limitations.
   inteiliDOS/for_developers.md        Development reference.
 
-LICENSE
--------------
-Mozilla Public License Version 2.0
+License and attribution information is included in the source documentation
+and the comprehensive manual.
