@@ -221,18 +221,20 @@ void set_opcode(unsigned char opcode)
 }
 
 // Execute INT #interrupt_num on the emulated machine
-char pc_interrupt(unsigned char interrupt_num)
+/* DOS may chain to the original disk BIOS with PUSHF + a far CALL instead
+ * of executing INT 13h. Share these services with the checked ROM entry
+ * trap below, so change-line support also works through chained handlers. */
+static int floppy_bios_service(void)
 {
-if (interrupt_num==0x13 && regs8[REG_DL]==0 &&
-    CAST(unsigned short)mem[0x13*4+2]==0xF000) {
+if (regs8[REG_DL]==0) {
     if (regs8[REG_AH]==0x15) {
         regs8[REG_AH]=2; /* floppy with working change-line support */
-        set_CF(0);return 0;
+        set_CF(0);return 1;
     }
     if (regs8[REG_AH]==0x08) {
         unsigned sectors,spt;
         if (!msdos_pc_floppy_params(&sectors,&spt)) {
-            regs8[REG_AH]=0x80;set_CF(1);return 0;
+            regs8[REG_AH]=0x80;set_CF(1);return 1;
         }
         unsigned table=CAST(unsigned short)mem[0x1e*4];
         unsigned segment=CAST(unsigned short)mem[0x1e*4+2];
@@ -244,18 +246,25 @@ if (interrupt_num==0x13 && regs8[REG_DL]==0 &&
                            sectors==2400 ? 2 : 4;
             regs16[REG_CX]=((sectors/(spt*2)-1)<<8)|spt;
             regs16[REG_DX]=0x0101;
-            set_CF(0);return 0;
+            set_CF(0);return 1;
         }
     }
 }
 /* The original ROM predates removable-media change notification. Report
  * virtual/physical swaps to DOS so its cached A: directory is invalidated. */
-if (interrupt_num==0x13 && regs8[REG_AH]==0x16 && regs8[REG_DL]==0 &&
-    CAST(unsigned short)mem[0x13*4+2]==0xF000 && msdos_media_changed()) {
-    regs8[REG_AH]=6;
-    set_CF(1);
-    return 0;
+if (regs8[REG_AH]==0x16 && regs8[REG_DL]==0) {
+    int changed=msdos_media_changed();
+    regs8[REG_AH]=changed ? 6 : 0;
+    set_CF(changed);
+    return 1;
 }
+return 0;
+}
+
+char pc_interrupt(unsigned char interrupt_num)
+{
+if (interrupt_num==0x13 &&
+    CAST(unsigned short)mem[0x13*4+2]==0xF000 && floppy_bios_service()) return 0;
 	set_opcode(0xCD); // Decode like INT
 
 	make_flags();
@@ -328,6 +337,7 @@ kmemcpy(regs8 + reg_ip, msdos_bios, msdos_bios_size);
 static const unsigned char int9_original[] = {0x88,0xc7,0x26,0xa0,0xa6,0x00};
 static const unsigned char int16_original[] = {0x80,0xfc,0x00,0x74,0x10};
 static const unsigned char int7_original[] = {0x1e,0x06,0x50};
+static const unsigned char int13_original[] = {0x80,0xfc,0x00,0x74,0x62};
 int keyboard_rom_ok = msdos_bios_size == 7665;
 for (unsigned i=0; i<sizeof(int7_original); ++i)
 keyboard_rom_ok &= regs8[0x332+i] == int7_original[i];
@@ -335,8 +345,10 @@ for (unsigned i=0; i<sizeof(int9_original); ++i)
 keyboard_rom_ok &= regs8[0x658+i] == int9_original[i];
 for (unsigned i=0; i<sizeof(int16_original); ++i)
 keyboard_rom_ok &= regs8[0xeac+i] == int16_original[i];
+for (unsigned i=0; i<sizeof(int13_original); ++i)
+keyboard_rom_ok &= regs8[0xcaf+i] == int13_original[i];
 if (!keyboard_rom_ok) {
-static const char error[] = "MS-DOS: incompatible keyboard BIOS.\r\n";
+static const char error[] = "MS-DOS: incompatible keyboard/disk BIOS.\r\n";
 for (unsigned i=0; error[i]; ++i) msdos_pc_putchar(error[i]);
 kfree(mem);
 return -1;
@@ -357,6 +369,20 @@ i += length;
 	// Instruction execution loop. Terminates if CS:IP = 0:0
 	for (; opcode_stream = mem + 16 * regs16[REG_CS] + reg_ip, opcode_stream != mem;)
 	{
+/* The upstream INT 13h entry is F000:0CAF (validated above). This also
+ * catches the original handler reached via INT 40h or a guest's far call.
+ * Return through the caller's interrupt frame, changing only its CF.
+ * No ROM bytes, instruction-decoder tables, HDD services, or guest hooks
+ * are replaced; unsupported services execute the original BIOS normally.
+ */
+if (regs16[REG_CS]==0xf000 && reg_ip==0x0caf && floppy_bios_service()) {
+    unsigned carry=regs8[FLAG_CF];
+    R_M_POP(reg_ip);
+    R_M_POP(regs16[REG_CS]);
+    R_M_POP(scratch_uint);
+    set_flags((scratch_uint & ~1u) | carry);
+    continue;
+}
 		// Set up variables to prepare for decoding an opcode
 		set_opcode(*opcode_stream);
 unsigned instruction_length = 0;

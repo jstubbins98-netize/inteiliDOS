@@ -32,6 +32,9 @@ static int auto_media, physical_ready;
 static int media_changed;
 static int usb_drive = -1;
 static char usb_image[128];
+#define USB_GAME_DISKS 8
+static char usb_game_paths[USB_GAME_DISKS][128];
+static unsigned usb_game_count, usb_game_index;
 static uint16_t screen[2000], saved[2000];
 static int row, col, save_row, save_col, region_top, region_bottom;
 static uint8_t attr, ansi, bright;
@@ -458,7 +461,18 @@ int msdos_pc_poll(const uint8_t *ram, const uint8_t *ports) {
     if (key==KEY_F1+5) {
         auto_media=0;
         if (usb_image[0] && media_index<0) {
-            vga_puts("MS-DOS: USB game image selected; F7 selects floppy, F8 exits.\n");
+            if (usb_game_count>1) {
+                unsigned next=(usb_game_index+1)%usb_game_count;
+                if (!load_usb_game(usb_game_paths[next])) usb_game_index=next;
+                else vga_puts("MS-DOS: USB disk swap failed; previous disk retained.\n");
+            } else {
+                vga_puts("MS-DOS: one USB image selected; list more paths after /USB to swap with F6.\n");
+            }
+        } else if (usb_game_count>1) {
+            /* Resume the chosen USB set after temporarily selecting F7. */
+            unsigned next=(usb_game_index+1)%usb_game_count;
+            if (!load_usb_game(usb_game_paths[next])) usb_game_index=next;
+            else vga_puts("MS-DOS: USB disk swap failed; previous disk retained.\n");
         } else {
         int next=(floppy_size || physical) ? (media_index+1)%4 : 0;
         if (usb_drive>=0 ? load_usb_media(next) :
@@ -675,29 +689,32 @@ static int prepare_disk(int argc, const char *argv[]) {
         (!kstrcmp(argv[0],"/FLOPPY") || !kstrcmp(argv[0],"/floppy"));
     int use_image=argc==2 &&
         (!kstrcmp(argv[0],"/IMAGE") || !kstrcmp(argv[0],"/image"));
-    int use_usb=(argc==1 || argc==2) &&
+    int use_usb=(argc>=1 && argc<=USB_GAME_DISKS+1) &&
         (!kstrcmp(argv[0],"/USB") || !kstrcmp(argv[0],"/usb"));
     int selected_usb=-1;
     int usb_game=0;
-    if (use_usb && argc==2) {
-        const char *p=argv[1];
+    for (int a=1;use_usb && a<argc;a++) {
+        const char *p=argv[a];
         unsigned len=kstrlen(p);
         if (len<5 || (p[0]!='U' && p[0]!='u') ||
             (p[1]!='S' && p[1]!='s') || (p[2]!='B' && p[2]!='b') ||
             p[3]<'0' || p[3]>='0'+USB_STORAGE_MAX || p[4]!=':') use_usb=0;
-        else if (len==5) selected_usb=p[3]-'0';
-        else if (len>6 && (p[5]=='\\' || p[5]=='/')) {
-            selected_usb=p[3]-'0';usb_game=1;
+        else if (len==5 && argc==2) selected_usb=p[3]-'0';
+        else if (len>6 && len<sizeof(usb_image) && (p[5]=='\\' || p[5]=='/')) {
+            if (a==1) selected_usb=p[3]-'0';
+            usb_game=1;
         } else use_usb=0;
     }
     if (argc && !use_floppy && !use_image && !use_usb) {
         vga_puts("Usage: MS-DOS [/FLOPPY | /IMAGE <CD image> | /USB [USB0:..USB3:]]\n"
-                 "       MS-DOS /USB USB0:\\GAME.IMG\n");return 1;
+                 "       MS-DOS /USB USB0:\\DISK1.IMG [USB0:\\DISK2.IMG ...]\n"
+                 "       Up to 8 game images; F6 cycles them in the supplied order.\n");return 1;
     }
     floppy_size=0; disc=-1; pending=-1; delivered_keyboard_state=-1;
     io_failed=0; media_index=0;physical=0;
     auto_media=physical_ready=0;
     usb_drive=-1;usb_image[0]=0;media_changed=0;
+    usb_game_count=usb_game_index=0;
     int existing=-1, candidate=-1;
     uint8_t native_drive;
     int storage_rc=fs_volume_drive(0, &native_drive);
@@ -737,6 +754,11 @@ static int prepare_disk(int argc, const char *argv[]) {
     }
     if (use_usb && (usb_game ? load_usb_game(argv[1]) :
                               select_usb_media(selected_usb))) return 1;
+    if (use_usb && usb_game) {
+        usb_game_count=argc-1;
+        for (unsigned i=0;i<usb_game_count;i++)
+            kstrcpy(usb_game_paths[i],argv[i+1]);
+    }
     if (existing<0 && reserve_disk(candidate)) return 1;
     if (existing<0) {
         if (use_usb) {

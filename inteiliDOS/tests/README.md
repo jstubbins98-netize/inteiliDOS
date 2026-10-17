@@ -90,6 +90,15 @@ Build that kernel with `python3 tests/build_test_kernel.py /tmp/build --modern`.
 
 # DOS HDD creation on SATA
 
+The USB DOS suite also runs `msdos_usb_swap.asm` as one uninterrupted DOS
+program: read disk one, F6 to disk two, read it, F6 back, and read disk one
+again. It checks wraparound and failed-swap preservation, and hashes the
+source USB images to ensure swapping never writes them. The host
+`msdos_reopen_test.c` covers ordered sets, F7/F6 return, media-change/cache
+invalidation and invalid-path handling.
+The COM fixture also checks disk-change services through a PUSHF/FAR CALL
+to the original BIOS entry, not only software INT 13h calls.
+
 ```sh
 gcc -O1 -Wall -Wextra -Werror -DCONFIG_ENABLE_PCI_IDE=1 \
   -ffunction-sections -fdata-sections tests/ahci_zero_test.c \

@@ -165,11 +165,27 @@ USB drive with DOS installation images. C: remains the persistent native-HDD
 DOS installation. Copy games to C: to install them or store saves there.
 Games requiring writes to A: are not supported.
 
-Keep the USB drive connected while playing. F6 does not replace a selected
-USB game image with installation media. F7 switches A: to the physical floppy;
-F8 returns to inteiliShell. To select another USB game image, exit with F8 and
-run the command with its path. Missing or invalid images produce an error
-instead of silently selecting another disk. Run `USB /EJECT` after exiting DOS.
+For a multi-disk game, supply up to eight image paths in the required order:
+
+```text
+MS-DOS /USB USB0:\DISK1.IMG USB0:\DISK2.IMG USB0:\DISK3.IMG
+```
+
+**F6** swaps A: to the next image without restarting DOS or the running
+installer/game. After the last image it wraps to the first. DOS is notified
+of each successful media change so its cached directory can be refreshed.
+Paths may refer to subfolders or other mounted USB volumes; every path
+must include its `USB0:`..`USB3:` prefix. Keep the filenames short (8.3).
+Only the listed files are used, not every image on the USB drive. The
+remaining images are opened when selected; a missing, invalid or unreadable
+next image leaves the current disk and position unchanged, allowing a retry.
+
+Keep the USB drives connected while playing. F7 selects the physical floppy;
+F6 returns to the next image in a multi-image USB set. F8 exits to inteiliShell.
+With only one USB game image, F6 leaves it mounted. Without a game-image
+list, F6 continues to cycle the four DOS installation disks as before.
+USB images remain read-only; use virtual C: for installation and saves.
+Run `USB /EJECT` after exiting DOS.
 
 ### CD images and physical floppies
 
@@ -195,7 +211,7 @@ BIOS reports change-line support so DOS invalidates cached media information.
 |---|---|
 | C: | Writable, persistent private DOS hard drive |
 | A: | Read-only installation/game floppy media |
-| F6 | Cycle Disk 1, Disk 2, Disk 3, and the supplemental image on the DOS CD |
+| F6 | Cycle installation disks, or advance through the listed USB game images |
 | F7 | Select the real 1.44 MB floppy drive as A: |
 | F8 | Stop the guest and return to inteiliShell |
 

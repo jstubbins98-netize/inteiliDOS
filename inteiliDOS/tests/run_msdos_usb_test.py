@@ -8,9 +8,13 @@ import argparse
 import hashlib
 import struct
 import tempfile
+import subprocess
+import time
 
 from build_test_kernel import ROOT, build
 from run_launchpad_dos_test import Guest
+from run_launchpad_dos_test import fat12_image
+from build_test_kernel import run
 from run_msdos622_test import shell, clear_dos
 from run_msdos_external_media_test import native_disk, protected
 from run_usb_storage_test import fat_image
@@ -67,6 +71,23 @@ def start(kernel, native, folder, sticks=(), sata=False):
     return g
 
 
+def wait_usb_image(g, kernel, folder, expected):
+    """Wait for the swap itself, not a fixed USB-transfer/key-press delay."""
+    symbols=subprocess.check_output(["nm","-n",str(kernel)],text=True)
+    address=next(int(line.split()[0],16) for line in symbols.splitlines()
+                 if line.split()[-1:] == ["usb_image"])
+    snapshot=folder/"selected-usb-image.bin"
+    deadline=time.monotonic()+15
+    actual=""
+    while time.monotonic()<deadline:
+        g.command("pmemsave",{"val":address,"size":128,"filename":str(snapshot)})
+        actual=snapshot.read_bytes().split(b"\0",1)[0].decode("ascii",errors="replace")
+        if actual.upper()==expected.upper():
+            return
+        time.sleep(.05)
+    raise AssertionError(f"USB swap did not select {expected!r}; active image={actual!r}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("kernel", nargs="?", type=Path)
@@ -89,7 +110,12 @@ def main():
         safe = protected(native)
         empty, source = tmp / "empty.img", tmp / "source.img"
         fat_image(empty, 16, True)
-        add_files(empty, {"ZORK.IMG": game, "BAD.IMG": bytes(512)})
+        run("nasm","-f","bin",ROOT/"tests/msdos_usb_swap.asm","-o",tmp/"swap.com")
+        swap=(tmp/"swap.com").read_bytes()
+        first=fat12_image({"SWAP.COM":swap,"DISKID.TXT":b"1"})
+        second=fat12_image({"DISKID.TXT":b"2"})
+        add_files(empty, {"ZORK.IMG": game, "BAD.IMG": bytes(512),
+                          "FIRST.IMG":first,"SECOND.IMG":second})
         game_hash=hashlib.sha256(empty.read_bytes()).digest()
         fat_image(source, 32)
         add_files(source, images)
@@ -130,6 +156,30 @@ def main():
             shell(g, "type c:\\usbtest.txt"); g.wait("USB-INSTALL-SAVED")
             g.command("screendump", {"filename": str(output / "usb-dos.ppm")})
             g.key("f8"); g.wait("Returned from MS-DOS")
+            # One running COM program reads both changed disks and wraps to
+            # disk one. No guest reboot, host-shell visit, or media writes.
+            shell(g,"ms-dos /usb USB0:\\FIRST.IMG USB0:\\SECOND.IMG")
+            g.wait("MS-DOS 6.22 -",timeout=90);g.wait("C:\\>")
+            clear_dos(g)
+            shell(g,"a:\\swap.com")
+            g.wait("USB SWAP: F6 NEXT, THEN SPACE")
+            g.key("f6")
+            wait_usb_image(g,kernel,tmp,"USB0:\\SECOND.IMG")
+            g.key("spc")
+            g.wait("USB SWAP: F6 BACK, THEN SPACE")
+            g.key("f6")
+            wait_usb_image(g,kernel,tmp,"USB0:\\FIRST.IMG")
+            g.key("spc")
+            g.wait("USB LIVE DISK SWAP OK");g.wait("C:\\>")
+            assert "USB LIVE DISK SWAP FAILED" not in g.screen()
+            g.command("screendump",{"filename":str(output/"live-usb-swap.ppm")})
+            g.key("f8");g.wait("Returned from MS-DOS")
+            # A bad next image must leave the working first disk mounted.
+            shell(g,"ms-dos /usb USB0:\\FIRST.IMG USB0:\\BAD.IMG")
+            g.wait("MS-DOS 6.22 -",timeout=90);g.wait("C:\\>")
+            clear_dos(g);g.key("f6")
+            shell(g,"type a:\\diskid.txt");g.wait("1")
+            g.key("f8");g.wait("Returned from MS-DOS")
             shell(g, "ms-dos /usb USB1:")
             g.wait("MS-DOS 6.22 -", timeout=90); g.wait("C:\\>")
             clear_dos(g)

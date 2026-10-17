@@ -31,7 +31,7 @@ static int usb_read_error;
 const usb_volume_info_t *usb_storage_volumes(void) {return usb_volumes;}
 int usb_file_read_at(const char *p,uint32_t o,uint8_t *b,uint32_t n,uint32_t *s) {
     if (usb_game_size || usb_read_error) {
-        assert(!strcmp(p,"USB1:\\GAME.IMG"));
+        assert(!strcmp(p,"USB1:\\GAME.IMG") || !strcmp(p,"USB1:\\NEXT.IMG"));
         if (usb_read_error) return usb_read_error;
         assert(o<=usb_game_size && n<=usb_game_size-o);
         memcpy(b,usb_game_data+o,n);*s=usb_game_size;return 0;
@@ -191,6 +191,29 @@ int main(void) {
         assert(!msdos_pc_disk(1,0,sector,512,1)); /* no USB image writes */
         key=KEY_F6;assert(!msdos_pc_poll(ram,ports));
         assert(media_index==-1 && !strcmp(usb_image,"USB1:\\GAME.IMG"));
+        const char *set[]={"/USB","USB1:\\GAME.IMG","USB1:\\NEXT.IMG"};
+        assert(!prepare_disk(3,set) && usb_game_count==2 && !usb_game_index);
+        (void)msdos_media_changed();
+        key=KEY_F6;assert(!msdos_pc_poll(ram,ports));
+        assert(usb_game_index==1 && !strcmp(usb_image,"USB1:\\NEXT.IMG"));
+        assert(msdos_media_changed() && !physical && media_cached_lba==0xffffffff);
+        key=KEY_F6;assert(!msdos_pc_poll(ram,ports));
+        assert(!usb_game_index && !strcmp(usb_image,"USB1:\\GAME.IMG"));
+        (void)msdos_media_changed();
+        usb_read_error=-1;key=KEY_F6;
+        assert(!msdos_pc_poll(ram,ports) && !io_failed && !usb_game_index);
+        assert(!strcmp(usb_image,"USB1:\\GAME.IMG") && !msdos_media_changed());
+        assert(strstr(output,"previous disk retained"));usb_read_error=0;
+        key=KEY_F7;assert(!msdos_pc_poll(ram,ports) && physical);
+        key=KEY_F6;assert(!msdos_pc_poll(ram,ports) && !physical && usb_game_index==1);
+        const char *bad_set[]={"/USB","USB1:\\GAME.IMG","USB4:\\NEXT.IMG"};
+        assert(prepare_disk(3,bad_set)==1 && strstr(output,"Usage:"));
+        const char *large_set[]={"/USB","USB1:\\GAME.IMG","USB1:\\GAME.IMG",
+            "USB1:\\GAME.IMG","USB1:\\GAME.IMG","USB1:\\GAME.IMG",
+            "USB1:\\GAME.IMG","USB1:\\GAME.IMG","USB1:\\GAME.IMG","USB1:\\GAME.IMG"};
+        assert(!prepare_disk(9,large_set) && usb_game_count==8);
+        assert(prepare_disk(10,large_set)==1 && strstr(output,"Usage:"));
+        assert(!prepare_disk(3,set));
         assert(!reserve_calls && !cd_calls && !fdc_calls);
         usb_game_data[510]=0;
         assert(prepare_disk(2,game_args)==1 && strstr(output,"invalid USB floppy"));
