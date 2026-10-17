@@ -17,7 +17,7 @@ MAIN FEATURES
   Press U in LaunchPad to select USB; browse folders and press Enter to run.
 - Storage: native HDD files, IDE and supported SATA hard drives,
   floppy access, ISO 9660 CDs, and IDE/SATA optical-drive support.
-- USB storage: mount supported FAT12/16/32 drives, choose individual files
+- USB storage: mount supported FAT12/16/32 and exFAT drives, choose individual files
   to copy, save/load in iEdit, BASIC and InteiliSheets, and safely eject.
 - MS-DOS 6.22 emulator: a separate software PC with a persistent virtual
   HDD for installed programs and saves. Supply installation images on CD,

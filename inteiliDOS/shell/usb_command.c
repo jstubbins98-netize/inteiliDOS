@@ -21,13 +21,14 @@ static void usage(void) {
     vga_puts("USB          Show this usage\n"
              "USB /MOUNT   Detect and mount supported USB drives (read/write)\n"
              "USB /EJECT   Flush and safely disconnect all detected USB drives\n"
+             "USB /SHOW-PORTS  List currently mounted USB drives and capacities\n"
              "USB /COPY    Choose ONE file and its save destination (no bulk copy)\n"
              "Mounted drives: USB0:..USB3: (not C: or D:)\n"
              "Examples: DIR USB0:    TYPE USB0:\\NOTES.TXT\n"
              "          COPY USB0:\\NOTES.TXT USB1:\\NOTES.TXT\n"
              "iEdit/BASIC/Sheets: choose [3] USB in the save/open device dialog.\n"
              "Requires xHCI or EHCI (USB 2 high-speed), direct root port, BOT.\n"
-             "FAT12/16/32; 8.3 names. NTFS/exFAT, hubs, UHCI/OHCI storage\n"
+             "FAT12/16/32 and exFAT; CP437 names. NTFS, hubs, UHCI/OHCI storage\n"
              "and UAS-only drives are not supported. USB keyboards stay active.\n");
 }
 static void statuses(void) {
@@ -42,6 +43,18 @@ static void statuses(void) {
 int usb_command(int argc,const char *argv[]) {
     if (!argc || (argc==1 && option(argv[0],"/?"))) {usage();return 0;}
     if (argc==1 && option(argv[0],"/COPY")) return usb_pick_and_copy();
+    if (argc==1 && option(argv[0],"/SHOW-PORTS")) {
+        const usb_volume_info_t *v=usb_storage_volumes();
+        unsigned count=0;
+        vga_puts("Currently mounted USB drives (not a physical socket map):\n");
+        for(unsigned i=0;i<USB_STORAGE_MAX;i++)if(v[i].mounted){
+            vga_printf(" USB%u:  %u KiB  %s\n",i,v[i].sectors/2,v[i].status);
+            count++;
+        }
+        if(!count)vga_puts("No USB drives mounted. Run USB /MOUNT first.\n");
+        else vga_printf("%u mounted USB drive(s).\n",count);
+        return 0;
+    }
     if (argc!=1 || (!option(argv[0],"/MOUNT") && !option(argv[0],"/EJECT"))) {
         vga_puts("Unknown USB option or extra arguments.\n");usage();return -1;
     }
@@ -87,12 +100,13 @@ int usb_command(int argc,const char *argv[]) {
     return result;
 }
 int usb_command_list(const char *path) {
-    usb_file_info_t files[64];
+    static usb_file_info_t files[64];
     int n=usb_file_list(path,files,64);
     if (n<0) {vga_puts(usb_storage_error(n));vga_putchar('\n');return -1;}
     vga_printf(" Directory of %s\n",path);
     for (int i=0;i<n;i++) {
         if (files[i].directory) vga_printf(" <DIR> %s\n",files[i].name);
+        else if(files[i].size_overflow)vga_printf(" %s  >4 GiB (streaming unsupported)\n",files[i].name);
         else vga_printf(" %s  %u bytes\n",files[i].name,files[i].size);
     }
     if (!n) vga_puts("(empty directory)\n");

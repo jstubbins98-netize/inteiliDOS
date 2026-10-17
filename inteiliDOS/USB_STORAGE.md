@@ -1,5 +1,29 @@
 # USB drive commands
 
+## exFAT and mounted-drive listing
+
+USB storage supports **FAT12/16/32 and exFAT read/write**, on unpartitioned,
+MBR or GPT media. The drive must expose 512-byte sectors and a capacity below
+2 TiB through the existing USB mass-storage driver.
+
+`USB /SHOW-PORTS` lists every currently mounted `USB0:`..`USB3:` volume,
+its capacity in KiB, and its status (including FAT or exFAT). With no mounted
+volumes it says so and recommends `/MOUNT`. It does not mount, eject, copy,
+reset a controller, or enumerate empty physical sockets.
+
+Long filenames are recognized in the filesystem using the VGA/DOS CP437
+character set. ASCII names are the most portable; unsupported Unicode
+names should be renamed on another computer. Paths are limited to a 123-byte
+suffix after `USBn:`. The copy chooser reports overlong paths without
+truncating or copying the wrong file. LaunchPad retains its own shorter
+name/depth limits and reports omitted overlong names or oversized files.
+Individual app filename limits still apply.
+
+The TYPE/COPY/document save limit stays **64 KiB**. DOS disk images and native
+ELF programs use bounded streaming; files of 4 GiB or larger are explicitly
+rejected by that 32-bit API rather than wrapping. exFAT writes include its
+allocation bitmap, FAT and directory metadata. Always use `/EJECT`.
+
 Rebuild inteiliDOS with **PCI support enabled** and boot the updated kernel.
 The `2000s` and `2010s` build profiles enable PCI; use a machine with an xHCI
 or EHCI controller for USB storage. Native USB keyboard support is recommended, but
@@ -9,6 +33,7 @@ with `BOOTREPAIR` does not install the new kernel drivers.
 ```
 USB
 USB /MOUNT
+USB /SHOW-PORTS
 USB /COPY
 DIR USB0:
 TYPE USB0:\NOTES.TXT
@@ -19,7 +44,7 @@ USB /EJECT
 - **USB** displays usage and the current support limits, without mounting,
   ejecting or changing a drive.
 - **USB /MOUNT** scans the first supported xHCI and first supported EHCI
-  controller's direct root ports and mounts detected FAT volumes for reading
+  controller's direct root ports and mounts detected FAT/exFAT volumes for reading
   and saving. Up to four mounted storage devices across both controllers,
   plus one UHCI/xHCI boot-protocol keyboard, are supported. Each drive
   receives an explicit `USB0:` through `USB3:` identifier; they never replace
@@ -99,7 +124,8 @@ Use arrows and **Enter** to browse folders or launch a native ELF32/IPGM
 program. **Backspace/Left** goes up a folder; **F3** refreshes the source.
 Programs are streamed into the existing separate staging buffer, so the
 64 KiB document limit does not apply; the LaunchPad limit is 4 MiB.
-USB filenames remain 8.3 names, with up to eight folder levels.
+USB LaunchPad paths support up to eight folder levels. Names must fit its
+native file-entry buffer; overlong names are omitted with a warning.
 **Esc** exits LaunchPad; run `USB /EJECT` before removing the drive.
 
 This runs native inteiliDOS programs, not Windows executables. DOS programs
@@ -127,13 +153,13 @@ floppy image as DOS A:. See `DOS_COMPATIBILITY.md`.
   Transport (BOT)**, alternate setting zero, one bulk IN/OUT pair, **LUN 0**.
   USB 2 devices can work on xHCI ports when firmware routes them there.
 - **512-byte logical sectors**, READ/WRITE(10) capacity below 2 TiB.
-- FAT12, FAT16 and FAT32; an unpartitioned volume or a supported FAT
-  partition in an MBR. The FatFs library handles allocation, mirrored FATs,
-  directory updates and synchronization.
-- **8.3 short filenames**. Use short aliases for files that have long names.
+- FAT12, FAT16, FAT32 and exFAT; unpartitioned volumes or supported
+  partitions in an MBR/GPT. FatFs handles allocation, mirrored FATs,
+  exFAT bitmaps, directory updates and synchronization.
+- **ASCII/CP437 filenames**, including long names within the limits above.
 
 Not supported: UHCI/OHCI **storage** (UHCI keyboards still work),
-external hubs, UAS-only devices, other LUNs, GPT, NTFS, exFAT, native 4Kn
+external hubs, UAS-only devices, other LUNs, NTFS, native 4Kn
 sectors, above-4-GiB controller BARs, and filesystem formatting.
 Drive IDs can change after physical unplug/replacement; check `/MOUNT`
 output instead of assuming a USB number permanently identifies a device.

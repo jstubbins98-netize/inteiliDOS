@@ -26,11 +26,11 @@ int usb_pick_and_copy(void) {
     message("Copy ONE selected USB file. Mounting never copies files.");
     int drive=storage_choose_usb(message);
     if (drive<0) {message("Copy cancelled.");return 0;}
-    char source[128]="USB0:", basename[13];
+    char source[128]="USB0:", basename[256];
     source[3]=(char)('0'+drive);
     unsigned page=0;
     for (;;) {
-        usb_file_info_t files[64];
+        static usb_file_info_t files[64];
         int count=usb_file_list(source,files,64);
         if (count<0) {message(usb_storage_error(count));return -1;}
         vga_printf("\nUSB file chooser - %s (page %u)\n",source,page+1);

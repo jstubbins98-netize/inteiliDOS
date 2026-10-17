@@ -9,7 +9,9 @@ typedef struct {
     uint32_t sectors;
     const char *status;
 } usb_volume_info_t;
-typedef struct { char name[13]; uint32_t size; int directory; } usb_file_info_t;
+typedef struct {
+    char name[256]; uint32_t size; int directory, size_overflow;
+} usb_file_info_t;
 int usb_storage_mount_all(void);
 int usb_storage_eject_all(void);
 const usb_volume_info_t *usb_storage_volumes(void);

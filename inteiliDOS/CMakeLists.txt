@@ -125,6 +125,8 @@ set(KERNEL_C_SOURCES
     kernel/usb_transport.c
     kernel/usb_storage.c
     kernel/fatfs/ff.c
+    kernel/fatfs/ffunicode.c
+    kernel/div64.c
     kernel/cdrom.c
     kernel/sata_optical.c
     kernel/fs.c

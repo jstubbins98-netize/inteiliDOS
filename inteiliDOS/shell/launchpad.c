@@ -5,7 +5,7 @@
  * Reads real filesystems from attached hardware:
  *   CD-ROM sources  — ISO 9660 root directory via kernel/iso9660.c
  *   Floppy sources  — FAT12 root directory via kernel/fat12.c
- *   USB sources     — mounted FAT12/16/32, root and nested 8.3 folders
+ *   USB sources     — mounted FAT12/16/32/exFAT, bounded nested paths
  *
  * Programs are loaded into RAM at IPGM_LOAD_ADDR (0x00500000) and
  * executed via kernel/loader.c (IPGM/ELF). DOS formats are redirected to
@@ -239,15 +239,23 @@ static void lp_build_path(char *buf, int max) {
 }
 
 /* Populate lp_files[] from the selected source. */
-static void lp_usb_path(int src, const char *name, char *path) {
+static int lp_usb_path(int src, const char *name, char *path) {
     int pos=6;
     lp_strcpy(path,"USB0:\\",128);path[3]='0'+src-LP_SRC_USB0;
     for (int i=0;i<lp_depth;i++) {
-        for (int j=0;lp_dirstack[i].name[j];j++) path[pos++]=lp_dirstack[i].name[j];
+        for (int j=0;lp_dirstack[i].name[j];j++) {
+            if(pos>=127){path[0]=0;return 0;}
+            path[pos++]=lp_dirstack[i].name[j];
+        }
+        if(pos>=127){path[0]=0;return 0;}
         path[pos++]='\\';
     }
-    for (int j=0;name && name[j];j++) path[pos++]=name[j];
-    path[pos]=0; /* 8 levels of 8.3 names + filename fit in 128 bytes */
+    for (int j=0;name && name[j];j++) {
+        if(pos>=127){path[0]=0;return 0;}
+        path[pos++]=name[j];
+    }
+    path[pos]=0;
+    return 1;
 }
 
 static void lp_refresh_listing(int src, const cdrom_drive_t *drives) {
@@ -256,14 +264,22 @@ static void lp_refresh_listing(int src, const cdrom_drive_t *drives) {
     lp_err[0]     = '\0';
 
     if (lp_src_is_usb(src)) {
-        char path[128];usb_file_info_t entries[LP_MAX_FILES];
-        lp_usb_path(src,0,path);
+        char path[128];static usb_file_info_t entries[LP_MAX_FILES];
+        if(!lp_usb_path(src,0,path)){
+            lp_strcpy(lp_err,"USB folder path is too long.",sizeof(lp_err));return;
+        }
         int n=usb_file_list(path,entries,LP_MAX_FILES);
         if (n<0) {
             lp_strcpy(lp_err,usb_storage_error(n),sizeof(lp_err));return;
         }
         for (int i=0;i<n && i<LP_MAX_FILES;i++) {
-            lp_file_t *f=&lp_files[lp_file_count++];
+            lp_file_t *f=&lp_files[lp_file_count];
+            if(lp_strlen(entries[i].name)>=sizeof(f->name)||entries[i].size_overflow||
+               !lp_usb_path(src,entries[i].name,path)){
+                lp_strcpy(lp_err,"Overlong names/paths or 4 GiB+ entries omitted.",sizeof(lp_err));
+                continue;
+            }
+            lp_file_count++;
             lp_strcpy(f->name,entries[i].name,sizeof(f->name));
             f->size=entries[i].size;f->is_dir=entries[i].directory;
             f->cd_lba=0;f->fat_cluster=0;
@@ -677,11 +693,11 @@ static void lp_do_load(int src, int sel, const cdrom_drive_t *drives) {
 
     if (lp_src_is_usb(src)) {
         char path[128];uint32_t size=0;
-        lp_usb_path(src,f->name,path);
+        int path_ok=lp_usb_path(src,f->name,path);
         /* USB_FILE_MAX is for editable documents, not native executables.
          * Stream directly into LaunchPad's separate staging area. */
-        bytes=(int32_t)f->size;
-        for (uint32_t off=0;off<f->size;) {
+        bytes=path_ok?(int32_t)f->size:-1;
+        for (uint32_t off=0;path_ok && off<f->size;) {
             uint32_t n=f->size-off;if (n>16384) n=16384;
             int rc=usb_file_read_at(path,off,lp_load_buf+off,n,&size);
             if (rc || size!=f->size) {bytes=-1;break;}

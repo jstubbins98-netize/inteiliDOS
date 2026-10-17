@@ -126,7 +126,8 @@ def main():
         subprocess.run(["gcc","-std=c11","-O1","-Wall","-Wextra",
                         str(root/"tests/usb_storage_test.c"),
                         str(root/"kernel/usb_storage.c"),
-                        str(root/"kernel/fatfs/ff.c"),"-o",str(host)],check=True)
+                        str(root/"kernel/fatfs/ff.c"),
+                        str(root/"kernel/fatfs/ffunicode.c"),"-o",str(host)],check=True)
         subprocess.run([str(host),str(disk0),str(disk1)],check=True)
         dialog=t/"dialog-test"
         subprocess.run(["gcc","-std=c11","-Wall","-Wextra","-Werror",
@@ -177,7 +178,8 @@ def main():
             shell(g,"copy usb0:\\large.bin usb1:\\short.bin");g.wait("Copied 10023 bytes")
             shell(g,"copy usb0:\\hello.txt usb1:\\short.bin")
             g.wait(f"Copied {len(source)} bytes")
-            shell(g,"cls");shell(g,"dir usb1:");g.wait("MULTI.BIN")
+            # LFN-enabled FatFs preserves the lowercase name used at create.
+            shell(g,"cls");shell(g,"dir usb1:");g.wait("multi.bin")
             g.command("screendump",{"filename":str(output/"mounted-files.ppm")})
             # Exercise iEdit save/open through its actual dialogs.
             shell(g,"iedit");g.wait("iEdit")

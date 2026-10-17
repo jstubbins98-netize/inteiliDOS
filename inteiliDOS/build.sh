@@ -487,5 +487,7 @@ fi
 if [[ "$BOOT_MEDIA" -eq 1 || "$BOOT_MEDIA" -eq 3 ]]; then
     success "Raw floppy image:   ${BUILD_DIR}/inteiliDOS_1990s_floppy.img"
 fi
+source "${SCRIPT_DIR}/scripts/media_prompts.sh"
+offer_media_writing
 willburd "The spell is complete. May your interrupts be orderly and your sectors readable!"
 echo ""

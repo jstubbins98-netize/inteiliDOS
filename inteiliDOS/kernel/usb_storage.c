@@ -106,11 +106,14 @@ int usb_storage_mount_all(void) {
         char path[3];volume_name(i,path);
         FRESULT result=f_mount(&filesystems[i],path,1);
         if (result==FR_OK) {
-            volumes[i].mounted=1;volumes[i].status="Mounted (FAT read/write)";mounted++;
+            volumes[i].mounted=1;
+            volumes[i].status=filesystems[i].fs_type==FS_EXFAT ?
+                "Mounted (exFAT read/write)" : "Mounted (FAT read/write)";
+            mounted++;
         } else {
             f_mount(0,path,0);
             volumes[i].status=result==FR_NO_FILESYSTEM ?
-                "Not FAT12/16/32; no changes made" : "Cannot mount filesystem";
+                "Not FAT12/16/32 or exFAT; no changes made" : "Cannot mount filesystem";
         }
     }
     return mounted;
@@ -168,13 +171,14 @@ static int path_for(const char *src,char out[128],unsigned *drive) {
 }
 const char *usb_storage_error(int code) {
     switch(code) {
-    case -100:return "Use USB0:..USB3: paths with 8.3 filenames.";
+    case -100:return "Use USB0:..USB3: paths; maximum path suffix is 123 bytes.";
     case -101:return "USB drive is not mounted. Run USB /MOUNT.";
     case -102:return "File is too large for this operation (64 KiB maximum).";
     case -103:return "USB drive full or write incomplete; file may be partial.";
+    case -104:return "Files of 4 GiB or larger cannot be streamed by this kernel.";
     case -FR_NO_FILE:case -FR_NO_PATH:return "USB file or directory not found.";
     case -FR_WRITE_PROTECTED:return "USB drive is write protected.";
-    case -FR_INVALID_NAME:return "Invalid filename; use 8.3 short names.";
+    case -FR_INVALID_NAME:return "Invalid filename; use CP437/ASCII names without reserved characters.";
     case -FR_DENIED:return "Access denied, directory full, or drive full.";
     default:return "USB I/O failed; check media. Safe eject is not confirmed.";
     }
@@ -190,8 +194,10 @@ int usb_file_list(const char *path,usb_file_info_t *out,unsigned max) {
     while (n<max) {
         result=f_readdir(&dir,&info);
         if (result || !info.fname[0]) break;
-        kstrncpy(out[n].name,info.fname,12);out[n].name[12]=0;
-        out[n].size=info.fsize;out[n].directory=!!(info.fattrib&AM_DIR);n++;
+        kstrncpy(out[n].name,info.fname,255);out[n].name[255]=0;
+        out[n].size_overflow=info.fsize>UINT32_MAX;
+        out[n].size=out[n].size_overflow?UINT32_MAX:(uint32_t)info.fsize;
+        out[n].directory=!!(info.fattrib&AM_DIR);n++;
     }
     f_closedir(&dir);
     return result ? -(int)result : (int)n;
@@ -218,7 +224,8 @@ int usb_file_read_at(const char *path,uint32_t offset,uint8_t *buf,
     FIL file;
     FRESULT result=f_open(&file,actual,FA_READ);
     if (result) return -(int)result;
-    uint32_t size=f_size(&file);
+    if(f_size(&file)>UINT32_MAX){f_close(&file);return -104;}
+    uint32_t size=(uint32_t)f_size(&file);
     *file_size=size;
     if (offset>size || length>size-offset) {f_close(&file);return -102;}
     result=f_lseek(&file,offset);
