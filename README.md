@@ -162,7 +162,7 @@ running inside the inteiliDOS kernel.
 inteiliDOS project code is licensed under the
 [Mozilla Public License Version 2.0 (MPL-2.0)](https://www.mozilla.org/MPL/2.0/).
 
-see the LICENSE file for details
+See the `LICENSE` file for details.
 
 Third-party components, tools, guest software and assets retain their own
 copyrights and licenses. The inteiliDOS license does not relicense them or
