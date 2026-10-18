@@ -7,6 +7,7 @@ PCs from the 1990s, 2000s and early 2010s. It is not Linux or MS-DOS.
 ## MAIN FEATURES
 
 - inteiliShell: command history, file commands and plain-English aliases.
+- **Note: all commands in inteiliShell are case-insensitive meaning you can type them in lowercase and they will be interpreted as uppercase.** 
 - Built-in applications: iEdit text editor, InteiliBASIC interpreter,
   InteiliSheets spreadsheet, InteiliFile Manager and InteiliTalk speech.
   iEdit and InteiliSheets use F2 to save, F3 to load and F10 to quit.
@@ -19,8 +20,8 @@ PCs from the 1990s, 2000s and early 2010s. It is not Linux or MS-DOS.
   to copy, save/load in iEdit, BASIC and InteiliSheets, and safely eject.
 - MS-DOS 6.22 emulator: a separate software PC with a persistent virtual
   HDD for installed programs and saves. Supply installation images on CD,
-  floppy or USB; MS-DOS /USB reads images from a mounted USB drive.
-  MS-DOS /USB USB0:\GAME.IMG loads a USB game disk image as DOS drive A:.
+  floppy or USB; `MS-DOS /USB` reads images from a mounted USB drive.
+  `MS-DOS /USB USB0:\GAME.IMG` loads a USB game disk image as DOS drive A:.
   Press F8 to return to inteiliShell.
 - System Health: system, disk, computer-information, cooling and battery tabs,
   with live diagnostics and readings where supported sensors are available.
@@ -76,7 +77,6 @@ Useful shell commands:
 Repository paths:
 
 ```text
-  manual/manual.md                  Comprehensive manual.
   inteiliDOS/BUILD.md                Build instructions.
   inteiliDOS/SYSTEM_REQUIREMENTS.txt Detailed requirements.
   inteiliDOS/MODERN_HARDWARE.md       Hardware profiles and firmware guidance.
@@ -105,11 +105,9 @@ Upstream projects maintain their complete individual contributor lists.
   (later **SoftVoice, Inc.**).
 - **8086tiny CPU emulator and companion BIOS** — **Adrian Cable** and
   [8086tiny contributors](https://github.com/adriancable/8086tiny).
-  This is the emulator used for the MS-DOS environment, sometimes referred to
-  as the tiny8086 BIOS emulator. The adapted interpreter, BIOS and local
+  This is the emulator used for the MS-DOS environment. The adapted interpreter, BIOS and local
   compatibility work retain their applicable MIT notices; see
-  [`kernel/msdos/LICENSE.txt`](../kernel/msdos/LICENSE.txt) and
-  [`kernel/msdos/README.md`](../kernel/msdos/README.md).
+  `kernel/msdos/LICENSE.txt` and `kernel/msdos/README.md`.
 - **FatFs FAT/exFAT filesystem library and Unicode support** — **ChaN**
   ([FatFs project](https://elm-chan.org/fsw/ff/)), with upstream contributor
   and copyright notices retained in `kernel/fatfs/`. The vendored source
@@ -164,6 +162,8 @@ running inside the inteiliDOS kernel.
 
 inteiliDOS project code is licensed under the
 [Mozilla Public License Version 2.0 (MPL-2.0)](https://www.mozilla.org/MPL/2.0/).
+
+See the `LICENSE` file for details.
 
 Third-party components, tools, guest software and assets retain their own
 copyrights and licenses. The inteiliDOS license does not relicense them or
