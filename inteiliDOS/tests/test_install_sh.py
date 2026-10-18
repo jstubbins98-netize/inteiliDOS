@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 
-SCRIPT=Path(__file__).resolve().parents[1]/"install.sh"
+SCRIPT=Path(__file__).resolve().parents[1]/"install-deps.sh"
 BASH=shutil.which("bash")
 TOOLS="gcc g++ ld as ar objcopy objdump ranlib strip".split()
 

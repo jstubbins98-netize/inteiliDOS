@@ -59,6 +59,17 @@ with the standard GCC/Clang that ships with your Linux or macOS installation.
 
 ## 1. Install prerequisites
 
+Run `bash install-deps.sh` from the `inteiliDOS` directory to install the
+dependencies. On macOS it uses Homebrew (and offers installation of missing
+Homebrew/Xcode command-line tools); Linux builds the cross-compiler from source,
+with Arch also running `yay -S i686-elf-gcc`.
+
+Interactive `bash build.sh` asks whether the build dependencies are installed
+before checking the tools. Choose **No** to run `install-deps.sh` and continue
+the build after a successful installation. Choose **Yes** to skip installation.
+Willburd loads the installer's saved toolchain PATH in either case.
+`--defaults`, non-interactive builds and `--config-only` never launch the installer.
+
 ### Ubuntu / Debian
 
 ```bash
