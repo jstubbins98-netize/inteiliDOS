@@ -76,7 +76,6 @@ DOCUMENTATION
 -------------
 
 Repository paths:
-  manual/manual.md                  Comprehensive manual.
   inteiliDOS/BUILD.md                Build instructions.
   inteiliDOS/SYSTEM_REQUIREMENTS.txt Detailed requirements.
   inteiliDOS/MODERN_HARDWARE.md       Hardware profiles and firmware guidance.
