@@ -76,7 +76,6 @@ Useful shell commands:
 Repository paths:
 
 ```text
-  manual/manual.md                  Comprehensive manual.
   inteiliDOS/BUILD.md                Build instructions.
   inteiliDOS/SYSTEM_REQUIREMENTS.txt Detailed requirements.
   inteiliDOS/MODERN_HARDWARE.md       Hardware profiles and firmware guidance.
@@ -108,8 +107,7 @@ Upstream projects maintain their complete individual contributor lists.
   This is the emulator used for the MS-DOS environment, sometimes referred to
   as the tiny8086 BIOS emulator. The adapted interpreter, BIOS and local
   compatibility work retain their applicable MIT notices; see
-  [`kernel/msdos/LICENSE.txt`](../kernel/msdos/LICENSE.txt) and
-  [`kernel/msdos/README.md`](../kernel/msdos/README.md).
+  `kernel/msdos/LICENSE.txt` and `kernel/msdos/README.md`.
 - **FatFs FAT/exFAT filesystem library and Unicode support** — **ChaN**
   ([FatFs project](https://elm-chan.org/fsw/ff/)), with upstream contributor
   and copyright notices retained in `kernel/fatfs/`. The vendored source
