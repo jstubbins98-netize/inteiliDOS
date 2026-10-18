@@ -104,8 +104,7 @@ Upstream projects maintain their complete individual contributor lists.
   (later **SoftVoice, Inc.**).
 - **8086tiny CPU emulator and companion BIOS** — **Adrian Cable** and
   [8086tiny contributors](https://github.com/adriancable/8086tiny).
-  This is the emulator used for the MS-DOS environment, sometimes referred to
-  as the tiny8086 BIOS emulator. The adapted interpreter, BIOS and local
+  This is the emulator used for the MS-DOS environment. The adapted interpreter, BIOS and local
   compatibility work retain their applicable MIT notices; see
   `kernel/msdos/LICENSE.txt` and `kernel/msdos/README.md`.
 - **FatFs FAT/exFAT filesystem library and Unicode support** — **ChaN**
