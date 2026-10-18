@@ -7,6 +7,7 @@ PCs from the 1990s, 2000s and early 2010s. It is not Linux or MS-DOS.
 ## MAIN FEATURES
 
 - inteiliShell: command history, file commands and plain-English aliases.
+- **note: all commands in inteiliShell are case-insensitive meaning you can type them in lowercase and they will be interpreted as uppercase.** 
 - Built-in applications: iEdit text editor, InteiliBASIC interpreter,
   InteiliSheets spreadsheet, InteiliFile Manager and InteiliTalk speech.
   iEdit and InteiliSheets use F2 to save, F3 to load and F10 to quit.
