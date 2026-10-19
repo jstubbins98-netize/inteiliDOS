@@ -32,12 +32,6 @@ def main():
             guest.wait("Welcome to inteiliDOS");guest.wait("> ")
             guest.text("setup\n")
             guest.wait("Setup Wizard")
-            welcome=guest.screen()
-            assert "HP Vectra" not in welcome and "VEi8" not in welcome
-            assert "supported BIOS computers" in welcome
-            out=Path(__file__).resolve().parents[2]/"generated-artifacts"/"setup"
-            out.mkdir(parents=True,exist_ok=True)
-            guest.command("screendump",{"filename":str(out/"welcome.ppm")})
             guest.key("ret")
             guest.wait("Choose an installation mode")
             guest.key("down");guest.key("ret")
@@ -46,8 +40,6 @@ def main():
             guest.wait("Press ENTER to begin installation")
             guest.key("ret")
             guest.wait("Installation successful",timeout=180)
-            complete=guest.screen()
-            assert "HP Vectra" not in complete and "HP logo" not in complete
             out=Path(__file__).resolve().parents[2]/"generated-artifacts"/"setup"
             out.mkdir(parents=True,exist_ok=True)
             guest.command("screendump",{"filename":str(out/"installed.ppm")})

@@ -4,7 +4,6 @@
  * Storage rescans never reset the controller or interrupt a live keyboard.
  */
 #include "usb_xhci.h"
-#include "usb_bot.h"
 #include "usb.h"
 #include "pci.h"
 #include "timer.h"
@@ -51,26 +50,19 @@ static int initialized, running;
 static volatile int busy;
 static uint32_t storage_tag;
 static void keyboard_event(const trb_t *e);
-static usb_xhci_info_t info = {.status="USB controller has not been initialized"};
-const usb_xhci_info_t *usb_xhci_info(void) { return &info; }
 
 static uint32_t phys(const volatile void *p) { return (uint32_t)(uintptr_t)p; }
-#ifdef USB_XHCI_TEST
-#include "../tests/usb_xhci_test_io.h"
-#else
 static uint32_t rd(uint32_t p) { return *(volatile uint32_t *)(uintptr_t)p; }
 static void wr(uint32_t p, uint32_t v) {
     __asm__ volatile("":::"memory");
     *(volatile uint32_t *)(uintptr_t)p=v;
 }
-static void idle(void) { __asm__ volatile("hlt"); }
-#endif
 static void wr64(uint32_t p, uint32_t low) { wr(p,low); wr(p+4,0); }
 static int wait_bits(uint32_t p, uint32_t mask, uint32_t wanted, uint32_t ms) {
     uint32_t start=timer_get_ticks();
     while ((rd(p)&mask)!=wanted) {
         if (timer_get_ticks()-start>=ms) return -1;
-        idle();
+        __asm__ volatile("hlt");
     }
     return 0;
 }
@@ -107,28 +99,18 @@ static int wait_event(unsigned type,uint32_t cookie,trb_t *out) {
     uint32_t start=timer_get_ticks();
     while (timer_get_ticks()-start<1000) {
         trb_t e;
-        if (!next_event(&e)) {idle();continue;}
+        if (!next_event(&e)) {__asm__ volatile("hlt");continue;}
         if (((e.flags>>10)&63)!=type || e.lo!=cookie || e.hi) {
             keyboard_event(&e);
             continue;
         }
         *out=e;
         unsigned completion=e.size>>24;
-        if (completion!=1 && !(type==32 && completion==13)) {
-            info.completion_code=completion;info.event_type=type;
-            info.status=type==33 ? "Controller rejected an xHCI command" :
-                                  "USB device transfer failed";
-        }
         return completion==1 || (type==32 && completion==13) ? 0 : -1;
     }
-    info.completion_code=0;info.event_type=type;
-    info.status=type==33 ? "xHCI command timed out; reboot required" :
-                          "USB transfer timed out; reboot required";
-    dma_unsafe=1; /* Do not recycle any DMA buffer after an uncompleted TD. */
     return -3; /* timeout: a submitted TRB may still be owned by the HBA */
 }
 static int command(unsigned type,uint32_t pointer,uint32_t flags,trb_t *event) {
-    if (dma_unsafe) return -3;
     uint32_t cookie=enqueue(&commands,pointer,0,0,TRB_TYPE(type)|flags);
     wr(doorbell,0);
     int result=wait_event(33,cookie,event);
@@ -166,7 +148,7 @@ static void arm_report(void) {
     wr(doorbell+slot*4,dci);
 }
 void usb_xhci_poll(void) {
-    if (!ready || busy || dma_unsafe) return;
+    if (!ready || busy) return;
     current=keyboard_device;
     if ((rd(op+4)&4) || !(rd(op+0x400+(root_port-1)*16)&1)) {
         ready=0;
@@ -318,7 +300,6 @@ static int keyboard_on_port(unsigned port) {
 
 static int release_device(device_t *dev) {
     current=dev;
-    if (dma_unsafe) {dev->failed=1;return -1;}
     trb_t event;
     if (slot && command(10,0,slot<<24,&event)) {
         /* Keep every DMA buffer reserved if the controller cannot release it. */
@@ -330,15 +311,11 @@ static int release_device(device_t *dev) {
     return 0;
 }
 static void scan_ports(void) {
-    info.connected_ports=0;info.failed_ports=0;
-    for (unsigned port=1;port<=ports;port++)
-        if (rd(op+0x400+(port-1)*16)&1) info.connected_ports++;
     for (unsigned i=0;i<max_devices;i++) {
         device_t *dev=&devices[i];
         if (dev->used && dev!=keyboard_device &&
             (dev->failed || !(rd(op+0x400+(dev->port-1)*16)&1)))
             release_device(dev);
-        if (dma_unsafe) return;
     }
     for (unsigned port=1;port<=ports;port++) {
         device_t *available=0;int owned=0;
@@ -348,151 +325,42 @@ static void scan_ports(void) {
         }
         if (owned || !available || !(rd(op+0x400+(port-1)*16)&1)) continue;
         current=available;current->used=1;current->port=port;
-        if (keyboard_on_port(port)!=1) {
-            info.failed_ports++;
-            release_device(current);
-        }
-        if (dma_unsafe) return;
+        if (keyboard_on_port(port)!=1) release_device(current);
     }
-}
-
-/* Intel 7-series/Panther Point (including HM76). These registers are NOT
- * generic xHCI registers: never write them on other vendor/device IDs.
- * Firmware can leave even the USB2 wires of a USB3 socket under EHCI.
- * Enable only ports advertised as switchable; preserve other register bits.
- * Called once, after xHCI is running, never on storage rescans/eject.
- */
-static void intel_route_ports(const pci_device_t *device) {
-    if (device->vendor_id!=0x8086 || device->device_id!=0x1e31) return;
-    const uint8_t masks[2]={0xdc,0xd4}, routes[2]={0xd8,0xd0};
-    int changed=0;
-    for (unsigned i=0;i<2;i++) {
-        uint32_t mask=pci_read32(device->bus,device->device,device->function,masks[i]);
-        uint32_t old=pci_read32(device->bus,device->device,device->function,routes[i]);
-        if (!mask || mask==0xffffffffu || old==0xffffffffu) continue;
-        pci_write32(device->bus,device->device,device->function,routes[i],old|mask);
-        uint32_t actual=pci_read32(device->bus,device->device,device->function,routes[i]);
-        if ((actual&mask)!=mask) {
-            info.status="Intel USB port routing was rejected by firmware";
-            continue;
-        }
-        info.intel_routing=1;
-        if ((old&mask)!=mask) changed=1;
-    }
-    if (changed) timer_sleep(100); /* allow switched ports to reconnect */
-}
-
-/* xHCI USBLEGCTLSTS: preserve reserved fields, disable all legacy SMI
- * enables, acknowledge the three W1C SMI event flags. Same bit definitions
- * as Linux xhci-ext-caps.h; do not write ones into reserved bits.
- */
-#define LEGACY_SMI_PRESERVE 0x000e1feeu
-#define LEGACY_SMI_ENABLES  0x0001e011u
-#define LEGACY_SMI_EVENTS   0xe0000000u
-static int disable_legacy_smi(uint32_t ext) {
-    uint32_t ctl=rd(ext+4);
-    if (ctl==0xffffffffu) {
-        info.status="xHCI legacy control registers unavailable";return -1;
-    }
-    wr(ext+4,(ctl&LEGACY_SMI_PRESERVE)|LEGACY_SMI_EVENTS);
-    info.legacy_control=rd(ext+4);
-    if (info.legacy_control==0xffffffffu ||
-        (info.legacy_control&LEGACY_SMI_ENABLES)) {
-        info.status="Cannot disable xHCI firmware USB interrupts";return -1;
-    }
-    return 0;
-}
-static int legacy_handoff(const pci_device_t *device,uint32_t ext,uint32_t value) {
-    const uint32_t bios=1u<<16, os=1u<<24;
-    info.legacy_present=1;
-    info.legacy_support=value;info.legacy_control=rd(ext+4);
-    wr(ext,value|os);
-    info.status="BIOS did not release xHCI ownership";
-    if (wait_bits(ext,bios,0,5000)) {
-        info.legacy_support=rd(ext);
-        /* Known Panther Point firmware can leave BIOS-owned stuck even
-         * after the OS semaphore request. Use the standard legacy takeover
-         * sequence only on this documented controller, only at initial boot,
-         * before this driver has submitted any DMA or claimed a keyboard.
-         */
-        if (device->vendor_id!=0x8086 || device->device_id!=0x1e31) return -1;
-        if (disable_legacy_smi(ext)) return -1;
-        value=rd(ext);
-        if (value==0xffffffffu || (value&255)!=1) {
-            info.status="Invalid xHCI legacy ownership register";return -1;
-        }
-        wr(ext,(value|os)&~bios);
-        info.status="Intel BIOS ownership fallback rejected";
-        int result=wait_bits(ext,bios|os,os,100);
-        info.legacy_support=rd(ext);
-        if (result) return -1;
-        timer_sleep(20);
-        info.legacy_support=rd(ext);
-        info.legacy_control=rd(ext+4);
-        if ((info.legacy_support&(bios|os))!=os ||
-            info.legacy_control==0xffffffffu ||
-            (info.legacy_control&LEGACY_SMI_ENABLES)) {
-            info.status="Firmware reclaimed xHCI after ownership fallback";
-            return -1;
-        }
-        info.bios_handoff_fallback=1;
-        return 0;
-    }
-    info.legacy_support=rd(ext);
-    if ((info.legacy_support&(bios|os))!=os) {
-        info.status="xHCI OS ownership request was rejected";return -1;
-    }
-    return disable_legacy_smi(ext);
 }
 
 static int controller(const pci_device_t *device) {
-    info.found=1;info.vendor_id=device->vendor_id;info.device_id=device->device_id;
-    info.bus=device->bus;info.device=device->device;info.function=device->function;
-    info.intel_routing=0;
-    info.legacy_present=info.bios_handoff_fallback=0;
-    info.legacy_support=info.legacy_control=0;
-    info.status="Unsupported or unassigned xHCI MMIO address";
     if ((device->bar[0]&1) || !(device->bar[0]&0xFFFFFFF0u) ||
         ((device->bar[0]&6)==4 && device->bar[1])) return 0;
     uint32_t base=device->bar[0]&0xFFFFFFF0u;
     pci_enable_busmaster(device);
     uint32_t cap=rd(base), hcs=rd(base+4), hcc=rd(base+0x10);
-    info.status="xHCI registers unavailable (firmware or power configuration)";
-    if (!cap || cap==0xffffffffu || hcs==0xffffffffu || hcc==0xffffffffu) return 0;
     ports=hcs>>24;
-    info.status="Invalid xHCI capability registers";
-    if ((cap&255)<0x20 || (cap&3) || !(hcs&255) || !ports) return 0;
+    if ((cap&255)<0x20 || !(hcs&255) || !ports) return 0;
     op=base+(cap&255);
     doorbell=base+(rd(base+0x14)&~3u);
     interrupter=base+(rd(base+0x18)&~31u)+0x20;
     stride=(hcc&4) ? 16 : 8;
-    /* Complete and verify ownership before touching operational registers. */
+    /* Respect BIOS ownership before stopping or resetting the controller. */
     uint32_t ext=base+((hcc>>16)*4);
     for (unsigned n=0;(hcc>>16) && n<64;n++) {
         uint32_t v=rd(ext);
         if ((v&255)==1) {
-            if (legacy_handoff(device,ext,v)) return 0;
+            wr(ext,v|(1u<<24));
+            if (wait_bits(ext,1u<<16,0,1000)) return 0;
+            wr(ext+4,0);
             break;
         }
         unsigned next=(v>>8)&255;
         if (!next) break;
         ext+=next*4;
     }
-    /* Real controllers need CNR clear BEFORE operational register writes,
-     * not only after HCRST. Never reset a still-firmware-owned controller.
-     */
-    info.status="xHCI controller not ready (CNR timeout)";
-    if (wait_bits(op+4,1u<<11,0,5000)) return 0;
-    wr(op,rd(op)&~(1u|4u|8u)); /* halt, disable interrupt delivery */
-    info.status="xHCI controller did not halt";
+    wr(op,rd(op)&~1u);
     if (wait_bits(op+4,1,1,1000)) return 0;
     wr(op,2);
-    info.status="xHCI controller reset/readiness timed out";
-    if (wait_bits(op,2,0,1000) || wait_bits(op+4,1u<<11,0,1000)) return 0;
-    info.status="xHCI controller does not support 4 KiB pages";
-    if (!(rd(op+8)&1)) return 0;
+    if (wait_bits(op,2,0,1000) || wait_bits(op+4,1u<<11,0,1000) ||
+        !(rd(op+8)&1)) return 0;
     unsigned pads=((rd(base+8)>>27)&31)|(((rd(base+8)>>21)&31)<<5);
-    info.status="xHCI requires too many scratchpad pages";
     if (pads>32) return 0;
     init_ring(&commands);
     kmemset((void *)events,0,sizeof(events));
@@ -509,17 +377,12 @@ static int controller(const pci_device_t *device) {
     wr(interrupter+8,1);wr64(interrupter+0x10,phys(erst));
     wr64(interrupter+0x18,phys(events));wr(interrupter,1);
     wr(op,1); /* Run; interrupt delivery disabled */
-    info.status="xHCI controller did not start; reboot required";
     if (wait_bits(op+4,1,0,1000)) {dma_unsafe=1;return 0;}
-    running=1;
-    info.status="xHCI controller running";
-    intel_route_ports(device);
-    scan_ports();
+    running=1;scan_ports();
     return 1;
 }
 int usb_xhci_init(void) {
 #if !CONFIG_ENABLE_PCI
-    info.status="PCI probing disabled in this build; use a modern profile";
     return 0; /* Respect profiles that explicitly disable PCI probing. */
 #endif
     if (initialized) return ready;
@@ -527,7 +390,6 @@ int usb_xhci_init(void) {
     ready=0;
     if (dma_unsafe) {busy=0;return 0;}
     pci_device_t current, next;
-    info.status="No xHCI controller found";
     if (pci_find_class(0x0C,0x03,&current)) {busy=0;return 0;}
     do {
         if (current.prog_if==0x30 && controller(&current)) break;
@@ -560,19 +422,37 @@ static int bulk(ring_t *ring,unsigned endpoint,unsigned bytes,int write) {
     (void)write;
     return 0;
 }
-static int bot_bulk(void *device,uint8_t *buffer,unsigned bytes,int write) {
-    (void)device;(void)buffer; /* shared BOT scratch is bulk_data */
-    return bulk(write ? &current->out : &current->in,
-                write ? current->out_dci : current->in_dci,bytes,write);
+static void le32(uint8_t *p,uint32_t v) {
+    for (unsigned i=0;i<4;i++) p[i]=(uint8_t)(v>>(i*8));
+}
+static uint32_t get_le32(const uint8_t *p) {
+    return p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);
 }
 int usb_xhci_storage_command(unsigned disk,const uint8_t *cdb,unsigned cdb_len,
                              uint8_t *buffer,unsigned bytes,int write) {
     if (!usb_xhci_storage_present(disk) || !cdb || !cdb_len ||
         cdb_len>16 || bytes>512 || (bytes && !buffer) || busy || dma_unsafe) return -1;
     busy=1;current=disks[disk];
-    int result=usb_bot_command(bot_bulk,current,++storage_tag,bulk_data,data,
-                               cdb,cdb_len,buffer,bytes,write);
-    if (result==-1) goto fail;
+    uint32_t tag=++storage_tag;
+    kmemset(bulk_data,0,31);
+    le32(bulk_data,0x43425355);le32(bulk_data+4,tag);le32(bulk_data+8,bytes);
+    bulk_data[12]=write ? 0 : 0x80;bulk_data[14]=cdb_len;
+    kmemcpy(bulk_data+15,cdb,cdb_len);
+    int result=-1;
+    if (bulk(&current->out,current->out_dci,31,1)) goto fail;
+    if (bytes) {
+        if (write) kmemcpy(bulk_data,buffer,bytes);
+        if (bulk(write ? &current->out : &current->in,
+                 write ? current->out_dci : current->in_dci,bytes,write)) goto fail;
+        if (!write) kmemcpy(data,bulk_data,bytes);
+    }
+    if (bulk(&current->in,current->in_dci,13,0) ||
+        get_le32(bulk_data)!=0x53425355 || get_le32(bulk_data+4)!=tag ||
+        get_le32(bulk_data+8) || bulk_data[12]>1) goto fail;
+    if (!bulk_data[12]) {
+        if (bytes && !write) kmemcpy(buffer,data,bytes);
+        result=0;
+    } else result=-2; /* SCSI failure: transport is still synchronized. */
     busy=0;return result;
 fail:
     /* A stalled/timed-out transport may still own rings/buffers. Do not

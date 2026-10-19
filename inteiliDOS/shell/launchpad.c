@@ -5,11 +5,11 @@
  * Reads real filesystems from attached hardware:
  *   CD-ROM sources  — ISO 9660 root directory via kernel/iso9660.c
  *   Floppy sources  — FAT12 root directory via kernel/fat12.c
- *   USB sources     — mounted FAT12/16/32/exFAT, bounded nested paths
  *
  * Programs are loaded into RAM at IPGM_LOAD_ADDR (0x00500000) and
- * executed via kernel/loader.c (IPGM/ELF). DOS formats are redirected to
- * the separate MS-DOS emulator rather than the retired v86 loader.
+ * executed via kernel/loader.c (IPGM/ELF), or kernel/dos.c (16-bit DOS
+ * COM/MZ EXE in v86 compatibility mode). DOS uses the selected medium
+ * for read-only data files and returns to the same LaunchPad session.
  *
  * Screen layout (80×25 VGA text mode):
  *   Row  0    Title bar                  (black on cyan)
@@ -25,7 +25,6 @@
  *   Up / Down   — navigate
  *   F2 (0x91)   — cycle source
  *   F3 (0x92)   — rescan current source for media changes
- *   U           — mount/select USB; cycle mounted USB volumes
  *   F5 (0x94)   — eject current CD-ROM
  *   Enter       — load (and run) selected program
  *   Esc / Q     — exit
@@ -47,7 +46,6 @@
 #include "../kernel/fdc.h"
 #include "../kernel/vga.h"
 #include "../kernel/keyboard.h"
-#include "../kernel/usb_storage.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -96,16 +94,13 @@ static void lp_put_uint_r(int row, int col, uint32_t v, int w,
 #define LP_SRC_CDROM2   2
 #define LP_SRC_CDROM3   (CDROM_MAX_DRIVES-1) /* last optical slot, IDE or SATA */
 #define LP_SRC_FLOPPY_A CDROM_MAX_DRIVES
-#define LP_SRC_USB0     (LP_SRC_FLOPPY_A+1)
-#define LP_SRC_COUNT    (LP_SRC_USB0+USB_STORAGE_MAX)
+#define LP_SRC_COUNT    (CDROM_MAX_DRIVES+1)
 
 static const char *lp_src_label[LP_SRC_COUNT] = {
     "CD0", "CD1", "CD2", "CD3",
-    "SATA4", "SATA5", "SATA6", "SATA7", "Floppy A:",
-    "USB0:", "USB1:", "USB2:", "USB3:"
+    "SATA4", "SATA5", "SATA6", "SATA7", "Floppy A:"
 };
 static int lp_src_is_cdrom(int src) { return src <= LP_SRC_CDROM3; }
-static int lp_src_is_usb(int src) { return src>=LP_SRC_USB0 && src<LP_SRC_COUNT; }
 
 /* =========================================================================
  * Real file listing
@@ -186,9 +181,6 @@ static void lp_probe_source(int src, cdrom_drive_t *drives) {
             const cdrom_drive_t *tbl = cdrom_drives();
             drives[di] = tbl[di];
         }
-    } else if (lp_src_is_usb(src)) {
-        if (!usb_storage_volumes()[src-LP_SRC_USB0].mounted)
-            usb_storage_mount_all();
     } else {
         /*
          * Floppy: force a fresh FDC init + recalibrate so that a disk
@@ -239,53 +231,12 @@ static void lp_build_path(char *buf, int max) {
 }
 
 /* Populate lp_files[] from the selected source. */
-static int lp_usb_path(int src, const char *name, char *path) {
-    int pos=6;
-    lp_strcpy(path,"USB0:\\",128);path[3]='0'+src-LP_SRC_USB0;
-    for (int i=0;i<lp_depth;i++) {
-        for (int j=0;lp_dirstack[i].name[j];j++) {
-            if(pos>=127){path[0]=0;return 0;}
-            path[pos++]=lp_dirstack[i].name[j];
-        }
-        if(pos>=127){path[0]=0;return 0;}
-        path[pos++]='\\';
-    }
-    for (int j=0;name && name[j];j++) {
-        if(pos>=127){path[0]=0;return 0;}
-        path[pos++]=name[j];
-    }
-    path[pos]=0;
-    return 1;
-}
-
 static void lp_refresh_listing(int src, const cdrom_drive_t *drives) {
     lp_file_count = 0;
     lp_listing_ok = 0;
     lp_err[0]     = '\0';
 
-    if (lp_src_is_usb(src)) {
-        char path[128];static usb_file_info_t entries[LP_MAX_FILES];
-        if(!lp_usb_path(src,0,path)){
-            lp_strcpy(lp_err,"USB folder path is too long.",sizeof(lp_err));return;
-        }
-        int n=usb_file_list(path,entries,LP_MAX_FILES);
-        if (n<0) {
-            lp_strcpy(lp_err,usb_storage_error(n),sizeof(lp_err));return;
-        }
-        for (int i=0;i<n && i<LP_MAX_FILES;i++) {
-            lp_file_t *f=&lp_files[lp_file_count];
-            if(lp_strlen(entries[i].name)>=sizeof(f->name)||entries[i].size_overflow||
-               !lp_usb_path(src,entries[i].name,path)){
-                lp_strcpy(lp_err,"Overlong names/paths or 4 GiB+ entries omitted.",sizeof(lp_err));
-                continue;
-            }
-            lp_file_count++;
-            lp_strcpy(f->name,entries[i].name,sizeof(f->name));
-            f->size=entries[i].size;f->is_dir=entries[i].directory;
-            f->cd_lba=0;f->fat_cluster=0;
-        }
-        lp_listing_ok=1;
-    } else if (lp_src_is_cdrom(src)) {
+    if (lp_src_is_cdrom(src)) {
         uint8_t di = (uint8_t)src;
         /* Verify drive is present and has a disc. */
         if (di >= CDROM_MAX_DRIVES || drives[di].present != CDROM_PRESENT) {
@@ -430,12 +381,8 @@ static void lp_draw_source_bar(int src, const cdrom_drive_t *drives) {
     lp_puts(1, 1, "Source:", VGA_COLOR_LIGHT_GREY, VGA_COLOR_DARK_GREY, 7);
 
     int col = 9;
-    for (int slot = 0; slot <= LP_SRC_COUNT && col < 68; slot++) {
-        int i=slot==0 ? src : slot-1;
-        if (slot && i==src) continue; /* selected source is always visible */
+    for (int i = 0; i < LP_SRC_COUNT && col < 72; i++) {
         if (lp_cd_elf_only && !lp_src_is_cdrom(i)) continue;
-        if (lp_src_is_usb(i) && i!=src &&
-            !usb_storage_volumes()[i-LP_SRC_USB0].mounted) continue;
         /* Hide unused sockets so SATA and floppy sources are never pushed
          * off the 80-column bar by four absent legacy IDE positions. */
         if (lp_src_is_cdrom(i) && i!=src && !drives[i].present) continue;
@@ -556,11 +503,11 @@ static void lp_draw_hints(void) {
     lp_fill(23, 0, ' ', VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK, 80);
     if (lp_depth == 0) {
         lp_puts(23, 1,
-            "Up/Dn=Select Enter=Open F2=Source U=USB F3=Rescan F5=Eject Esc=Exit",
+            "Up/Dn=Select  Enter=Open  F2=Source  F3=Rescan  F5=Eject  Esc=Exit",
             VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK, 70);
     } else {
         lp_puts(23, 1,
-            "Up/Dn=Select Enter=Open Bksp=Up F2=Source U=USB F3=Rescan Esc=Exit",
+            "Up/Dn=Select  Enter=Open  \x11/Bksp=Up  F2=Source  F3=Rescan  Esc=Exit",
             VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK, 70);
     }
 }
@@ -580,7 +527,7 @@ static void lp_draw_footer(void) {
     lp_fill(24, 0, ' ', VGA_COLOR_BLACK, VGA_COLOR_CYAN, 80);
     lp_puts(24, 2,  "inteiliDOS LaunchPad 1.0",
             VGA_COLOR_BLACK, VGA_COLOR_CYAN, 28);
-    lp_puts(24, 46, "CD / Floppy / USB  |  IPGM / ELF",
+    lp_puts(24, 46, "ISO 9660  |  FAT12  |  IPGM  |  ELF",
             VGA_COLOR_BLACK, VGA_COLOR_CYAN, 34);
 }
 
@@ -691,19 +638,7 @@ static void lp_do_load(int src, int sel, const cdrom_drive_t *drives) {
     /* ── Perform the actual read ── */
     int32_t bytes = 0;
 
-    if (lp_src_is_usb(src)) {
-        char path[128];uint32_t size=0;
-        int path_ok=lp_usb_path(src,f->name,path);
-        /* USB_FILE_MAX is for editable documents, not native executables.
-         * Stream directly into LaunchPad's separate staging area. */
-        bytes=path_ok?(int32_t)f->size:-1;
-        for (uint32_t off=0;path_ok && off<f->size;) {
-            uint32_t n=f->size-off;if (n>16384) n=16384;
-            int rc=usb_file_read_at(path,off,lp_load_buf+off,n,&size);
-            if (rc || size!=f->size) {bytes=-1;break;}
-            off+=n;
-        }
-    } else if (lp_src_is_cdrom(src)) {
+    if (lp_src_is_cdrom(src)) {
         uint8_t di = (uint8_t)src;
         /* Construct a temporary dirent from cached LBA. */
         iso9660_dirent_t ent;
@@ -736,7 +671,7 @@ static void lp_do_load(int src, int sel, const cdrom_drive_t *drives) {
          * CD-ROM failures are not further classified here; the ISO 9660
          * layer already prints its own error into lp_err when appropriate.
          */
-        if (src==LP_SRC_FLOPPY_A) {
+        if (!lp_src_is_cdrom(src)) {
             int ferr = fdc_last_error_get();
             const char *detail;
             const char *hint;
@@ -901,10 +836,6 @@ static void launchpad_run_source(int initial_source, int elf_only) {
         }
     }
     if (initial_source>=0) src=initial_source;
-    else if (!elf_only && src==LP_SRC_FLOPPY_A) {
-        for (int d=0;d<USB_STORAGE_MAX;d++)
-            if (usb_storage_volumes()[d].mounted) {src=LP_SRC_USB0+d;break;}
-    }
     lp_probe_source(src,drives);
 
     int sel = 0;
@@ -943,17 +874,6 @@ static void launchpad_run_source(int initial_source, int elf_only) {
                 lp_draw_list(sel, top);
                 lp_draw_desc(sel);
             }
-        }
-        else if (!lp_cd_elf_only && (ch=='u' || ch=='U')) {
-            usb_storage_mount_all();
-            int start=lp_src_is_usb(src) ? src-LP_SRC_USB0 : -1;
-            src=LP_SRC_USB0;
-            for (int n=1;n<=USB_STORAGE_MAX;n++) {
-                int d=(start+n)%USB_STORAGE_MAX;
-                if (usb_storage_volumes()[d].mounted) {src=LP_SRC_USB0+d;break;}
-            }
-            lp_depth=sel=top=0;
-            lp_refresh_listing(src,drives);lp_draw_all(src,sel,top,drives);
         }
         else if (ch == LP_F2) {
             /* Cycle source — reset to root of new source, then probe. */

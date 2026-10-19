@@ -19,15 +19,14 @@ size_t kstrlen(const char *p) {return strlen(p);}
 char *kstrcpy(char *p,const char *q) {return strcpy(p,q);}
 char *kstrncpy(char *p,const char *q,size_t n) {return strncpy(p,q,n);}
 void timer_sleep(uint32_t ms) {(void)ms;}
-int usb_transport_scan(void) {scans++;return present[0]+present[1]+present[2]+present[3];}
-void usb_transport_forget_absent(void) {}
-int usb_transport_present(unsigned i) {return i<4 && present[i];}
-int usb_transport_release(unsigned i) {
+int usb_xhci_storage_scan(void) {scans++;return present[0]+present[1]+present[2]+present[3];}
+int usb_xhci_storage_present(unsigned i) {return i<4 && present[i];}
+int usb_xhci_storage_release(unsigned i) {
     assert(i<4);
     if (release_fail[i]) return -1;
     present[i]=0;releases[i]++;return 0;
 }
-int usb_transport_command(unsigned i,const uint8_t *cdb,unsigned len,
+int usb_xhci_storage_command(unsigned i,const uint8_t *cdb,unsigned len,
                              uint8_t *buffer,unsigned bytes,int write) {
     assert(i<4 && present[i] && len<=16);
     if (cdb[0]==0x35) {assert(!bytes);return sync_fail[i] ? -2 : 0;}

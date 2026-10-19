@@ -1,15 +1,12 @@
-/* Convert private CGA/Hercules/EGA/VGA pixels to native VGA; restore font/palette.
+/* Convert emulated CGA/Hercules pixels to native VGA; restore font/palette.
  * Guest video/PIT ports remain software registers, never passed through. */
 #include "msdos.h"
-#include "video.h"
 #include "../timer.h"
 #include "../vga.h"
 #include "../memory.h"
 static uint8_t font[8192], palette[768];
 static int graphics;
 static uint32_t sound;
-static uint32_t guest_palette_version;
-static int guest_vga;
 static uint8_t inb(uint16_t p) {
     uint8_t v;__asm__ volatile("inb %1,%0":"=a"(v):"Nd"(p));return v;
 }
@@ -23,24 +20,6 @@ static void font_access(void) {
     indexed(0x3c4,2,4);indexed(0x3c4,4,7);
     indexed(0x3ce,4,2);indexed(0x3ce,5,0);indexed(0x3ce,6,4);
 }
-void msdos_devices_init(void) {
-    outb(0x3c7,0);
-    for (unsigned i=0;i<768;i++) palette[i]=inb(0x3c9);
-    font_access();
-    for (unsigned i=0;i<8192;i++) font[i]=((volatile uint8_t *)0xa0000)[i];
-    vga_set_mode3();
-    msdos_video_font(font);
-    guest_vga=0;guest_palette_version=0;
-}
-static void legacy_palette(void) {
-    outb(0x3c8,0);
-    for (unsigned i=0;i<256;i++) {
-        unsigned color=i&15,base=color&8?21:0;
-        outb(0x3c9,base+((color&4)?42:0));
-        outb(0x3c9,base+((color&2)?42:0));
-        outb(0x3c9,base+((color&1)?42:0));
-    }
-}
 static void enter_graphics(void) {
     static const uint8_t seq[]={3,1,15,0,14};
     static const uint8_t crtc[]={
@@ -49,6 +28,10 @@ static void enter_graphics(void) {
     static const uint8_t gc[]={0,0,0,0,0,0x40,5,15,255};
     static const uint8_t ac[]={0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,
                               0x41,0,15,0,0};
+    outb(0x3c7,0);
+    for (unsigned i=0;i<768;i++) palette[i]=inb(0x3c9);
+    font_access();
+    for (unsigned i=0;i<8192;i++) font[i]=((volatile uint8_t *)0xa0000)[i];
     indexed(0x3c4,0,1);outb(0x3c2,0x63);
     for (unsigned i=1;i<5;i++) indexed(0x3c4,i,seq[i]);
     indexed(0x3c4,0,3);
@@ -58,7 +41,13 @@ static void enter_graphics(void) {
     (void)inb(0x3da);
     for (unsigned i=0;i<21;i++) {outb(0x3c0,i);outb(0x3c0,ac[i]);}
     outb(0x3c0,0x20);
-    legacy_palette();
+    outb(0x3c8,0);
+    for (unsigned i=0;i<256;i++) {
+        unsigned color=i&15, base=color&8?21:0;
+        outb(0x3c9,base+((color&4)?42:0));
+        outb(0x3c9,base+((color&2)?42:0));
+        outb(0x3c9,base+((color&1)?42:0));
+    }
     graphics=1;
 }
 static void leave_graphics(void) {
@@ -71,7 +60,7 @@ static void leave_graphics(void) {
     vga_set_mode3();
     outb(0x3c8,0);
     for (unsigned i=0;i<768;i++) outb(0x3c9,palette[i]);
-    graphics=0;guest_vga=0;
+    graphics=0;
 }
 int msdos_devices_graphics(void) {return graphics;}
 void msdos_devices_restore(void) {
@@ -84,27 +73,9 @@ void msdos_devices_update(const uint8_t *ram,const uint8_t *ports) {
         if (tone) speaker_on_divisor(tone);else speaker_off();
         sound=tone;
     }
-    int ega=msdos_video_active();
-    if (!ega && !(ports[0x3b8]&2)) {leave_graphics();return;}
+    if (!(ports[0x3b8]&2)) {leave_graphics();return;}
     if (!graphics) enter_graphics();
     volatile uint8_t *pixels=(volatile uint8_t *)0xa0000;
-    if (ega) {
-        uint32_t version=msdos_video_palette_version();
-        if (!guest_vga || version!=guest_palette_version) {
-            const uint8_t *colors=msdos_video_palette();
-            outb(0x3c8,0);
-            for (unsigned i=0;i<768;i++) outb(0x3c9,colors[i]);
-            guest_palette_version=version;guest_vga=1;
-        }
-        /* Fit the complete guest raster to the physical 320x200 presenter.
-         * Guest memory and BIOS coordinates retain their full resolution. */
-        unsigned width=msdos_video_width(),height=msdos_video_height();
-        for (unsigned y=0;y<200;y++)
-            for (unsigned x=0;x<320;x++)
-                pixels[y*320+x]=msdos_video_pixel(x*width/320,y*height/200);
-        return;
-    }
-    if (guest_vga) {legacy_palette();guest_vga=0;}
     int cga=ram[0x4ac], mono=cga && ram[0x449]==6;
     unsigned color_control=ports[0x3d9]==255?0x30:ports[0x3d9];
     uint32_t base=cga ? 0xb8000 : (ports[0x3b8]&128?0xb8000:0xb0000);

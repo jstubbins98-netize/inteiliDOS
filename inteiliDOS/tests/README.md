@@ -1,24 +1,5 @@
 # Modern hardware
 
-`python3 tests/run_setup_lock_test.py /tmp/legacy-build/inteilidOS.elf`
-installs to a disposable HDD, checks the per-copy lock, cold-boots the real
-MBR/VBR twice, verifies SETUP and INSTALL-OS refuse without any disk changes,
-and confirms the separate installation-media copy remains usable.
-The generated kernel-header directory is required for the focused test:
-`gcc -O1 -ffunction-sections -fdata-sections -I/tmp/legacy-build tests/setup_lock_test.c -Wl,--gc-sections -o /tmp/setup-lock-test && /tmp/setup-lock-test`.
-
-`python3 tests/run_launchpad_usb_test.py /tmp/usb-build/inteilidOS.elf`
-checks large (>64 KiB) native ELF execution from FAT16/FAT32 USB, nested
-folders, source switching, invalid-file refusal, Battery tab navigation,
-keyboard preservation and unchanged USB media.
-
-`gcc -O1 -Wall -Wextra -Werror -ffunction-sections -fdata-sections tests/battery_test.c -Wl,--gc-sections -o /tmp/battery-test && /tmp/battery-test`
-checks read-only Smart Battery transactions, capacity units/ratios,
-unavailable/invalid/busy/error/timeout cases and freshness invalidation.
-`run_health_test.py` additionally checks rendered percentages, low-battery
-and wear warnings, stale-data handling, navigation and non-destructive disks.
-Physical laptop battery compatibility still requires hardware testing.
-
 Application shortcuts are F2 Save, F3 Load, F10 Quit in iEdit and InteiliSheets.
 `python3 tests/run_app_function_keys_test.py /tmp/legacy-build/inteilidOS.elf`
 checks PS/2 shortcuts, real native C: saves/loads, active cell edits, cancelled
@@ -27,11 +8,9 @@ below checks these same shortcuts with an xHCI keyboard and USB destinations.
 
 `python3 tests/run_msdos_usb_test.py /tmp/usb-build/inteilidOS.elf`
 uses the locally supplied, licensed `../MS-DOS_disks` images (or `--media DIR`).
-Pass `--game /path/to/ZORK.IMG` for the supplied 360 KB Zork Trilogy image.
 It checks real MS-DOS setup from multi-cluster USB FAT32 images, automatic
 and explicit drive selection, errors for missing/unmounted/corrupt media,
 Disk 2 swapping, F8, persistence after re-entry and after removing USB,
-USB game directory reading and Zork gameplay, missing/invalid game refusal,
 and unchanged USB source images/native user files. Build with `--modern`
 to enable the xHCI driver. Only disposable test disks are modified.
 
@@ -87,57 +66,6 @@ and disposable. The 140 GiB test disks are sparse, not full allocations.
 
 To reuse a build: `python3 tests/run_modern_hardware_test.py /tmp/build/inteilidOS.elf`.
 Build that kernel with `python3 tests/build_test_kernel.py /tmp/build --modern`.
-
-# DOS HDD creation on SATA
-
-The USB DOS suite also runs `msdos_usb_swap.asm` as one uninterrupted DOS
-program: read disk one, F6 to disk two, read it, F6 back, and read disk one
-again. It checks wraparound and failed-swap preservation, and hashes the
-source USB images to ensure swapping never writes them. The host
-`msdos_reopen_test.c` covers ordered sets, F7/F6 return, media-change/cache
-invalidation and invalid-path handling.
-The COM fixture also checks disk-change services through a PUSHF/FAR CALL
-to the original BIOS entry, not only software INT 13h calls.
-
-```sh
-gcc -O1 -Wall -Wextra -Werror -DCONFIG_ENABLE_PCI_IDE=1 \
-  -ffunction-sections -fdata-sections tests/ahci_zero_test.c \
-  -Wl,--gc-sections -o /tmp/ahci-zero-test
-/tmp/ahci-zero-test
-python3 tests/run_msdos_usb_test.py /tmp/build/inteilidOS.elf --sata
-```
-
-The register-model test checks four-sector DMA commands, sector-count and
-PRDT lengths, one flush per at-most-128-sector batch, LBA28/LBA48 bounds,
-uncached/readonly drives, and data/short-transfer/flush failures. Optical
-ports are not writable through this API.
-The full-kernel SATA test uses locally supplied DOS images on USB and a
-disposable AHCI disk. It cancels during visible clearing, retries, reaches
-the real DOS prompt, runs DOS and a USB game, and verifies persistence
-without USB plus unchanged native/source data. The host
-`msdos_space_test.c` also covers cancellation before writing, after a
-partial clear, during system-file copying and during FAT creation, with no
-incomplete image published.
-
-# xHCI firmware startup and Intel port routing
-
-```sh
-gcc -O1 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
-  tests/usb_xhci_init_test.c -Wl,--gc-sections -o /tmp/usb-xhci-init-test
-/tmp/usb-xhci-init-test
-```
-
-This runs the actual driver against a PCI/MMIO register model. It checks
-Intel `8086:1e31` routing masks/order and unrelated-bit preservation,
-nonmatching-controller isolation, rejected routing writes, initial CNR
-readiness, normal ownership release and the Intel-only timeout fallback,
-SMI-enable readback and W1C event handling, rejected ownership requests,
-firmware ownership reclaim, nonmatching-controller refusal, bounded halt/reset/start failures,
-unavailable MMIO, unsupported page sizes, no rescan reset, and DMA timeout
-quarantine. It does not prove physical laptop compatibility.
-`run_usb_storage_test.py` additionally exercises real emulated xHCI/BOT
-read/write/mount/eject operations and USB keyboard isolation with a modern
-test kernel.
 
 # Background thermal monitoring
 
@@ -342,29 +270,7 @@ checks live updates and compares full disk-image hashes before/after.
 
 ```bash
 python3 tests/run_msdos_reopen_test.py
-python3 tests/run_msdos_function_keys_test.py \
-  /tmp/legacy-build/inteilidOS.elf /tmp/modern-build/inteilidOS.elf
-python3 tests/run_keyboard_modifiers_test.py
-python3 tests/run_msdos_modifiers_test.py \
-  /tmp/legacy-build/inteilidOS.elf /tmp/modern-build/inteilidOS.elf
 ```
-
-`run_msdos_function_keys_test.py` uses locally supplied DOS images and
-disposable disks to run a COM fixture under real DOS 6.22. It checks exact
-INT 16h scan/ASCII results for F10, F9, F1 and F5 with PS/2 and xHCI USB
-keyboards, plus F8 exit and continued shell keyboard operation. It does not
-require or redistribute Mario Teaches Typing.
-
-`run_keyboard_modifiers_test.py` runs the real PS/2 decoder/shared queue
-and USB report translator without port I/O. It checks modifier snapshots,
-independent sides, E0/Pause/PrintScreen handling, mixed input sources,
-unchanged legacy reads and BIOS encoding. `run_msdos_modifiers_test.py`
-runs 45 exact BIOS-key/held-state/release cases on each keyboard profile,
-alternating legacy/enhanced INT 16h peek/read APIs and checking `02h`/`12h`
-flags. A DOS INT 9h hook independently observes physical make codes.
-It also checks modifier-only transitions, modified reserved controls,
-shell typing, native editor F10 and protected native disk bytes.
-Screenshots go to `generated-artifacts/msdos-modifiers/`.
 
 This host test checks CD-independent disk selection, recovery from another
 native volume, ambiguous/invalid/unreadable-image refusal, and nonfatal

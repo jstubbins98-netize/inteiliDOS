@@ -97,8 +97,7 @@ int  ata_read_sector(uint8_t drive_index, uint32_t lba, uint8_t *buf);
 int  ata_write_sector(uint8_t drive_index, uint32_t lba, const uint8_t *buf);
 /* Diagnostic for the last failed write; meaningful when a write returned -1. */
 const char *ata_last_write_failure(void);
-/* Zero a bounds-checked extent; bounded PATA/AHCI batches remain durable
- * before success. AHCI uses four-sector commands and a flush per 128 sectors. */
+/* Zero a bounds-checked extent; batch PATA transfers/flushes for image setup. */
 int ata_zero_sectors(uint8_t drive_index, uint32_t lba, uint32_t count);
 
 #endif /* ATA_H */

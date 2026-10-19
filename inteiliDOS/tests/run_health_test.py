@@ -58,7 +58,7 @@ def integration(kernel, tmp, kind):
         guest.wait("Welcome to inteiliDOS"); guest.wait("> ")
         guest.text("health\n"); guest.wait("SYSTEM HEALTH")
         if kind=="read-error": guest.wait("PROBLEM DETECTED")
-        else: guest.wait("WARNINGS / LIMITED MONITORING")
+        else: guest.wait("No problems detected")
         guest.key("tab"); guest.wait("Disk health")
         if kind=="no-hdd": guest.wait("No ATA hard disk detected.")
         else:
@@ -74,8 +74,6 @@ def integration(kernel, tmp, kind):
         time.sleep(1.2)
         b=int(re.search(r"Live PIT ticks: (\d+)",guest.screen()).group(1))
         assert b>a, "Diagnostics did not refresh"
-        guest.key("5");guest.wait("Battery percentage: Unavailable")
-        guest.wait("Battery health (full / design capacity): Unavailable")
         guest.key("left"); guest.key("1"); guest.wait("Heap metadata:")
         guest.key("esc"); guest.wait("> ")
         guest.text("health\n"); guest.wait("SYSTEM HEALTH"); guest.key("q"); guest.wait("> ")

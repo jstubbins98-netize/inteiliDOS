@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# inteilidOS -- install-deps.sh
-# Installs the cross-compiler toolchain required to build inteiliDOS:
-# Homebrew on macOS; source compilation on Linux.
+# inteilidOS -- install.sh
+# Automatically downloads, builds, and installs the i686-elf cross-compiler
+# toolchain required to build inteilidOS.
 #
 # Installs:
 #   - binutils  (assembler, linker, objcopy, etc.)
 #   - gcc       (C / C++ compiler targeting bare-metal i686)
 #
-# Default source-build install prefix: $HOME/opt/cross
-# Override:  PREFIX=/usr/local/cross ./install-deps.sh
+# Default install prefix: $HOME/opt/cross
+# Override:  PREFIX=/usr/local/cross ./install.sh
 #
 # Supported hosts: Ubuntu/Debian, Fedora/RHEL, Arch Linux, macOS (Homebrew)
 # =============================================================================
@@ -22,8 +22,6 @@ BINUTILS_VER="${BINUTILS_VER:-2.41}"
 GCC_VER="${GCC_VER:-13.2.0}"
 TARGET="${TARGET:-i686-elf}"
 PREFIX="${PREFIX:-$HOME/opt/cross}"
-TOOLCHAIN_BIN="${PREFIX}/bin"
-TOOLCHAIN_PATH="${TOOLCHAIN_BIN}"
 
 # Mirror base URLs
 BINUTILS_URL="https://ftp.gnu.org/gnu/binutils/binutils-${BINUTILS_VER}.tar.xz"
@@ -53,76 +51,6 @@ die()     { echo -e "\n${RED}[FATAL]${RESET} $*\n" >&2; exit 1; }
 # ---------------------------------------------------------------------------
 # Detect OS and install system packages
 # ---------------------------------------------------------------------------
-setup_macos() {
-    info "Checking Xcode Command Line Tools"
-    if ! xcode-select -p &>/dev/null || ! xcrun --find clang &>/dev/null; then
-        info "Requesting Xcode Command Line Tools installation."
-        info "Accept the macOS installation dialog. Waiting up to 15 minutes; Ctrl-C cancels."
-        if ! xcode-select --install; then
-            warn "Installation may already be pending. Complete the macOS installation dialog."
-        fi
-        local deadline=$((SECONDS + 900))
-        until xcode-select -p &>/dev/null && xcrun --find clang &>/dev/null; do
-            if [[ "$SECONDS" -ge "$deadline" ]]; then
-                die "Xcode tools are not ready. Complete their installation, then rerun install-deps.sh."
-            fi
-            sleep 5
-        done
-    fi
-
-    # Homebrew may be installed but absent from a new terminal's PATH.
-    local brew_bin="" candidate installer
-    if command -v brew &>/dev/null; then
-        brew_bin="$(command -v brew)"
-    else
-        for candidate in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-            if [[ -x "$candidate" ]]; then brew_bin="$candidate";break;fi
-        done
-    fi
-    if [[ -z "$brew_bin" ]]; then
-        info "Installing Homebrew using its official installer (may request administrator approval)."
-        installer="$(mktemp)"
-        if ! curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh -o "$installer"; then
-            rm -f "$installer"
-            die "Could not download the Homebrew installer."
-        fi
-        if /bin/bash "$installer"; then
-            rm -f "$installer"
-        else
-            rm -f "$installer"
-            die "Homebrew installation failed."
-        fi
-        if command -v brew &>/dev/null; then
-            brew_bin="$(command -v brew)"
-        else
-            for candidate in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-                if [[ -x "$candidate" ]]; then brew_bin="$candidate";break;fi
-            done
-        fi
-        [[ -n "$brew_bin" ]] || die "Homebrew was not found after installation."
-    fi
-    eval "$("$brew_bin" shellenv)"
-    [[ "$TARGET" == "i686-elf" ]] ||
-        die "The macOS Homebrew installer supports TARGET=i686-elf; use Linux for custom source targets."
-    brew install cmake nasm wget gmp mpfr libmpc isl texinfo bison flex xorriso qemu
-    if ! command -v "${TARGET}-gcc" &>/dev/null; then
-        brew install i686-elf-gcc
-    else
-        info "Using existing ${TARGET}-gcc: $(command -v "${TARGET}-gcc")"
-    fi
-    if ! command -v "${TARGET}-ld" &>/dev/null; then
-        brew install i686-elf-binutils
-    fi
-    TOOLCHAIN_BIN="$(dirname "$(command -v "${TARGET}-gcc")")"
-    # A pre-existing compiler may live outside Homebrew's bin directory.
-    TOOLCHAIN_PATH="${TOOLCHAIN_BIN}"
-    local brew_tools="$("$brew_bin" --prefix)/bin"
-    if [[ "$brew_tools" != "$TOOLCHAIN_BIN" ]]; then
-        TOOLCHAIN_PATH="${TOOLCHAIN_PATH}:${brew_tools}"
-    fi
-    export PATH="${TOOLCHAIN_PATH}:${PATH}"
-}
-
 install_system_deps() {
     step "Installing system build dependencies"
 
@@ -162,15 +90,12 @@ install_system_deps() {
 
         elif command -v pacman &>/dev/null; then
             info "Detected Arch Linux — using pacman"
-            sudo pacman -S --needed --noconfirm \
+            sudo pacman -Sy --noconfirm \
                 base-devel cmake nasm \
                 gmp libmpc mpfr \
                 texinfo bison flex wget \
-                xorriso grub qemu-system-x86
-            command -v yay &>/dev/null ||
-                die "Arch Linux requires yay. Install yay, then rerun install-deps.sh."
-            info "Installing the Arch cross-compiler package with yay (source build follows)."
-            yay -S i686-elf-gcc
+                xorriso grub qemu-system-x86 \
+                2>/dev/null || true
 
         elif command -v zypper &>/dev/null; then
             info "Detected openSUSE — using zypper"
@@ -188,7 +113,11 @@ install_system_deps() {
 
     elif [[ "$OSTYPE" == "darwin"* ]]; then
         info "Detected macOS — using Homebrew"
-        setup_macos
+        if ! command -v brew &>/dev/null; then
+            die "Homebrew is not installed. Visit https://brew.sh to install it."
+        fi
+        brew install cmake nasm wget gmp mpfr libmpc isl \
+                     texinfo bison flex xorriso qemu 2>/dev/null || true
 
     else
         warn "Unsupported OS: $OSTYPE — skipping automatic package install."
@@ -232,20 +161,16 @@ echo -e "${BOLD}║       inteilidOS — i686-elf Toolchain Installer           
 echo -e "${BOLD}╚══════════════════════════════════════════════════════════════╝${RESET}"
 echo ""
 echo -e "  Target   : ${CYAN}${TARGET}${RESET}"
-echo -e "  Prefix   : ${CYAN}${PREFIX}${RESET} (environment/source-build prefix)"
-if [[ "$OSTYPE" == darwin* ]]; then
-    echo -e "  Toolchain: ${CYAN}Homebrew packages (existing compiler reused)${RESET}"
-else
-    echo -e "  binutils : ${CYAN}${BINUTILS_VER}${RESET}"
-    echo -e "  GCC      : ${CYAN}${GCC_VER}${RESET}"
-    echo -e "  Sources  : ${CYAN}${SRC_DIR}${RESET}"
-fi
+echo -e "  Prefix   : ${CYAN}${PREFIX}${RESET}"
+echo -e "  binutils : ${CYAN}${BINUTILS_VER}${RESET}"
+echo -e "  GCC      : ${CYAN}${GCC_VER}${RESET}"
+echo -e "  Sources  : ${CYAN}${SRC_DIR}${RESET}"
 echo ""
 
 # ---------------------------------------------------------------------------
 # Early-exit if toolchain already installed
 # ---------------------------------------------------------------------------
-if [[ "$OSTYPE" != darwin* && -x "${PREFIX}/bin/${TARGET}-gcc" ]]; then
+if [[ -x "${PREFIX}/bin/${TARGET}-gcc" ]]; then
     INSTALLED_VER=$("${PREFIX}/bin/${TARGET}-gcc" --version 2>&1 | head -1)
     warn "Toolchain already installed: ${INSTALLED_VER}"
     read -rp "    Re-install? [y/N] " ans
@@ -260,8 +185,6 @@ fi
 # Step 1: system dependencies
 # ---------------------------------------------------------------------------
 install_system_deps
-
-if [[ "$OSTYPE" != darwin* ]]; then
 
 # ---------------------------------------------------------------------------
 # Step 2: prepare directories
@@ -358,11 +281,6 @@ make -j"${JOBS}" all-target-libgcc
 make install-gcc
 make install-target-libgcc
 success "GCC installed to ${PREFIX}"
-else
-    # Homebrew owns its installation prefix; keep our environment snippet
-    # in the user's chosen prefix, not inside a versioned Homebrew Cellar.
-    mkdir -p "${PREFIX}"
-fi
 
 # ---------------------------------------------------------------------------
 # Step 8: verify installation
@@ -383,11 +301,11 @@ TOOLS=(
 
 ALL_OK=1
 for tool in "${TOOLS[@]}"; do
-    if command -v "${tool}" &>/dev/null; then
-        VER=$("${tool}" --version 2>&1 | head -1)
+    if [[ -x "${PREFIX}/bin/${tool}" ]]; then
+        VER=$("${PREFIX}/bin/${tool}" --version 2>&1 | head -1)
         success "${tool}: ${VER}"
     else
-        warn "MISSING on PATH: ${tool}"
+        warn "MISSING: ${PREFIX}/bin/${tool}"
         ALL_OK=0
     fi
 done
@@ -407,7 +325,7 @@ void kmain(void) {
 }
 EOF
 
-"${TARGET}-gcc" \
+"${PREFIX}/bin/${TARGET}-gcc" \
     -m32 -ffreestanding -nostdlib -nostdinc \
     -c "${TMPDIR_TEST}/hello.c" -o "${TMPDIR_TEST}/hello.o"
 
@@ -424,8 +342,8 @@ rm -rf "${TMPDIR_TEST}"
 ENVFILE="${PREFIX}/env.sh"
 cat > "${ENVFILE}" <<EOF
 # i686-elf cross-compiler environment for inteilidOS
-# Auto-generated by inteilidOS/install-deps.sh
-export PATH="${TOOLCHAIN_PATH}:\${PATH}"
+# Auto-generated by inteilidOS/install.sh
+export PATH="${PREFIX}/bin:\${PATH}"
 EOF
 success "Environment snippet written to ${ENVFILE}"
 
@@ -434,7 +352,7 @@ success "Environment snippet written to ${ENVFILE}"
 # ---------------------------------------------------------------------------
 step "Adding toolchain to PATH"
 
-EXPORT_LINE="export PATH=\"${TOOLCHAIN_PATH}:\$PATH\""
+EXPORT_LINE="export PATH=\"${PREFIX}/bin:\$PATH\""
 MARKER="# inteilidOS i686-elf toolchain"
 BLOCK="${MARKER}\n${EXPORT_LINE}"
 
@@ -477,7 +395,7 @@ for RC in "${RC_FILES[@]}"; do
     fi
 
     # Skip if this prefix is already present in the file
-    if grep -qF "${TOOLCHAIN_PATH}" "${RC}" 2>/dev/null; then
+    if grep -qF "${PREFIX}/bin" "${RC}" 2>/dev/null; then
         info "Already present in ${RC} — skipping"
         continue
     fi
@@ -493,7 +411,7 @@ if [[ "${PATCHED}" == "0" ]]; then
 fi
 
 # Make the toolchain available in THIS script's session immediately
-export PATH="${TOOLCHAIN_PATH}:${PATH}"
+export PATH="${PREFIX}/bin:${PATH}"
 success "Toolchain is now on PATH for this session"
 
 # Confirm the binary is reachable
@@ -512,7 +430,7 @@ echo -e "${BOLD}╔════════════════════�
 echo -e "${BOLD}║          Toolchain installation complete!                    ║${RESET}"
 echo -e "${BOLD}╚══════════════════════════════════════════════════════════════╝${RESET}"
 echo ""
-echo -e "  ${GREEN}${LIVE_VER:-${TARGET}-gcc}${RESET} available at ${CYAN}${TOOLCHAIN_BIN}${RESET}"
+echo -e "  ${GREEN}i686-elf-gcc ${GCC_VER}${RESET} installed at ${CYAN}${PREFIX}/bin${RESET}"
 echo ""
 echo -e "  PATH updated in:"
 for RC in "${RC_FILES[@]}"; do

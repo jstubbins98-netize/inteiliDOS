@@ -1,5 +1,4 @@
 #include "../kernel/usb.h"
-#include "../kernel/keyboard.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -7,20 +6,11 @@
 static uint8_t injected[32];
 static unsigned count;
 void keyboard_inject(uint8_t c) { assert(count<sizeof(injected));injected[count++]=c; }
-static keyboard_event_t state, last;
-void keyboard_usb_modifiers(uint8_t mods,uint8_t caps) {
-    state=(keyboard_event_t){.modifiers=mods,.caps_lock=caps};
-}
-void keyboard_current_event(keyboard_event_t *e) {*e=state;}
-void keyboard_inject_event(uint8_t c,uint8_t scan,uint8_t mods,uint8_t caps) {
-    last=(keyboard_event_t){c,scan,mods,caps};keyboard_inject(c);
-}
 static void press(uint8_t modifier,uint8_t key,uint8_t expected) {
     uint8_t report[8]={modifier,0,key},previous[8]={0};
     unsigned before=count;
     assert(usb_process_boot_report(report,previous));
     assert(count==before+1 && injected[before]==expected);
-    assert(last.modifiers==modifier && last.scancode);
     assert(usb_process_boot_report(report,report) && count==before+1);
 }
 int main(void) {

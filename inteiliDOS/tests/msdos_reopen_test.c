@@ -25,17 +25,9 @@ int kstrcmp(const char *a,const char *b) {return strcmp(a,b);}
 size_t kstrlen(const char *s) {return strlen(s);}
 char *kstrcpy(char *d,const char *s) {return strcpy(d,s);}
 static usb_volume_info_t usb_volumes[USB_STORAGE_MAX];
-static uint8_t usb_game_data[1474560];
-static uint32_t usb_game_size;
-static int usb_read_error;
 const usb_volume_info_t *usb_storage_volumes(void) {return usb_volumes;}
 int usb_file_read_at(const char *p,uint32_t o,uint8_t *b,uint32_t n,uint32_t *s) {
-    if (usb_game_size || usb_read_error) {
-        assert(!strcmp(p,"USB1:\\GAME.IMG") || !strcmp(p,"USB1:\\NEXT.IMG"));
-        if (usb_read_error) return usb_read_error;
-        assert(o<=usb_game_size && n<=usb_game_size-o);
-        memcpy(b,usb_game_data+o,n);*s=usb_game_size;return 0;
-    }
+    (void)p;(void)o;(void)b;(void)n;(void)s;
     assert(!"unexpected USB read");return -1;
 }
 const char *usb_storage_error(int rc) {(void)rc;return "USB error";}
@@ -48,13 +40,6 @@ void vga_get_cursor(int *r,int *c) {*r=*c=0;}
 void vga_set_cursor(int r,int c) {(void)r;(void)c;}
 uint32_t timer_get_ticks(void) {return 0;}
 int keyboard_poll(void) {int k=key;key=-1;return k;}
-int keyboard_poll_event(keyboard_event_t *e) {
-    int k=keyboard_poll();
-    if (k<0) return 0;
-    *e=(keyboard_event_t){.character=(uint8_t)k};
-    return 1;
-}
-void keyboard_current_event(keyboard_event_t *e) {*e=(keyboard_event_t){0};}
 void msdos_devices_restore(void) {}
 int msdos_devices_graphics(void) {return 0;}
 void msdos_devices_update(const uint8_t *a,const uint8_t *b) {(void)a;(void)b;}
@@ -110,22 +95,8 @@ int fdc_read_sector(uint8_t d,uint32_t lba,uint8_t *b) {
 static void fixture(void) {
     memset(images,0,sizeof(images));output[0]=0;
     cd_calls=boot_calls=reserve_calls=fdc_calls=0;key=-1;
-    usb_game_size=0;usb_read_error=0;
 }
 int main(void) {
-    /* Guest installers use F10 (BIOS scan 44h). Do not truncate the
-     * SDL-style function-key mapping at the reserved F8 exit shortcut. */
-    const int guest_keys[]={KEY_F1,KEY_F2,KEY_F3,KEY_F4,KEY_F5,KEY_F9,KEY_F10};
-    for (unsigned i=0;i<sizeof(guest_keys)/sizeof(guest_keys[0]);i++) {
-        fixture();pending=-1;delivered_keyboard_state=0;io_failed=0;last_refresh=0;
-        key=guest_keys[i];
-        assert(!msdos_pc_poll(NULL,NULL));
-        unsigned scan=0x3b+guest_keys[i]-KEY_F1;
-        assert((unsigned)msdos_pc_key()==((scan<<8) | (scan<<24)));
-        assert(msdos_pc_key()==-1);
-    }
-    key=KEY_F8;
-    assert(msdos_pc_poll(NULL,NULL)==1 && msdos_pc_key()==-1);
     fixture();images[0]=1;expected_drive=0;
     assert(!prepare_disk(0,NULL) && hard.drive==expected_drive && !cd_calls);
     /* Prefer the current C: image, even if another native disk has one. */
@@ -168,58 +139,5 @@ int main(void) {
     fixture();images[0]=1;
     const char *bad_usb[]={"/USB","USB4:"};
     assert(prepare_disk(2,bad_usb)==1 && strstr(output,"Usage:"));
-    const char *game_args[]={"/USB","USB1:\\GAME.IMG"};
-    fixture();
-    assert(prepare_disk(2,game_args)==1 && strstr(output,"install DOS first"));
-    assert(!reserve_calls && !cd_calls && !fdc_calls);
-    for (int i=0;i<4;i++) {
-        static const unsigned totals[]={720,1440,2400,2880};
-        static const unsigned tracks[]={9,9,15,18};
-        fixture();images[0]=1;
-        usb_game_size=totals[i]*512;
-        memset(usb_game_data,0,sizeof(usb_game_data));
-        w16(usb_game_data+11,512);w16(usb_game_data+19,totals[i]);
-        w16(usb_game_data+24,tracks[i]);w16(usb_game_data+26,2);
-        usb_game_data[510]=0x55;usb_game_data[511]=0xaa;
-        usb_game_data[2047]=0x12;usb_game_data[2048]=0x34;
-        assert(!prepare_disk(2,game_args));
-        unsigned total,track;
-        assert(msdos_pc_floppy_params(&total,&track));
-        assert(total==totals[i] && track==tracks[i]);
-        assert(read_floppy(2047,sector,2)==0 && sector[0]==0x12 && sector[1]==0x34);
-        assert(read_floppy(usb_game_size-1,sector,2)==-1);
-        assert(!msdos_pc_disk(1,0,sector,512,1)); /* no USB image writes */
-        key=KEY_F6;assert(!msdos_pc_poll(ram,ports));
-        assert(media_index==-1 && !strcmp(usb_image,"USB1:\\GAME.IMG"));
-        const char *set[]={"/USB","USB1:\\GAME.IMG","USB1:\\NEXT.IMG"};
-        assert(!prepare_disk(3,set) && usb_game_count==2 && !usb_game_index);
-        (void)msdos_media_changed();
-        key=KEY_F6;assert(!msdos_pc_poll(ram,ports));
-        assert(usb_game_index==1 && !strcmp(usb_image,"USB1:\\NEXT.IMG"));
-        assert(msdos_media_changed() && !physical && media_cached_lba==0xffffffff);
-        key=KEY_F6;assert(!msdos_pc_poll(ram,ports));
-        assert(!usb_game_index && !strcmp(usb_image,"USB1:\\GAME.IMG"));
-        (void)msdos_media_changed();
-        usb_read_error=-1;key=KEY_F6;
-        assert(!msdos_pc_poll(ram,ports) && !io_failed && !usb_game_index);
-        assert(!strcmp(usb_image,"USB1:\\GAME.IMG") && !msdos_media_changed());
-        assert(strstr(output,"previous disk retained"));usb_read_error=0;
-        key=KEY_F7;assert(!msdos_pc_poll(ram,ports) && physical);
-        key=KEY_F6;assert(!msdos_pc_poll(ram,ports) && !physical && usb_game_index==1);
-        const char *bad_set[]={"/USB","USB1:\\GAME.IMG","USB4:\\NEXT.IMG"};
-        assert(prepare_disk(3,bad_set)==1 && strstr(output,"Usage:"));
-        const char *large_set[]={"/USB","USB1:\\GAME.IMG","USB1:\\GAME.IMG",
-            "USB1:\\GAME.IMG","USB1:\\GAME.IMG","USB1:\\GAME.IMG",
-            "USB1:\\GAME.IMG","USB1:\\GAME.IMG","USB1:\\GAME.IMG","USB1:\\GAME.IMG"};
-        assert(!prepare_disk(9,large_set) && usb_game_count==8);
-        assert(prepare_disk(10,large_set)==1 && strstr(output,"Usage:"));
-        assert(!prepare_disk(3,set));
-        assert(!reserve_calls && !cd_calls && !fdc_calls);
-        usb_game_data[510]=0;
-        assert(prepare_disk(2,game_args)==1 && strstr(output,"invalid USB floppy"));
-    }
-    fixture();images[0]=1;usb_read_error=-4;
-    assert(prepare_disk(2,game_args)==1 && strstr(output,"cannot read USB game"));
     puts("PASS: CD-independent saved DOS startup, other-volume recovery, ambiguity/size/I/O protection and optional floppy failure");
-    puts("PASS: USB game geometries, cache boundaries, read-only media, F6 preservation and refusal before HDD creation");
 }

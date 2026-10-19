@@ -5,7 +5,7 @@
 #include <string.h>
 #include "../shell/cdrom_command.c"
 
-static cdrom_drive_t table[CDROM_MAX_DRIVES];
+static cdrom_drive_t table[4];
 static char output[16384];
 static int rescans,ejects,eject_drive,eject_error,reads,dir_error,launch_drive;
 static int sector_error;
@@ -43,22 +43,19 @@ static void drive(unsigned i,int disc) {
     table[i]=(cdrom_drive_t){1,i,disc ? 123:0,disc ? 2048:0};
 }
 int main(void) {
-    reset();assert(!invoke(NULL) && strstr(output,"Show command usage") && !rescans && !reads);
-    assert(strstr(output,"/DRIVE-INFO") && !strstr(output,"/?"));
-    assert(invoke("/?")==-1 && strstr(output,"Unknown CDROM option") && !rescans);
-    assert(invoke("/DRIVE-INFO")==-1 && strstr(output,"No CD-ROM drive"));
-    reset();
+    reset();assert(invoke(NULL)==-1 && strstr(output,"No CD-ROM drive"));
+    reset();assert(!invoke("/?") && !rescans);
     assert(invoke("/WRONG")==-1 && !rescans);
     const char *extra[]={"/LIST","extra"};assert(cdrom_command(2,extra)==-1);
-    drive(0,0);assert(!invoke("/DRIVE-INFO") && strstr(output,"No readable data disc"));
+    drive(0,0);assert(!invoke(NULL) && strstr(output,"No readable data disc"));
     assert(invoke("/RUN")==-1 && launch_drive==-1);
     assert(invoke("/LIST")==-1);
-    drive(2,1);assert(!invoke("/drive-info") && strstr(output,"TEST_DISC"));
+    drive(2,1);assert(!invoke(NULL) && strstr(output,"TEST_DISC"));
     assert(strstr(output,"Secondary master") && strstr(output,"248 KiB"));
     assert(!invoke("/list") && strstr(output,"<DIR> APPS"));
     assert(strstr(output,"HELLO.ELF (4096 bytes)"));
     assert(!invoke("/run") && launch_drive==2);
-    sector_error=1;assert(!invoke("/DRIVE-INFO") && strstr(output,"could not be read"));
+    sector_error=1;assert(!invoke(NULL) && strstr(output,"could not be read"));
     assert(!strstr(output,"TEST_DISC"));
     dir_error=1;assert(invoke("/LIST")==-1 && strstr(output,"Cannot list"));
     assert(!invoke("/eject") && eject_drive==2 && !table[2].last_lba);

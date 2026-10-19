@@ -155,7 +155,7 @@ static int cmd_help(int argc, const char *argv[]) {
     vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     println("  DISKCHECK - Check IDE hard disk health and geometry");
     println("  BOOTREPAIR - Confirmed native boot-sector repair; preserves files");
-    println("  CDROM    - Usage; /DRIVE-INFO, /EJECT, /LIST, /RUN");
+    println("  CDROM    - CD-ROM info; /EJECT, /LIST, /RUN");
     println("  USB      - USB drive usage; /MOUNT, /EJECT");
 
     /* System */
@@ -184,7 +184,6 @@ static int cmd_help(int argc, const char *argv[]) {
     println("  HEALTH   - Live System Health / Disk Health / System Info");
     println("  MS-DOS   - MS-DOS 6.22 emulator; persistent C: drive; F8 returns here");
     println("             MS-DOS /USB [USB0:..USB3:] - Read supplied DOS USB images");
-    println("             MS-DOS /USB USB0:\\GAME.IMG - Load a USB game disk as A:");
 
     /* Games */
     vga_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);

@@ -15,8 +15,7 @@ static int option_is(const char *a, const char *b) {
 }
 
 static void usage(void) {
-    vga_puts("CDROM        Show command usage\n"
-             "CDROM /DRIVE-INFO  Drive and inserted-disc information\n"
+    vga_puts("CDROM         Drive and inserted-disc information\n"
              "CDROM /EJECT  Open the first inserted disc's tray (else first drive)\n"
              "CDROM /LIST   List ISO9660 root contents on inserted discs\n"
              "CDROM /RUN    Browse and launch CD-ROM ELF programs in LaunchPad\n");
@@ -68,11 +67,10 @@ static void disc_info(unsigned i, const cdrom_drive_t *drive) {
 
 int cdrom_command(int argc, const char *argv[]) {
     enum {INFO,EJECT,LIST,RUN} action=INFO;
-    if (argc==0) { usage(); return 0; }
     if (argc>1) { usage(); return -1; }
     if (argc==1) {
-        if (option_is(argv[0],"/DRIVE-INFO")) action=INFO;
-        else if (option_is(argv[0],"/EJECT")) action=EJECT;
+        if (option_is(argv[0],"/?")) { usage(); return 0; }
+        if (option_is(argv[0],"/EJECT")) action=EJECT;
         else if (option_is(argv[0],"/LIST")) action=LIST;
         else if (option_is(argv[0],"/RUN")) action=RUN;
         else { vga_puts("Unknown CDROM option.\n"); usage(); return -1; }

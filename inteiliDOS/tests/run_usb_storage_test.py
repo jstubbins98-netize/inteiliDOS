@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real xHCI or EHCI/BOT/FAT writes, eject/remount and keyboard isolation in QEMU.
+"""Real xHCI/BOT/FAT writes, eject/remount and keyboard isolation in QEMU.
 Only disposable images are modified. No host FAT tools are required.
 """
 from pathlib import Path
@@ -112,8 +112,7 @@ def files_on_disk(path):
 
 def main():
     kernel=Path(sys.argv[1]).resolve()
-    ehci="--ehci" in sys.argv[2:]
-    output=Path("generated-artifacts/usb-storage"+("-ehci" if ehci else "")).resolve()
+    output=Path("generated-artifacts/usb-storage").resolve()
     output.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="usb-storage-") as folder:
         t=Path(folder)
@@ -126,8 +125,7 @@ def main():
         subprocess.run(["gcc","-std=c11","-O1","-Wall","-Wextra",
                         str(root/"tests/usb_storage_test.c"),
                         str(root/"kernel/usb_storage.c"),
-                        str(root/"kernel/fatfs/ff.c"),
-                        str(root/"kernel/fatfs/ffunicode.c"),"-o",str(host)],check=True)
+                        str(root/"kernel/fatfs/ff.c"),"-o",str(host)],check=True)
         subprocess.run([str(host),str(disk0),str(disk1)],check=True)
         dialog=t/"dialog-test"
         subprocess.run(["gcc","-std=c11","-Wall","-Wextra","-Werror",
@@ -135,13 +133,8 @@ def main():
                         str(root/"shell/storage_dialog.c"),"-o",str(dialog)],check=True)
         subprocess.run([str(dialog)],check=True)
         source=fat_image(disk0,16,True);fat_image(disk1,32)
-        controllers=("-device","ich9-usb-ehci1,id=usb",
-                     "-device","ich9-usb-uhci1,masterbus=usb.0,firstport=0",
-                     "-device","ich9-usb-uhci2,masterbus=usb.0,firstport=2",
-                     "-device","ich9-usb-uhci3,masterbus=usb.0,firstport=4") if ehci else (
-                     "-device","qemu-xhci,id=usb")
-        args=("-cpu","core2duo","-m","256",*controllers,
-              "-device","usb-kbd,bus=usb.0,port=2"+(",usb_version=1" if ehci else ""),
+        args=("-cpu","core2duo","-m","256","-device","qemu-xhci,id=usb",
+              "-device","usb-kbd,bus=usb.0,port=2",
               "-drive",f"if=none,id=stick0,file={disk0},format=raw",
               "-device","usb-storage,id=usbdrive0,drive=stick0,bus=usb.0,port=1",
               "-drive",f"if=none,id=stick1,file={disk1},format=raw",
@@ -153,11 +146,6 @@ def main():
             shell(g,"usb /bogus");g.wait("Unknown USB option")
             shell(g,"usb /mount /eject");g.wait("Unknown USB option or extra arguments")
             shell(g,"usb /mount");g.wait("2 USB drive(s) mounted.")
-            g.wait("EHCI controller: EHCI controller running" if ehci else
-                   "USB controller: xHCI controller running")
-            if ehci: g.wait("No xHCI controller found")
-            g.wait("connected ports: 2" if ehci else "connected ports: 3")
-            g.wait("EHCI failed ports: 0" if ehci else "Failed ports: 0")
             # Interactive copy picks exactly one file, not every drive entry.
             shell(g,"usb /copy");g.wait("Copy ONE selected")
             g.key("0");g.wait("Choose file [Esc=cancel]")
@@ -178,8 +166,7 @@ def main():
             shell(g,"copy usb0:\\large.bin usb1:\\short.bin");g.wait("Copied 10023 bytes")
             shell(g,"copy usb0:\\hello.txt usb1:\\short.bin")
             g.wait(f"Copied {len(source)} bytes")
-            # LFN-enabled FatFs preserves the lowercase name used at create.
-            shell(g,"cls");shell(g,"dir usb1:");g.wait("multi.bin")
+            shell(g,"cls");shell(g,"dir usb1:");g.wait("MULTI.BIN")
             g.command("screendump",{"filename":str(output/"mounted-files.ppm")})
             # Exercise iEdit save/open through its actual dialogs.
             shell(g,"iedit");g.wait("iEdit")
@@ -242,8 +229,7 @@ def main():
             shell(g,"type usb0:\\edit.txt");g.wait("USB editor save works")
             shell(g,"usb /eject");g.wait("USB storage eject complete")
             # Keyboard must remain usable after many command/transfer ring wraps.
-            # HELP is longer than one viewport; its IEDIT line scrolls away.
-            shell(g,"help");g.wait("IntelliShell also understands plain English:")
+            shell(g,"help");g.wait("IEDIT    - IEdit")
             g.command("screendump",{"filename":str(output/"keyboard-after-eject.ppm")})
             assert files_on_disk(disk0)["EDIT.TXT"]==b"USB editor save works\n\n"
             assert files_on_disk(disk1)["COPIED.TXT"]==source
@@ -254,8 +240,7 @@ def main():
             assert files_on_disk(disk1)["SHORT.BIN"]==source
             assert files_on_disk(disk1)["MULTI.BIN"]==bytes((i*37+11)&255 for i in range(10023))
             assert files_on_disk(disk0)["HELLO.TXT"]==source
-            print("PASS: "+("EHCI storage + companion UHCI keyboard" if ehci else
-                           "xHCI-only keyboard")+" + 2 BOT drives, MBR FAT16 and raw FAT32, "
+            print("PASS: xHCI-only keyboard + 2 BOT drives, MBR FAT16 and raw FAT32, "
                   "usage/options, DIR/TYPE/COPY, single-file chooser/cancel, iEdit, BASIC "
                   "and Sheets USB save/load, BASIC execution after load, safe eject, "
                   "blocked access, remount and independently verified persisted bytes/FAT mirrors")

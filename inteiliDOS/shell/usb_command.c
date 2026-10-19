@@ -1,7 +1,5 @@
 #include "usb_command.h"
 #include "../kernel/usb_storage.h"
-#include "../kernel/usb_xhci.h"
-#include "../kernel/usb_ehci.h"
 #include "../kernel/fs.h"
 #include "../kernel/memory.h"
 #include "../kernel/vga.h"
@@ -21,14 +19,13 @@ static void usage(void) {
     vga_puts("USB          Show this usage\n"
              "USB /MOUNT   Detect and mount supported USB drives (read/write)\n"
              "USB /EJECT   Flush and safely disconnect all detected USB drives\n"
-             "USB /SHOW-PORTS  List currently mounted USB drives and capacities\n"
              "USB /COPY    Choose ONE file and its save destination (no bulk copy)\n"
              "Mounted drives: USB0:..USB3: (not C: or D:)\n"
              "Examples: DIR USB0:    TYPE USB0:\\NOTES.TXT\n"
              "          COPY USB0:\\NOTES.TXT USB1:\\NOTES.TXT\n"
              "iEdit/BASIC/Sheets: choose [3] USB in the save/open device dialog.\n"
-             "Requires xHCI or EHCI (USB 2 high-speed), direct root port, BOT.\n"
-             "FAT12/16/32 and exFAT; CP437 names. NTFS, hubs, UHCI/OHCI storage\n"
+             "Requires xHCI, direct root port, SCSI bulk-only USB storage.\n"
+             "FAT12/16/32; 8.3 names. NTFS/exFAT, hubs, UHCI/OHCI/EHCI storage\n"
              "and UAS-only drives are not supported. USB keyboards stay active.\n");
 }
 static void statuses(void) {
@@ -43,51 +40,14 @@ static void statuses(void) {
 int usb_command(int argc,const char *argv[]) {
     if (!argc || (argc==1 && option(argv[0],"/?"))) {usage();return 0;}
     if (argc==1 && option(argv[0],"/COPY")) return usb_pick_and_copy();
-    if (argc==1 && option(argv[0],"/SHOW-PORTS")) {
-        const usb_volume_info_t *v=usb_storage_volumes();
-        unsigned count=0;
-        vga_puts("Currently mounted USB drives (not a physical socket map):\n");
-        for(unsigned i=0;i<USB_STORAGE_MAX;i++)if(v[i].mounted){
-            vga_printf(" USB%u:  %u KiB  %s\n",i,v[i].sectors/2,v[i].status);
-            count++;
-        }
-        if(!count)vga_puts("No USB drives mounted. Run USB /MOUNT first.\n");
-        else vga_printf("%u mounted USB drive(s).\n",count);
-        return 0;
-    }
     if (argc!=1 || (!option(argv[0],"/MOUNT") && !option(argv[0],"/EJECT"))) {
         vga_puts("Unknown USB option or extra arguments.\n");usage();return -1;
     }
     if (option(argv[0],"/MOUNT")) {
         int result=usb_storage_mount_all();
         statuses();
-        const usb_xhci_info_t *controller=usb_xhci_info();
-        vga_printf("USB controller: %s\n",controller->status);
-        if (controller->found) {
-            vga_printf("PCI %02X:%02X.%u ID %04X:%04X; connected ports: %u\n",
-                       controller->bus,controller->device,controller->function,
-                       controller->vendor_id,controller->device_id,
-                       controller->connected_ports);
-            vga_printf("Failed ports: %u; Intel port routing: %s\n",
-                       controller->failed_ports,controller->intel_routing ? "enabled" : "not applied");
-            if (controller->legacy_present) {
-                vga_printf("xHCI ownership: %08X; legacy control: %08X\n",
-                           controller->legacy_support,controller->legacy_control);
-                if (controller->bios_handoff_fallback)
-                    vga_puts("BIOS handoff: Intel ownership fallback applied.\n");
-            }
-            if (controller->event_type)
-                vga_printf("Last failed event: %u; completion code: %u (0 = timeout)\n",
-                           controller->event_type,controller->completion_code);
-        }
-        const usb_ehci_info_t *ehci=usb_ehci_info();
-        vga_printf("EHCI controller: %s\n",ehci->status);
-        if (ehci->found)
-            vga_printf("EHCI PCI %02X:%02X.%u ID %04X:%04X; connected ports: %u\n"
-                       "EHCI failed ports: %u\n",ehci->bus,ehci->device,ehci->function,
-                       ehci->vendor_id,ehci->device_id,ehci->connected_ports,ehci->failed_ports);
         if (result<0) {
-            vga_puts("USB mount unavailable; controller details shown above.\n");
+            vga_puts("USB mount unavailable: no usable xHCI controller, or drive/controller error.\n");
             return -1;
         }
         vga_printf("%u USB drive(s) mounted.\n",(unsigned)result);
@@ -100,13 +60,12 @@ int usb_command(int argc,const char *argv[]) {
     return result;
 }
 int usb_command_list(const char *path) {
-    static usb_file_info_t files[64];
+    usb_file_info_t files[64];
     int n=usb_file_list(path,files,64);
     if (n<0) {vga_puts(usb_storage_error(n));vga_putchar('\n');return -1;}
     vga_printf(" Directory of %s\n",path);
     for (int i=0;i<n;i++) {
         if (files[i].directory) vga_printf(" <DIR> %s\n",files[i].name);
-        else if(files[i].size_overflow)vga_printf(" %s  >4 GiB (streaming unsupported)\n",files[i].name);
         else vga_printf(" %s  %u bytes\n",files[i].name,files[i].size);
     }
     if (!n) vga_puts("(empty directory)\n");
