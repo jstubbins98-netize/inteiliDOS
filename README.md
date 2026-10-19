@@ -85,8 +85,7 @@ Repository paths:
   inteiliDOS/for_developers.md        Development reference.
 ```
 
-License and attribution information is included in the source documentation
-and the comprehensive manual.
+License and attribution information is included in the source documentation.
 
 ## CREDITS
 
