@@ -790,6 +790,7 @@ static int prepare_disk(int argc, const char *argv[]) {
 
 int msdos_run(int argc, const char *argv[]) {
     if (prepare_disk(argc,argv)) return 1;
+    vga_puts("DOS CPU: Intel 80286 real-mode compatibility.\n");
     int sr,sc;
     vga_get_cursor(&sr,&sc);
     for (int i=0;i<2000;i++) saved[i]=SCREEN[i];
@@ -802,7 +803,9 @@ int msdos_run(int argc, const char *argv[]) {
     for (int i=0;i<2000;i++) SCREEN[i]=saved[i];
     vga_set_cursor(sr,sc);
     vga_puts(io_failed?"MS-DOS stopped: disk I/O failed.\n":
-             rc==-2?"MS-DOS stopped: unsupported CPU instruction (286/386/x87).\n":
+             rc==-3?"MS-DOS stopped: protected mode is not supported (real-mode 80286 guest).\n":
+             rc==-4?"MS-DOS stopped: invalid guest interrupt table.\n":
+             rc==-2?"MS-DOS stopped: unsupported CPU instruction or unhandled fault (386/x87).\n":
              rc?"MS-DOS: not enough memory for the emulator.\n":
                 "Returned from MS-DOS. Completed disk writes are saved.\n");
     return rc || io_failed;

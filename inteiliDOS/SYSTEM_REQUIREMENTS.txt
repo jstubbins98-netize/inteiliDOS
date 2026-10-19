@@ -152,16 +152,18 @@ DOS installation media
   MS-DOS 4.0 source is not a substitute for these MS-DOS 6.22 system files.
 
 Requirements for DOS programs
-  Programs must be compatible with an 8086/80186-class DOS guest and its
+  Programs must be compatible with a real-mode 80286-compatible DOS guest and its
   640 KiB conventional memory.
-  Supported output includes text, CGA/Hercules graphics, and PC-speaker sound.
+  Supported output includes text, CGA/Hercules, EGA/VGA graphics (modes
+  0Dh-13h, including unchained Mode X), and PC-speaker sound.
   A host PC speaker is needed for audible guest speaker output.
-  The native VGA adapter renders supported guest graphics.
+  The native VGA adapter fits supported guest graphics to 320x200;
+  higher-resolution EGA/VGA modes are downsampled.
 
   Currently unsupported:
     - 286/386 protected-mode programs, DOS extenders, and DPMI.
     - EMS/XMS memory managers and x87 floating-point instructions.
-    - EGA/VGA-specific graphics and Sound Blaster/other sound-card audio.
+    - VESA/SVGA modes and Sound Blaster/other sound-card audio.
     - DOS networking and DOS CD-ROM/MSCDEX drivers.
     - Windows NE/LE/LX/PE executables.
 
@@ -196,7 +198,7 @@ inteiliDOS plus MS-DOS
   486/Pentium-class machine, 32 MiB RAM, VGA, compatible keyboard,
   PC speaker enabled, and a 32 MiB or larger IDE HDD (64 MiB recommended).
   IDE/ATAPI CD-ROM containing the rebuilt ISO and DOS installation images.
-  Remember that the software guest remains an 8086/80186-class PC.
+  Remember that the software guest offers real-mode 80286 compatibility only.
 
 Match Willburd's build-time hardware profile to the selected emulator machine.
 Select an IDE/ATAPI CD-ROM, not a SCSI or proprietary CD-ROM interface.

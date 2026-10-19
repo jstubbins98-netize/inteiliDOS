@@ -1,6 +1,6 @@
 # MS-DOS 6.22 in inteiliDOS
 
-The `MS-DOS` command opens a software-emulated 8086/80186 PC running the real
+The `MS-DOS` command opens a software-emulated, real-mode 80286-compatible PC running the real
 MS-DOS 6.22 system files supplied on the installation disks. DOS has its own
 memory, BIOS, command prompt, and persistent virtual hard drive. F8 stops the
 emulator and returns to inteiliShell without rebooting inteiliDOS.
@@ -278,10 +278,10 @@ outside that private extent.
 
 ## Compatibility and host safety
 
-- The guest is an 8086/80186-class PC with 640 KB conventional memory.
+- The guest provides real-mode Intel 80286 compatibility with 640 KB conventional memory.
   The host remains a native protected-mode inteiliDOS machine; this is a
   software interpreter, not hardware VM86 execution or a host DOS reboot.
-- Text output, CGA/Hercules graphics, and PC-speaker tones are supported.
+- Text output, CGA/Hercules, EGA/VGA graphics, and PC-speaker tones are supported.
   Native VGA renders the guest graphics, with saved font-plane data and DAC
   palette restored when returning to text mode.
 - Guest port I/O affects private emulated state. It cannot reprogram the
@@ -298,11 +298,74 @@ outside that private extent.
   by itself a guarantee of historical CPU timing.
 
 Not implemented: 286/386 protected-mode software, DOS extenders, DPMI,
-EMS/XMS managers, x87, EGA/VGA-specific graphics, Sound Blaster or other sound
+EMS/XMS managers, x87, VESA/SVGA graphics, Sound Blaster or other sound
 cards, DOS networking, and native CD-ROM drivers. Windows NE/LE/LX/PE
 executables are not supported. Unsupported CPU instructions stop the emulator
 with an explicit diagnostic. An unimplemented device is not a promise that
 the emulator can run every program probing that device.
+
+### EGA and VGA graphics
+
+The guest has a private 256 KiB VGA framebuffer with four memory planes.
+Standard BIOS graphics modes are supported:
+
+| BIOS mode | Guest resolution | Colors |
+|---|---|---|
+| `0Dh` | 320 x 200 | 16 |
+| `0Eh` | 640 x 200 | 16 |
+| `0Fh` | 640 x 350 | Monochrome |
+| `10h` | 640 x 350 | 16 |
+| `11h` | 640 x 480 | Monochrome |
+| `12h` | 640 x 480 | 16 |
+| `13h` | 320 x 200 | 256 |
+
+Games can use INT 10h graphics services or program the emulated sequencer,
+graphics controller, attribute controller, CRTC and DAC. Supported memory
+operations include planar read modes 0/1, write modes 0–3, plane masks,
+set/reset, raster operations, chain-4 and unchained Mode X addressing.
+BIOS pixel, page, cursor, scrolling, graphics-character and palette services
+are provided. The VGA identification call reports a VGA color display.
+
+The presenter fits the guest raster to the host's 320 x 200 VGA output.
+320 x 200 games retain their pixel resolution; higher-resolution modes are
+downsampled, not displayed at native resolution. This is not cycle-accurate
+VGA: retrace status is synthesized, not synchronized to a guest pixel clock.
+VESA/SVGA modes, VGA state-save/restore extensions and arbitrary adapter-specific
+BIOS extensions are not implemented.
+
+No new shell option is necessary: launch games from the DOS prompt as before.
+F6/F7 media controls and F8 exit still work while graphics are active.
+Adding graphics does **not** add 386 instructions, DOS extenders or a sound
+card. In particular, it does not make the original 386 DOS DOOM compatible.
+Individual games, including specific Mario Teaches Typing releases, still
+need application-level testing; graphics support alone is not a compatibility
+guarantee.
+
+### Real-mode 80286 compatibility
+
+The CPU now follows 286 real-mode FLAGS and PUSH SP behavior, including the
+classic FLAGS-based CPU detection used by DOS games. Shift and rotate counts
+are masked to five bits. The inherited 80186 instructions remain available,
+and BOUND and byte/word string port I/O (`INS`, `OUTS`, including REP and segment
+overrides) are supported.
+
+Real-mode `SGDT`, `SIDT`, `LGDT`, `LIDT`, `SMSW`, `LMSW` and `CLTS` operate on
+private guest state. Interrupts use the guest IDTR, never the host's IDT.
+Handled #BR, #UD and divide faults return to the faulting instruction, including
+its prefixes. A missing fault handler or invalid interrupt table stops safely.
+String port I/O uses the same virtual devices as ordinary IN/OUT, and F8 remains
+responsive during a long REP instruction even with guest interrupts disabled.
+
+This is **real-mode compatibility for DOS games**, not a complete 80286
+protected-mode emulator. An LMSW request to enable PE stops with an explicit
+protected-mode error and restores inteiliShell. Protected-mode-only ARPL,
+SLDT/STR, LAR/LSL and related instructions are invalid in real mode. Undocumented
+LOADALL, protected-mode DOS extenders, 386 instructions, DPMI, EMS/XMS and an
+80287 coprocessor are not provided. Guest RAM remains 640 KB conventional
+memory; this upgrade does not add extended-memory managers or AT hardware.
+
+No new command-line switch is required. Rebuild the OS, then use `MS-DOS`
+and the existing floppy/CD/USB media options normally.
 
 For a backup, stop the guest and back up the host disk image using appropriate
 host/emulator tools. Editing or deleting `MSDOS622.HDD` loses the DOS

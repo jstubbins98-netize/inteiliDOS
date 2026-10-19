@@ -1,7 +1,7 @@
 # Native MS-DOS 6.22 emulator
 
 Enter with `MS-DOS` in inteiliShell. The real MS-DOS system files from the
-user's supplied Disk 1 run on a software 8086/80186 PC, not the previous
+user's supplied Disk 1 run on a software real-mode 80286-compatible PC, not the previous
 partial native INT 21h compatibility layer. Native IPGM and ELF programs
 still launch through LaunchPad.
 
@@ -66,18 +66,60 @@ An already initialized virtual HDD can boot without the CD.
   then Shift, for function-key combinations. INT 16h `02h`/`12h` and BIOS data
   flags track held/released left/right modifiers, even without a printable key.
   F6/F7/F8 remain reserved with modifiers too.
-- Text, PC speaker, CGA and Hercules displays are supported. CGA/Hercules
+- Text, PC speaker, CGA, Hercules, EGA and VGA displays are supported. Guest
   graphics are rendered through native VGA; font and DAC palette are restored
   on return. No guest PIC/PIT write changes the host's timer or keyboard IRQs.
 
 ## Compatibility boundary
 
-This is an 8086/80186-class PC with 640 KB conventional memory. It is **not**
-a complete 386/VGA/Sound Blaster machine: protected-mode DOS extenders,
-DPMI, EMS/XMS managers, x87, EGA/VGA-specific games, ATAPI/MSCDEX CD drivers,
+This is a real-mode 80286-compatible PC with 640 KB conventional memory. It is **not**
+a complete 386/Sound Blaster machine: protected-mode DOS extenders,
+DPMI, EMS/XMS managers, x87, VESA/SVGA modes, ATAPI/MSCDEX CD drivers,
 network cards and sound-card drivers are not implemented. Mount CD-hosted
 floppy images rather than expecting DOS to read the native ISO filesystem.
 Unsupported CPU instructions stop the emulator with an explicit error.
+
+### Real-mode 286 CPU
+
+`real286.c` supplies 286 real-mode FLAGS filtering, five-bit shift/rotate counts,
+MSW and descriptor-table instructions. `tiny.c` adds BOUND, restartable faults,
+IDTR-based interrupt dispatch and REP INS/OUTS with byte/word virtual I/O.
+PUSH SP captures the original SP, as on 186/286 rather than 8086.
+Guest I/O never programs native devices directly, and long REP port operations
+poll for F8 independently of the guest IF flag.
+
+Only exact original firmware sites retain the ROM's private `0F 00`–`0F 03`
+host calls. Application code uses the 286 opcode namespace instead; the ROM and
+its decoder tables stay unchanged. `LMSW` with PE set is refused before any
+mode change. Protected-mode-only instructions fault in real mode; unhandled
+faults and invalid interrupt tables return explicit errors. No protected mode,
+LOADALL, 386 operand/address sizes, DPMI, extended-memory manager or x87 is added.
+
+### EGA/VGA implementation
+
+`video.c` owns four heap-allocated 64 KiB planes, VGA registers, read latches,
+the attribute palette and 256-entry six-bit DAC. CPU memory operands in
+`tiny.c` use byte/word bus helpers; MOV/REP, stack, arithmetic, exchange and
+shift operations therefore exercise the same VGA memory semantics. Write
+modes 0–3, read modes 0/1, chain-4, unchained Mode X, map masks, set/reset,
+logical operations, bit masks and basic odd/even addressing are implemented.
+Word IN/OUT handles both indexed-register ports, in order.
+Aligned disk BIOS reads/writes targeting the VGA aperture use a bounded sector
+bounce buffer and the same bus, not an unused conventional-RAM shadow.
+
+INT 10h mode setting supports 0Dh–13h, with their standard 320/640-pixel
+rasters. Pixel/page/font/graphics-character/scrolling and palette operations
+are handled privately. The unchanged upstream BIOS handles legacy text/CGA
+calls. Both INT dispatch and chained PUSHF/FAR CALL entry at F000:0742h
+reach the graphics service; the original entry bytes are checked at startup.
+No upstream ROM bytes or interpreter decoding tables are replaced.
+Graphics BIOS font data is derived from the saved native text font.
+
+`devices.c` fits EGA/VGA output to the physical 320x200 presenter; 640-pixel
+modes lose display detail but retain full-resolution guest memory and BIOS
+coordinates. Retrace reads are synthesized. This is not cycle-accurate VGA,
+VBE, a complete adapter option ROM, or VGA state-save/restore support.
+See `../../DOS_COMPATIBILITY.md` for user-facing modes and limits.
 
 ## Verification
 
@@ -87,6 +129,22 @@ re-entry and a host restart, F8 through guest CLI, 80186 instructions, CGA,
 speaker register handling, CD-hosted game media, physical floppy access,
 disk swaps, and preservation of a native file. Screenshots are generated
 outside source control in `generated-artifacts/msdos622`.
+
+`tests/msdos_video_test.c` runs without hardware and checks plane/latch modes,
+DAC programming, BIOS pixels, page selection, mode preservation and fonts.
+Build it with `kernel/msdos/video.c` using the host compiler and optionally
+AddressSanitizer/UndefinedBehaviorSanitizer. `tests/run_msdos_video_test.py`
+uses the normal test kernel and separately supplied DOS disks to run
+`msdos_video.asm` under real DOS. It checks visible EGA, VGA and Mode X output,
+CPU bus instructions, F8 directly from graphics, rendered native font recovery
+and native-file preservation. Screenshots go to `generated-artifacts/msdos-video`.
+
+`tests/msdos_real286_test.c` checks MSW/descriptor state and shift/rotate
+results and defined flags, including zero and oversized counts. On x86-64,
+compile with `-mno-red-zone` to enable comparison with native x86 instructions.
+`tests/run_msdos_real286_test.py` runs the NASM CPU fixture under real DOS,
+including relocated IDT dispatch, fault return IPs, string I/O, protected-mode
+refusal, 386 rejection, persistence and F8 during REP with CLI.
 
 ## Provenance and licenses
 

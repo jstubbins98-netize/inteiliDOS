@@ -142,6 +142,8 @@ set(KERNEL_C_SOURCES
     kernel/msdos/tiny.c
     kernel/msdos/platform.c
     kernel/msdos/devices.c
+    kernel/msdos/video.c
+    kernel/msdos/real286.c
 )
 
 set(SHELL_C_SOURCES
