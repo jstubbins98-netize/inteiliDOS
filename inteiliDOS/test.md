@@ -13,7 +13,7 @@ Run host-side commands from:
 
 ### Host-side checks
 
-Use a Linux, macOS, or Replit development environment to:
+Use a Linux or macOS dev environment to:
 
 - build the kernel and boot images
 - assemble and size-check boot sectors
