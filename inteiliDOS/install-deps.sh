@@ -57,16 +57,20 @@ setup_macos() {
     info "Checking Xcode Command Line Tools"
     if ! xcode-select -p &>/dev/null || ! xcrun --find clang &>/dev/null; then
         info "Requesting Xcode Command Line Tools installation."
-        info "Accept the macOS installation dialog. Waiting up to 15 minutes; Ctrl-C cancels."
+        info "Accept the macOS installation dialog, then press Return below when it finishes. Ctrl-C cancels."
         if ! xcode-select --install; then
             warn "Installation may already be pending. Complete the macOS installation dialog."
         fi
-        local deadline=$((SECONDS + 900))
-        until xcode-select -p &>/dev/null && xcrun --find clang &>/dev/null; do
-            if [[ "$SECONDS" -ge "$deadline" ]]; then
-                die "Xcode tools are not ready. Complete their installation, then rerun install-deps.sh."
+        local answer
+        while true; do
+            if ! IFS= read -r -p "    Press Return to check for Xcode Command Line Tools: " answer; then
+                die "No input available. Complete Xcode tools installation, then rerun install-deps.sh in an interactive terminal."
             fi
-            sleep 5
+            if xcode-select -p &>/dev/null && xcrun --find clang &>/dev/null; then
+                success "Xcode Command Line Tools are ready."
+                break
+            fi
+            warn "Xcode tools are not ready yet. Finish the macOS installation, then press Return to check again."
         done
     fi
 

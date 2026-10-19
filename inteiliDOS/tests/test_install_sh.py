@@ -14,7 +14,8 @@ TOOLS="gcc g++ ld as ar objcopy objdump ranlib strip".split()
 
 class InstallerTests(unittest.TestCase):
     def run_installer(self,host="darwin",brew=True,clt=True,compiler=False,
-                      binutils=False,fail_brew=False,yay=True,full=False):
+                      binutils=False,fail_brew=False,yay=True,full=False,
+                      clt_checks=0,clang_checks=0,input_text="y\n"):
         with tempfile.TemporaryDirectory(prefix="installer-test-") as directory:
             home=Path(directory)
             brewbin=home/"brew/bin"
@@ -69,10 +70,29 @@ command() {
 }
 xcode-select() {
     echo "xcode-select $*" >> "$TEST_LOG"
-    if [[ "$1" == --install ]];then touch "$HOME/clt-ready";return;fi
+    if [[ "$1" == --install ]];then
+        touch "$HOME/clt-requested"
+        if [[ "$CLT_CHECKS" == 0 ]];then touch "$HOME/clt-ready";fi
+        return 0
+    fi
+    if [[ -f "$HOME/clt-requested" && ! -f "$HOME/clt-ready" ]];then
+        local count=0
+        if [[ -f "$HOME/clt-count" ]];then count=$(cat "$HOME/clt-count");fi
+        count=$((count+1))
+        echo "$count" > "$HOME/clt-count"
+        if [[ "$count" -gt "$CLT_CHECKS" ]];then touch "$HOME/clt-ready";fi
+    fi
     [[ -f "$HOME/clt-ready" ]]
 }
-xcrun() { [[ -f "$HOME/clt-ready" ]]; }
+xcrun() {
+    echo "xcrun $*" >> "$TEST_LOG"
+    local count=0
+    if [[ -f "$HOME/clang-count" ]];then count=$(cat "$HOME/clang-count");fi
+    count=$((count+1))
+    echo "$count" > "$HOME/clang-count"
+    [[ -f "$HOME/clt-ready" && "$count" -gt "$CLANG_CHECKS" ]]
+}
+read() { echo "read" >> "$TEST_LOG";builtin read "$@"; }
 curl() {
     echo "curl $*" >> "$TEST_LOG"
     while [[ $# -gt 0 ]];do
@@ -103,8 +123,9 @@ make() { echo "make $*" >> "$TEST_LOG"; }
 '''
             env={"HOME":str(home),"PATH":str(brewbin)+":"+os.environ.get("PATH",os.defpath),
                  "SHELL":"/bin/bash","TEST_LOG":str(home/"calls"),"STUB":str(stub),
-                 "HOST":host,"FAIL_BREW":str(int(fail_brew)),"HAS_YAY":str(int(yay))}
-            result=subprocess.run([BASH,"-c",harness+"\n"+source],env=env,input="y\n",
+                 "HOST":host,"FAIL_BREW":str(int(fail_brew)),"HAS_YAY":str(int(yay)),
+                 "CLT_CHECKS":str(clt_checks),"CLANG_CHECKS":str(clang_checks)}
+            result=subprocess.run([BASH,"-c",harness+"\n"+source],env=env,input=input_text,
                                   text=True,capture_output=True,timeout=15)
             log=(home/"calls").read_text() if (home/"calls").exists() else ""
             snippet=(prefix/"env.sh").read_text() if (prefix/"env.sh").exists() else ""
@@ -125,6 +146,7 @@ make() { echo "make $*" >> "$TEST_LOG"; }
         self.assertNotIn("brew install i686-elf-gcc",log)
         self.assertNotIn("brew install i686-elf-binutils",log)
         self.assertNotIn("xcode-select --install",log)
+        self.assertNotIn("read",log.splitlines())
 
     def test_mac_missing_binutils_installed(self):
         result,log,_=self.run_installer(compiler=True)
@@ -143,6 +165,37 @@ make() { echo "make $*" >> "$TEST_LOG"; }
         result,_,_=self.run_installer(fail_brew=True)
         self.assertNotEqual(result.returncode,0)
         self.assertNotIn("System dependencies ready",result.stdout)
+
+    def test_mac_rechecks_tools_only_after_each_return(self):
+        result,log,_=self.run_installer(clt=False,clt_checks=2,input_text="\n\n\n")
+        self.assertEqual(result.returncode,0,result.stderr+result.stdout)
+        events=[line for line in log.splitlines()
+                if line=="read" or line.startswith(("xcode-select","xcrun"))]
+        self.assertEqual(events,[
+            "xcode-select -p","xcode-select --install",
+            "read","xcode-select -p",
+            "read","xcode-select -p",
+            "read","xcode-select -p","xcrun --find clang",
+        ])
+        self.assertEqual(result.stdout.count("Xcode tools are not ready yet"),2)
+        self.assertIn("Xcode Command Line Tools are ready.",result.stdout)
+        self.assertIn("brew install i686-elf-gcc",log)
+        self.assertLess(log.rindex("xcrun --find clang"),log.index("brew shellenv"))
+
+    def test_mac_waits_for_clang_as_well_as_selected_tools(self):
+        result,log,_=self.run_installer(clang_checks=2,input_text="\n\n")
+        self.assertEqual(result.returncode,0,result.stderr+result.stdout)
+        self.assertEqual(log.splitlines().count("read"),2)
+        self.assertEqual(log.splitlines().count("xcrun --find clang"),3)
+        self.assertEqual(result.stdout.count("Xcode tools are not ready yet"),1)
+        self.assertLess(log.rindex("xcrun --find clang"),log.index("brew shellenv"))
+
+    def test_mac_missing_input_stops_without_installing_packages(self):
+        result,log,_=self.run_installer(clt=False,input_text="")
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn("interactive terminal",result.stderr)
+        self.assertEqual(log.splitlines().count("read"),1)
+        self.assertNotIn("brew install",log)
 
     def test_arch_yay_then_source_build(self):
         result,log,_=self.run_installer(host="linux-gnu",full=True)
