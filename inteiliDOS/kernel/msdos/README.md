@@ -182,7 +182,7 @@ controls, and return to shell typing/native editor shortcuts.
 
 The interpreter is adapted from Adrian Cable's MIT-licensed 8086tiny
 revision 1.25, retrieved from
-`https://github.com/adriancable/8086tiny`.
+[`https://github.com/adriancable/8086tiny`](https://github.com/adriancable/8086tiny).
 The companion BIOS binary (SHA-256
 `ba4b2e62246aaadeda8d90bc0928d4f00242c16039982163d7e82740dceb5e31`)
 is represented in `bios.h`; retain `LICENSE.txt` with both.
