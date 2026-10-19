@@ -8,8 +8,7 @@ still launch through LaunchPad.
 ## Build and media
 
 Build normally with `build.sh`; the OS ISO contains no DOS disk images.
-Users supply their DOS media separately. Reference images are retained
-outside the OS source folder in `../MS-DOS_disks`, not in the OS distribution.
+Users supply their DOS media separately.
 No DOS binaries are downloaded.
 
 To make a separate DOS media CD, put your four licensed images in a folder,
