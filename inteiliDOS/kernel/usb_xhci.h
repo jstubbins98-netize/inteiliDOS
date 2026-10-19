@@ -3,6 +3,16 @@
 #include <stdint.h>
 int usb_xhci_init(void);
 void usb_xhci_poll(void);
+typedef struct {
+    const char *status;
+    uint16_t vendor_id, device_id;
+    uint8_t bus, device, function, found;
+    unsigned connected_ports, failed_ports, intel_routing;
+    unsigned completion_code, event_type;
+    unsigned legacy_present, bios_handoff_fallback;
+    uint32_t legacy_support, legacy_control;
+} usb_xhci_info_t;
+const usb_xhci_info_t *usb_xhci_info(void);
 /* Synchronous, LUN-0 SCSI bulk-only storage on direct xHCI root ports.
  * No calls from IRQ context; all DMA remains in permanently owned buffers. */
 int usb_xhci_storage_scan(void);

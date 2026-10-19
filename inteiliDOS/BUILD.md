@@ -1,5 +1,34 @@
 # inteiliDOS — Build Guide
 
+## Writing images to physical media
+
+After a successful interactive compilation, Willburd offers to write the
+images produced by that build. Choose **I** for the ISO or **F** for the floppy
+image, or **N/Enter** to finish without writing anything.
+
+- ISO: choose whether to burn a blank CD/DVD, then separately whether to flash
+  the ISO to a USB drive. You can decline optical burning and still flash USB.
+- Floppy: select an eligible physical floppy drive (including a small USB
+  floppy device). This writes the raw floppy image, not a file inside a disk.
+- Select a device number, inspect its path/model/capacity, and type the exact
+  `ERASE /dev/...` confirmation for a raw write, or `BURN` confirmation for
+  optical recording. There is no automatically selected raw-write target.
+
+**Raw writes erase the selected medium's files and partition table.** Flashing
+an ISO replaces FAT/exFAT with the ISO's layout; it does not copy the ISO as a
+file. Firmware bootability depends on the image and BIOS/CSM. This does not
+add UEFI-only boot support or make an ISO-formatted USB a FAT/exFAT data drive.
+
+The optional writer supports macOS and Linux. It refuses the running system
+disk, read-only/undersized raw targets, or a source image located on the
+target. It rechecks device identity, unmounts only that target, stops on
+errors, flushes writes and verifies raw-image read-back. macOS uses drutil
+for optical burning; Linux uses xorriso. Raw writes may ask for sudo.
+
+`--defaults`/`--non-interactive`, redirected input and configure/config-only
+builds never write physical media. Canceling or a writing failure does not
+delete the compiled image. Safely eject written media using the host OS.
+
 ## Selecting the target generation
 
 The source directory is `inteiliDOS`. All profiles build an ELF32/i386 kernel:
@@ -29,6 +58,17 @@ with the standard GCC/Clang that ships with your Linux or macOS installation.
 ---
 
 ## 1. Install prerequisites
+
+Run `bash install-deps.sh` from the `inteiliDOS` directory to install the
+dependencies. On macOS it uses Homebrew (and offers installation of missing
+Homebrew/Xcode command-line tools); Linux builds the cross-compiler from source,
+with Arch also running `yay -S i686-elf-gcc`.
+
+Interactive `bash build.sh` asks whether the build dependencies are installed
+before checking the tools. Choose **No** to run `install-deps.sh` and continue
+the build after a successful installation. Choose **Yes** to skip installation.
+Willburd loads the installer's saved toolchain PATH in either case.
+`--defaults`, non-interactive builds and `--config-only` never launch the installer.
 
 ### Ubuntu / Debian
 

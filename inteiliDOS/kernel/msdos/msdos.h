@@ -11,6 +11,8 @@ int msdos_pc_disk(int drive, uint32_t offset, uint8_t *data,
                   uint32_t length, int write);
 int msdos_cpu_run(uint32_t sectors);
 void msdos_devices_update(const uint8_t *ram, const uint8_t *ports);
+void msdos_devices_init(void);
+void msdos_devices_audio_poll(void);
 void msdos_devices_restore(void);
 int msdos_devices_graphics(void);
 int msdos_media_changed(void);

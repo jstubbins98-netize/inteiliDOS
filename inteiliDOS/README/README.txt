@@ -13,21 +13,26 @@ MAIN FEATURES
   InteiliSheets spreadsheet, InteiliFile Manager and InteiliTalk speech.
   iEdit and InteiliSheets use F2 to save, F3 to load and F10 to quit.
   In iEdit, F4 deletes the current line.
-- LaunchPad: runs native programs from CD-ROM or floppy disk.
+- LaunchPad: runs native programs from CD-ROM, floppy disk or USB.
+  Press U in LaunchPad to select USB; browse folders and press Enter to run.
 - Storage: native HDD files, IDE and supported SATA hard drives,
   floppy access, ISO 9660 CDs, and IDE/SATA optical-drive support.
-- USB storage: mount supported FAT12/16/32 drives, choose individual files
+- USB storage: mount supported FAT12/16/32 and exFAT drives, choose individual files
   to copy, save/load in iEdit, BASIC and InteiliSheets, and safely eject.
 - MS-DOS 6.22 emulator: a separate software PC with a persistent virtual
   HDD for installed programs and saves. Supply installation images on CD,
   floppy or USB; MS-DOS /USB reads images from a mounted USB drive.
+  MS-DOS /USB USB0:\GAME.IMG loads a USB game disk image as DOS drive A:.
   Press F8 to return to inteiliShell.
-- System Health: system, disk, computer-information and cooling tabs,
+- System Health: system, disk, computer-information, cooling and battery tabs,
   with live diagnostics and readings where supported sensors are available.
+  Battery percentage and capacity health require a supported Smart Battery.
 - Background temperature monitoring and warnings on supported hardware.
 - PS/2 and supported USB keyboards, built-in games, demos and audio
   Easter eggs.
 - Willburd build configuration and a text-mode installation wizard.
+  After a successful installation, SETUP and INSTALL-OS are disabled in that
+  HDD's installed copy. Boot installation media to reinstall or install elsewhere.
 
 HARDWARE AND LIMITATIONS
 -----------------------
@@ -79,5 +84,4 @@ Repository paths:
   inteiliDOS/DOS_COMPATIBILITY.md     DOS setup, controls and limitations.
   inteiliDOS/for_developers.md        Development reference.
 
-License and attribution information is included in the source documentation
-and the comprehensive manual.
+License and attribution information is included in the source documentation.

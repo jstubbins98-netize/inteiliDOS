@@ -1,15 +1,15 @@
 /*
  * inteiliDOS -- shell/setup.c
- * InteiliDOS Setup Wizard 1.0  (HP Vectra VEi8 edition)
+ * inteiliDOS Setup Wizard 1.0
  *
  * Interactive full-screen OS installer.  Writes a genuine, bootable
- * inteiliDOS installation to the HP Vectra VEi8's IDE hard drive
+ * inteiliDOS installation to a supported computer's hard drive
  * (Intel 440BX chipset, PIIX4E south bridge, primary or secondary channel).
  *
  * Tested target hardware:
- *   HP Vectra VEi8 — Intel 440BX / PIIX4E, Pentium II/III, Award BIOS
+ *   BIOS-based computers with supported storage controllers
  *   IDE base addresses: 0x1F0 (primary) / 0x170 (secondary), compat mode
- *   BIOS setup key   : F2  (at HP logo during POST)
+ *   BIOS setup key   : Consult the computer manufacturer's instructions
  *   Boot order menu  : Boot → Boot Device Priority
  *
  * Wizard stages:
@@ -55,6 +55,12 @@
  * BSS lives above this address and is zeroed at runtime by the kernel's
  * own startup code — the installer need not write it to disk.            */
 extern uint32_t _kernel_data_end;
+
+/* Nonzero .data value: BSS is cleared at boot and cannot hold this policy.
+ * Only the installed disk copy is changed, never the running installer. */
+#define SW_SETUP_ALLOWED 0x53545550u
+#define SW_SETUP_LOCKED  0x4c4f434bu
+static volatile uint32_t setup_install_state = SW_SETUP_ALLOWED;
 
 /* =========================================================================
  * VGA helpers (direct writes — no libc)
@@ -291,7 +297,7 @@ static const uint8_t mbr_bootstrap[446] = {
     0x89, 0xE6,                    /* mov  si, sp      (si → DAP)       */
     0xB4, 0x42,                    /* mov  ah, 0x42    (ext read)       */
     0x52, 0x90,                    /* push dx; nop  — save DL on stack before INT 13h.
-                                    * Award BIOS (HP Vectra VEi8 / 440BX PIIX4E) may
+                                    * Award BIOS systems (440BX / PIIX4E) may
                                     * trash DL and BH across INT 13h AH=42h.  Stack
                                     * is the only register state guaranteed to survive;
                                     * DX is popped at 0x71 before the far-jmp to VBR. */
@@ -490,7 +496,7 @@ static const uint8_t vbr_code[512] = {
      * 0x056  Phase 1 — 16-bit real-mode bootstrap
      *
      * All INT 10h calls (including AH=0 mode-set and AH=0Eh teletype) are
-     * avoided after the first one.  On the HP Vectra VEi8 (440BX/Award BIOS),
+     * avoided after the first one.  On some 440BX/Award BIOS computers,
      * INT 10h AH=0 (Set Video Mode) hangs the BIOS handler and never returns.
      * INT 10h AH=0Eh works exactly once — subsequent calls crash or reset.
      *
@@ -561,7 +567,7 @@ static const uint8_t vbr_code[512] = {
 
     /* 0x0A7: Set VGA text mode 3 via BIOS — called AFTER all INT 13h disk reads,
      * so no disk-state corruption risk.  This is the only INT 10h call in the
-     * normal boot path; the BIOS (HP Vectra VEi8 / Award BIOS) may leave the
+     * normal boot path; some Award BIOS firmware may leave the
      * display in a non-text mode, so 0xB8000 writes can be invisible
      * without this mode set.  Inserting here shifts Phase 2 and error-handler
      * addresses by +5; jc (0x095) and far-jmp target updated accordingly.     */
@@ -839,12 +845,12 @@ static void sw_stage_welcome(void) {
     sw_content_line( 1, "", VGA_COLOR_WHITE, VGA_COLOR_BLUE);
     sw_content_line( 2, "  Welcome to the inteiliDOS Setup Wizard",
                      VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
-    sw_content_line( 3, "  HP Vectra VEi8 Edition  (Intel 440BX / PIIX4E / Award BIOS)",
+    sw_content_line( 3, "  Installation for supported BIOS computers",
                      VGA_COLOR_DARK_GREY, VGA_COLOR_BLUE);
     sw_content_line( 4, "", VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-    sw_content_line( 5, "  This wizard installs inteiliDOS directly onto the HP Vectra's",
+    sw_content_line( 5, "  This wizard installs inteiliDOS directly onto your computer's",
                      VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-    sw_content_line( 6, "  IDE hard drive and configures it to boot automatically.",
+    sw_content_line( 6, "  hard drive and configures it to boot automatically.",
                      VGA_COLOR_WHITE, VGA_COLOR_BLUE);
     sw_content_line( 7, "  The kernel is copied sector-by-sector from RAM to the HDD.",
                      VGA_COLOR_WHITE, VGA_COLOR_BLUE);
@@ -852,7 +858,7 @@ static void sw_stage_welcome(void) {
     sw_content_line( 9, "  You will be asked to choose:", VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
     sw_content_line(10, "    \x07  Installation mode  (dual-boot or clean install)",
                      VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
-    sw_content_line(11, "    \x07  Target IDE drive  (primary or secondary channel)",
+    sw_content_line(11, "    \x07  Target hard drive",
                      VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
     sw_content_line(12, "", VGA_COLOR_WHITE, VGA_COLOR_BLUE);
     sw_content_line(13,
@@ -1163,6 +1169,23 @@ static uint32_t sw_get_part_lba(void) {
 }
 
 /* Draw the installation progress screen and execute each step */
+/* Commit the per-installation lock only after all installation writes pass.
+ * Preserve every other byte in the target kernel sector and verify it. */
+static int sw_commit_setup_lock(uint32_t part_lba, uint32_t offset) {
+    uint8_t check[512];
+    if (offset>=SW_KERNEL_SECTORS*512u || (offset%512u)>508u) return -1;
+    uint32_t lba=part_lba+1+offset/512u, state;
+    if (ata_read_sector((uint8_t)sw_drive,lba,sw_sector)) return -1;
+    kmemcpy(&state,sw_sector+offset%512u,4);
+    if (state!=SW_SETUP_ALLOWED) return -1;
+    state=SW_SETUP_LOCKED;
+    kmemcpy(sw_sector+offset%512u,&state,4);
+    if (ata_write_sector((uint8_t)sw_drive,lba,sw_sector) ||
+        ata_read_sector((uint8_t)sw_drive,lba,check)) return -1;
+    for (unsigned i=0;i<512;i++) if (check[i]!=sw_sector[i]) return -1;
+    return 0;
+}
+
 static int sw_stage_install(void) {
     sw_draw_frame();
     sw_draw_header(5, 5);
@@ -1429,8 +1452,24 @@ static int sw_stage_install(void) {
             vok = (sw_sector[0x1FE] == 0x55 && sw_sector[0x1FF] == 0xAA);
         }
         if (!vok) {
-            sw_content_line(7, "  WARNING: Boot signature verification failed.",
-                            VGA_COLOR_BROWN, VGA_COLOR_BLUE);
+            sw_content_line(7, "  ERROR: Boot signature verification failed.",
+                            VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+            keyboard_getchar();
+            return 0;
+        }
+    });
+
+    STEP(95, "  Disabling SETUP on the installed HDD...", {
+        uintptr_t address=(uintptr_t)&setup_install_state;
+        if (address<SW_KERNEL_RAM_ADDR ||
+            address+4>(uintptr_t)&_kernel_data_end ||
+            sw_commit_setup_lock(part_lba,(uint32_t)(address-SW_KERNEL_RAM_ADDR))) {
+            sw_content_line(7, "  ERROR: Installed SETUP lock could not be verified.",
+                            VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+            sw_content_line(8, "  Installation is incomplete. Boot installation media to retry.",
+                            VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            keyboard_getchar();
+            return 0;
         }
     });
 
@@ -1461,14 +1500,14 @@ static int sw_stage_install(void) {
     }
 
     sw_content_line( 8, "", VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-    sw_content_line( 9, "  Next steps (HP Vectra VEi8):", VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
+    sw_content_line( 9, "  Next steps:", VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
     sw_content_line(10, "    1. Power off and remove the boot CD from the drive.",
                     VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-    sw_content_line(11, "    2. Power on.  Press F2 at the HP logo to enter Award BIOS setup.",
+    sw_content_line(11, "    2. Power on and use your computer's BIOS setup key.",
                     VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-    sw_content_line(12, "    3. Go to  Boot  \xAF  Boot Device Priority.",
+    sw_content_line(12, "    3. Open the BIOS boot-order settings.",
                     VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-    sw_content_line(13, "       Move the IDE HDD to position 1.  Press F10 to save and exit.",
+    sw_content_line(13, "       Put the installed HDD first, then save and exit.",
                     VGA_COLOR_WHITE, VGA_COLOR_BLUE);
     sw_content_line(14, "    4. Reboot — inteiliDOS will start automatically from the HDD.",
                     VGA_COLOR_WHITE, VGA_COLOR_BLUE);
@@ -1488,6 +1527,11 @@ static int sw_stage_install(void) {
  * Main entry point
  * ========================================================================= */
 void setup_run(void) {
+    if (setup_install_state!=SW_SETUP_ALLOWED) {
+        vga_puts("SETUP is disabled on this installed HDD.\n"
+                 "Boot inteiliDOS installation media to install or reinstall.\n");
+        return;
+    }
     /* Blank screen */
     for (int r = 0; r < 25; r++)
         for (int c = 0; c < 80; c++)

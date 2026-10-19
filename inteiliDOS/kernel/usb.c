@@ -11,7 +11,7 @@
  *   4. Selects USB HID boot protocol (8-byte reports, no descriptor parsing)
  *   5. Polls the interrupt endpoint every 8 ms via the timer secondary hook
  *   6. Translates HID usage IDs → ASCII / special-key codes and injects them
- *      into the kernel keyboard buffer via keyboard_inject()
+ *      into the shared kernel queue with character and modifier snapshots
  *
  * If anything fails (no UHCI found, no device, stall during enumeration) the
  * function returns silently.  PS/2 keyboard operation is unaffected.
@@ -19,6 +19,7 @@
 
 #include "usb.h"
 #include "usb_xhci.h"
+#include "usb_ehci.h"
 #include "pci.h"
 #include "keyboard.h"
 #include "timer.h"
@@ -376,11 +377,27 @@ static const char hid_shift[0x53] = {
 /* State for caps lock (toggled in process_report) */
 static int usb_caps = 0;
 
+/* Physical US set-1 positions, independent of shifted/control characters. */
+static const uint8_t hid_scancode[0x53] = {
+    [4]=0x1e,0x30,0x2e,0x20,0x12,0x21,0x22,0x23,0x17,0x24,
+    0x25,0x26,0x32,0x31,0x18,0x19,0x10,0x13,0x1f,0x14,0x16,
+    0x2f,0x11,0x2d,0x15,0x2c,
+    [0x1e]=2,3,4,5,6,7,8,9,10,11,
+    [0x28]=0x1c,1,0x0e,0x0f,0x39,0x0c,0x0d,0x1a,0x1b,0x2b,
+    [0x33]=0x27,0x28,0x29,0x33,0x34,0x35,
+    [0x3a]=0x3b,0x3c,0x3d,0x3e,0x3f,0x40,0x41,0x42,0x43,0x44,0x57,0x58,
+    [0x4c]=0x0e, /* retain the native Delete -> Backspace behavior */
+    [0x4f]=0x4d,0x4b,0x50,0x48
+};
+
 int usb_process_boot_report(const uint8_t cur[8], const uint8_t prev[8]) {
     for (unsigned i=2;i<8;i++)
         if (cur[i]>=1 && cur[i]<=3) return 0;
     uint8_t mod = cur[0];
     int shifted = (mod & 0x22u) != 0;  /* L or R Shift */
+    /* Publish even modifier-only reports (including the all-released report).
+     * Caps state is published again below if this report toggles it. */
+    keyboard_usb_modifiers(mod, (uint8_t)usb_caps);
 
     /* Check for Caps Lock toggle on byte 2-7 */
     uint8_t ki;
@@ -393,7 +410,10 @@ int usb_process_boot_report(const uint8_t cur[8], const uint8_t prev[8]) {
             uint8_t pi;
             for (pi = 2; pi < 8; pi++)
                 if (prev[pi] == 0x39) { was_held = 1; break; }
-            if (!was_held) usb_caps ^= 1;
+            if (!was_held) {
+                usb_caps ^= 1;
+                keyboard_usb_modifiers(mod, (uint8_t)usb_caps);
+            }
             continue;
         }
 
@@ -415,7 +435,12 @@ int usb_process_boot_report(const uint8_t cur[8], const uint8_t prev[8]) {
             else if (shifted ^ usb_caps) c=(char)(c-'a'+'A');
         }
 
-        if (c) keyboard_inject((uint8_t)c);
+        if (c) {
+            keyboard_event_t state;
+            keyboard_current_event(&state);
+            keyboard_inject_event((uint8_t)c, hid_scancode[kc],
+                                  state.modifiers, state.caps_lock);
+        }
     }
     return 1;
 }
@@ -706,6 +731,7 @@ void usb_keyboard_init(void) {
     usb_ready=0;usb_caps=0;
     usb_status="No supported USB keyboard found (PS/2 fallback)";
     timer_register_secondary(usb_timer_tick);
+    usb_ehci_init(); /* route companion ports before UHCI owns a keyboard */
     if (usb_xhci_init()) {
         usb_status="xHCI USB keyboard active";
         vga_puts("  xHCI USB keyboard detected and active.\n");

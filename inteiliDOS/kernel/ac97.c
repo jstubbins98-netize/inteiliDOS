@@ -417,6 +417,11 @@ int ac97_init(void)
  * most recently filled, and checks whether any sample deviates more than
  * a threshold from the 0x80 silence midpoint (8-bit unsigned PCM).
  * ========================================================================= */
+void ac97_stop_capture(void)
+{
+    if (g_ac97_present) ac97_wr32(g_ba0,BA0_DCR1,DCR_MSK);
+    g_ac97_present=0;
+}
 int ac97_has_signal(void)
 {
     uint32_t dbi, check_start, i;

@@ -55,8 +55,9 @@ void thermal_tick(uint32_t now) {
         deadline = now + THERMAL_INTERVAL_MS;
         live.checks++;
         if (supported && !pending) {
-            if (thermal_hw_start(now)) pending = 1;
-            else live.status = THERMAL_READ_ERROR;
+            int rc=thermal_hw_start(now);
+            if (rc>0) pending = 1;
+            else if (!rc) live.status = THERMAL_READ_ERROR;
         }
     }
 }

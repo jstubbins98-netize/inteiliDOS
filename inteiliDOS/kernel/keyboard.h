@@ -27,6 +27,32 @@ void keyboard_init(void);
 int  keyboard_getchar(void);     /* blocking read */
 int  keyboard_poll(void);        /* non-blocking; -1 if no key */
 
+/* Modifier bits match the USB HID boot report (left/right remain distinct). */
+#define KEY_MOD_LCTRL  0x01
+#define KEY_MOD_LSHIFT 0x02
+#define KEY_MOD_LALT   0x04
+#define KEY_MOD_RCTRL  0x10
+#define KEY_MOD_RSHIFT 0x20
+#define KEY_MOD_RALT   0x40
+#define KEY_MOD_SHIFT (KEY_MOD_LSHIFT | KEY_MOD_RSHIFT)
+#define KEY_MOD_CTRL  (KEY_MOD_LCTRL | KEY_MOD_RCTRL)
+#define KEY_MOD_ALT   (KEY_MOD_LALT | KEY_MOD_RALT)
+
+typedef struct {
+    uint8_t character;           /* unchanged legacy keyboard_poll value */
+    uint8_t scancode;            /* set-1 make code; zero for state-only */
+    uint8_t modifiers;           /* snapshot at the time of this event */
+    uint8_t caps_lock;
+} keyboard_event_t;
+
+/* Consumes the SAME queue as keyboard_poll, including modifier-only events.
+ * Legacy readers skip those events, so native shortcuts/typing stay intact. */
+int keyboard_poll_event(keyboard_event_t *event);
+void keyboard_inject_event(uint8_t character, uint8_t scancode,
+                           uint8_t modifiers, uint8_t caps_lock);
+void keyboard_usb_modifiers(uint8_t modifiers, uint8_t caps_lock);
+void keyboard_current_event(keyboard_event_t *event);
+
 /* Inject a character into the shared keyboard buffer.
  * Called by the USB HID driver to feed keys through the same path
  * as PS/2, so keyboard_getchar() / keyboard_poll() serve both.         */

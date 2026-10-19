@@ -673,6 +673,9 @@ static int ahci_command(uint8_t buf_idx, uint32_t pb,
     if (buf_idx>=AHCI_MAX_PORTS || ahci_failed[buf_idx]) return -1;
     if (bytes>sizeof(ahci_data[0]) || (bytes && !buf)) return -1;
     int has_data=buf!=0, extended=ata_cmd==0x25 || ata_cmd==0x35;
+    int disk_rw=!packet && (extended || ata_cmd==ATA_CMD_READ || ata_cmd==ATA_CMD_WRITE);
+    if (disk_rw && (!bytes || bytes%512 ||
+        (!extended && (lba>=0x10000000u || bytes/512>0x10000000u-lba)))) return -1;
     if (!extended && ata_cmd!=ATA_CMD_IDENTIFY && has_data && lba>=0x10000000u) return -1;
     if (write && has_data)
         for (unsigned i=0;i<bytes;i++) ahci_data[buf_idx][i]=((const uint8_t *)buf)[i];
@@ -716,7 +719,8 @@ static int ahci_command(uint8_t buf_idx, uint32_t pb,
                : (uint8_t)(0xE0u | ((lba >> 24) & 0x0Fu)); /* R/W: + LBA[27:24] */
     ct[0x08] = 0;                                       /* LBA ext = 0      */
     if (extended) {ct[7]=0x40;ct[8]=(uint8_t)(lba>>24);}
-    ct[0x0C] = has_data && ata_cmd!=ATA_CMD_IDENTIFY && ata_cmd!=0xA1 ? 1 : 0;
+    ct[0x0C] = disk_rw ? (uint8_t)(bytes/512) :
+               has_data && ata_cmd!=ATA_CMD_IDENTIFY && ata_cmd!=0xA1 ? 1 : 0;
     if (packet) {
         /* ATA PACKET with DMA; ACMD is a padded 12-byte SCSI CDB. */
         ct[3]=has_data ? 1 : 0;
@@ -1198,6 +1202,10 @@ int ata_write_sector(uint8_t drv, uint32_t lba, const uint8_t *buf) {
 }
 
 int ata_zero_sectors(uint8_t drv, uint32_t lba, uint32_t count) {
+    write_failure="Disk unavailable or zero extent outside drive bounds.";
+#if !CONFIG_ENABLE_ATA
+    (void)drv;(void)lba;(void)count;return -1;
+#endif
     if (drv>=ATA_MAX_DRIVES || !g_drives[drv].present || !count ||
         lba>=g_drives[drv].total_sectors ||
         count>g_drives[drv].total_sectors-lba) return -1;
@@ -1210,7 +1218,35 @@ int ata_zero_sectors(uint8_t drv, uint32_t lba, uint32_t count) {
         }
         return 0;
     }
-    uint8_t zero[512]={0};
-    while (count--) if (ata_write_sector(drv,lba++,zero)) return -1;
+    if (g_drives[drv].drive_type!=ATA_TYPE_AHCI || drv<4) return -1;
+    uint8_t bidx=drv-4;
+    if (ahci_readonly[bidx]) {
+        write_failure="SATA cached writes cannot be made durable: flush support unknown.";
+        return -1;
+    }
+    if (!ahci_lba48[bidx] &&
+        (lba>=0x10000000u || count>0x10000000u-lba)) return -1;
+    uint32_t pb=ahci_port_base(g_drives[drv].ahci_abar,g_drives[drv].ahci_port);
+    /* Use the existing permanent 2 KiB DMA bounce buffer, four sectors per
+     * command. Flush once per bounded 128-sector batch, not per sector.
+     * A successful return still means every completed batch is durable.
+     * No AHCI engine reset, new DMA allocation, or optical-port changes.
+     */
+    uint8_t zero[2048]={0};
+    while (count) {
+        unsigned batch=count>128 ? 128 : count, remaining=batch;
+        write_failure="SATA batch zero-write command failed.";
+        while (remaining) {
+            unsigned chunk=remaining>4 ? 4 : remaining;
+            if (ahci_command(bidx,pb,ahci_lba48[bidx] ? 0x35 : ATA_CMD_WRITE,
+                             lba,1,zero,0,chunk*512)) return -1;
+            lba+=chunk;remaining-=chunk;
+        }
+        if (ahci_flush[bidx] && ahci_issue(bidx,pb,ahci_flush[bidx],0,0,0)) {
+            write_failure="SATA batch write-cache flush failed.";
+            return -1;
+        }
+        count-=batch;
+    }
     return 0;
 }

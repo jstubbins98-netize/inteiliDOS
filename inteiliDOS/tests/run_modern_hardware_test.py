@@ -92,7 +92,8 @@ def main():
                 guest.key("esc")
                 # Explicit shift/caps behavior and report releases.
                 guest.key("caps_lock")
-                guest.text("help\n");guest.wait("-- Applications")
+                # Earlier headings scroll out of the 25-row text viewport.
+                guest.text("help\n");guest.wait("IntelliShell also understands plain English:")
                 guest.key("caps_lock")
                 # Exercise keyboard transfer/event-ring wrap.
                 for _ in range(16): guest.text("cls\n")

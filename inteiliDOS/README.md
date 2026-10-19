@@ -243,11 +243,11 @@ optical support requires an AHCI-enabled profile and the CD-ROM driver enabled.
 
 | Command | Action |
 |---|---|
-| `CDROM` | Show detected drives, readable-disc capacity and ISO9660 volume information. |
+| `CDROM` | Show command usage. |
+| `CDROM /DRIVE-INFO` | Show detected drives, readable-disc capacity and ISO9660 volume information. |
 | `CDROM /EJECT` | Open the first drive with a readable disc, or the first detected drive if all trays are empty. |
 | `CDROM /LIST` | List the ISO9660 root directory on each inserted readable data disc, including folders and file sizes. |
 | `CDROM /RUN` | Open LaunchPad's CD-only browser to choose a native `.ELF` program. Folders remain browsable; other file types are hidden. |
-| `CDROM /?` | Show command usage. |
 
 In the `/RUN` browser, use the arrow keys and Enter to choose a program or
 enter a folder, Backspace to go up, F2 to switch between detected CD-ROM

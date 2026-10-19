@@ -1,6 +1,6 @@
 # MS-DOS 6.22 in inteiliDOS
 
-The `MS-DOS` command opens a software-emulated 8086/80186 PC running the real
+The `MS-DOS` command opens a software-emulated, real-mode 80286-compatible PC running the real
 MS-DOS 6.22 system files supplied on the installation disks. DOS has its own
 memory, BIOS, command prompt, and persistent virtual hard drive. F8 stops the
 emulator and returns to inteiliShell without rebooting inteiliDOS.
@@ -30,6 +30,16 @@ or emulator. Compatibility is not guaranteed.
    Disk 1's image, or a standard 1.44 MB MS-DOS 6.22 Disk 1 floppy in A:.
 4. Type `MS-DOS` at inteiliShell. The emulator creates its private DOS HDD,
    installs the boot files and Disk 1 utilities, and starts the DOS `C:\>` prompt.
+
+First-time creation clears about 16 MiB in the reserved private image.
+The status line shows progress for clearing, system-file copying and FAT
+metadata. SATA clearing uses bounded write batches with a cache flush after
+each batch, rather than a flush after every sector. Existing native files
+and physical disk partitions are not reformatted.
+Press **F8** to cancel during initialization. An incomplete image is not
+published as `MSDOS622.HDD`; the next attempt starts initialization again.
+Real disk/media errors still abort with the failing phase rather than
+continuing into DOS with an incomplete disk.
 
 The inteiliDOS build never bundles DOS images into its OS ISO or kernel.
 **MS-DOS installation disk images and game disk images are not included in
@@ -95,6 +105,7 @@ MS-DOS /IMAGE GAME.IMG
 USB /MOUNT
 MS-DOS /USB
 MS-DOS /USB USB1:
+MS-DOS /USB USB0:\ZORK.IMG
 ```
 
 ### DOS installation images on USB
@@ -110,7 +121,7 @@ Run `USB /MOUNT` first, then `MS-DOS /USB`. It searches mounted drives in
 USB0: through USB3: order for Disk 1. Use `MS-DOS /USB USB1:` to choose a
 specific drive. Missing files can be skipped during that search, but a
 present, corrupt or unreadable image produces an error, not a silent fallback.
-An explicitly requested USB startup requires valid USB Disk 1 even when the
+An explicitly requested USB installation-media startup requires valid USB Disk 1 even when the
 virtual HDD already exists; plain `MS-DOS` still boots the saved HDD without
 installation media.
 
@@ -126,6 +137,55 @@ this option does not place the virtual HDD or installed games on USB.
 F8 returns to inteiliShell as usual. Afterwards, `USB /EJECT` safely releases
 USB storage. USB controller/filesystem restrictions are unchanged; see
 `USB_STORAGE.md`.
+
+### Game images on USB
+
+After creating the saved DOS C: installation, copy a game floppy image onto
+a supported USB drive as an ordinary file. Use a short 8.3 filename, such as
+`ZORK.IMG`. Supported image sizes are 360 KB, 720 KB, 1.2 MB and 1.44 MB.
+Raw EXE files on the USB filesystem are not mapped directly into DOS; put the
+game files inside a FAT floppy image.
+
+```text
+USB /MOUNT
+MS-DOS /USB USB0:\ZORK.IMG
+```
+
+Inside DOS, run:
+
+```text
+A:
+DIR
+ZORK1
+```
+
+Replace the USB volume, filename and game command as appropriate. The selected
+image becomes read-only A:; it need not contain DOS system files or share a
+USB drive with DOS installation images. C: remains the persistent native-HDD
+DOS installation. Copy games to C: to install them or store saves there.
+Games requiring writes to A: are not supported.
+
+For a multi-disk game, supply up to eight image paths in the required order:
+
+```text
+MS-DOS /USB USB0:\DISK1.IMG USB0:\DISK2.IMG USB0:\DISK3.IMG
+```
+
+**F6** swaps A: to the next image without restarting DOS or the running
+installer/game. After the last image it wraps to the first. DOS is notified
+of each successful media change so its cached directory can be refreshed.
+Paths may refer to subfolders or other mounted USB volumes; every path
+must include its `USB0:`..`USB3:` prefix. Keep the filenames short (8.3).
+Only the listed files are used, not every image on the USB drive. The
+remaining images are opened when selected; a missing, invalid or unreadable
+next image leaves the current disk and position unchanged, allowing a retry.
+
+Keep the USB drives connected while playing. F7 selects the physical floppy;
+F6 returns to the next image in a multi-image USB set. F8 exits to inteiliShell.
+With only one USB game image, F6 leaves it mounted. Without a game-image
+list, F6 continues to cycle the four DOS installation disks as before.
+USB images remain read-only; use virtual C: for installation and saves.
+Run `USB /EJECT` after exiting DOS.
 
 ### CD images and physical floppies
 
@@ -151,9 +211,13 @@ BIOS reports change-line support so DOS invalidates cached media information.
 |---|---|
 | C: | Writable, persistent private DOS hard drive |
 | A: | Read-only installation/game floppy media |
-| F6 | Cycle Disk 1, Disk 2, Disk 3, and the supplemental image on the DOS CD |
+| F6 | Cycle installation disks, or advance through the listed USB game images |
 | F7 | Select the real 1.44 MB floppy drive as A: |
 | F8 | Stop the guest and return to inteiliShell |
+
+F10 is passed through to DOS applications, including installers that require
+it to confirm installation. F9 is also passed through; F6, F7 and F8 remain
+reserved for the emulator controls above.
 
 The emulator reports media changes to DOS so its cached A: directory is
 invalidated after a swap. A missing disk or read error is reported to DOS.
@@ -214,10 +278,10 @@ outside that private extent.
 
 ## Compatibility and host safety
 
-- The guest is an 8086/80186-class PC with 640 KB conventional memory.
+- The guest provides real-mode Intel 80286 compatibility with 640 KB conventional memory.
   The host remains a native protected-mode inteiliDOS machine; this is a
   software interpreter, not hardware VM86 execution or a host DOS reboot.
-- Text output, CGA/Hercules graphics, and PC-speaker tones are supported.
+- Text output, CGA/Hercules, EGA/VGA graphics, and PC-speaker tones are supported.
   Native VGA renders the guest graphics, with saved font-plane data and DAC
   palette restored when returning to text mode.
 - Guest port I/O affects private emulated state. It cannot reprogram the
@@ -234,11 +298,120 @@ outside that private extent.
   by itself a guarantee of historical CPU timing.
 
 Not implemented: 286/386 protected-mode software, DOS extenders, DPMI,
-EMS/XMS managers, x87, EGA/VGA-specific graphics, Sound Blaster or other sound
-cards, DOS networking, and native CD-ROM drivers. Windows NE/LE/LX/PE
+EMS/XMS managers, x87, VESA/SVGA graphics, full SB16/FM/MIDI and other sound
+cards, DOS networking, and native CD-ROM drivers. Optional 8-bit digital
+playback is described below. Windows NE/LE/LX/PE
 executables are not supported. Unsupported CPU instructions stop the emulator
 with an explicit diagnostic. An unimplemented device is not a promise that
 the emulator can run every program probing that device.
+
+### EGA and VGA graphics
+
+The guest has a private 256 KiB VGA framebuffer with four memory planes.
+Standard BIOS graphics modes are supported:
+
+| BIOS mode | Guest resolution | Colors |
+|---|---|---|
+| `0Dh` | 320 x 200 | 16 |
+| `0Eh` | 640 x 200 | 16 |
+| `0Fh` | 640 x 350 | Monochrome |
+| `10h` | 640 x 350 | 16 |
+| `11h` | 640 x 480 | Monochrome |
+| `12h` | 640 x 480 | 16 |
+| `13h` | 320 x 200 | 256 |
+
+Games can use INT 10h graphics services or program the emulated sequencer,
+graphics controller, attribute controller, CRTC and DAC. Supported memory
+operations include planar read modes 0/1, write modes 0–3, plane masks,
+set/reset, raster operations, chain-4 and unchained Mode X addressing.
+BIOS pixel, page, cursor, scrolling, graphics-character and palette services
+are provided. The VGA identification call reports a VGA color display.
+
+The presenter fits the guest raster to the host's 320 x 200 VGA output.
+320 x 200 games retain their pixel resolution; higher-resolution modes are
+downsampled, not displayed at native resolution. This is not cycle-accurate
+VGA: retrace status is synthesized, not synchronized to a guest pixel clock.
+VESA/SVGA modes, VGA state-save/restore extensions and arbitrary adapter-specific
+BIOS extensions are not implemented.
+
+No new shell option is necessary: launch games from the DOS prompt as before.
+F6/F7 media controls and F8 exit still work while graphics are active.
+Adding graphics does **not** add 386 instructions or DOS extenders. Optional
+digital sound is a separate setting. The original 386 DOS DOOM remains incompatible.
+Individual games, including specific Mario Teaches Typing releases, still
+need application-level testing; graphics support alone is not a compatibility
+guarantee.
+
+### Real-mode 80286 compatibility
+
+The CPU now follows 286 real-mode FLAGS and PUSH SP behavior, including the
+classic FLAGS-based CPU detection used by DOS games. Shift and rotate counts
+are masked to five bits. The inherited 80186 instructions remain available,
+and BOUND and byte/word string port I/O (`INS`, `OUTS`, including REP and segment
+overrides) are supported.
+
+Real-mode `SGDT`, `SIDT`, `LGDT`, `LIDT`, `SMSW`, `LMSW` and `CLTS` operate on
+private guest state. Interrupts use the guest IDTR, never the host's IDT.
+Handled #BR, #UD and divide faults return to the faulting instruction, including
+its prefixes. A missing fault handler or invalid interrupt table stops safely.
+String port I/O uses the same virtual devices as ordinary IN/OUT, and F8 remains
+responsive during a long REP instruction even with guest interrupts disabled.
+
+This is **real-mode compatibility for DOS games**, not a complete 80286
+protected-mode emulator. An LMSW request to enable PE stops with an explicit
+protected-mode error and restores inteiliShell. Protected-mode-only ARPL,
+SLDT/STR, LAR/LSL and related instructions are invalid in real mode. Undocumented
+LOADALL, protected-mode DOS extenders, 386 instructions, DPMI, EMS/XMS and an
+80287 coprocessor are not provided. Guest RAM remains 640 KB conventional
+memory; this upgrade does not add extended-memory managers or AT hardware.
+
+No new command-line switch is required. Rebuild the OS, then use `MS-DOS`
+and the existing floppy/CD/USB media options normally.
+
+### Optional DOS digital sound
+
+When a 2000s, Athlon 64/Core 2, or early-2010s processor family is selected,
+Willburd asks whether to enable sound-card emulation immediately after the CPU
+question. The default is **No**. Legacy CPU choices skip the question.
+Non-interactive presets also leave it off.
+
+The generated `configurations/config.h` contains:
+
+```c
+#define CONFIG_MSDOS_SOUND 1  /* 0 disables the emulated sound device */
+```
+
+Rebuild after changing it. Enabled sound also requires `CONFIG_ENABLE_PCI 1`.
+This setting is independent of `CONFIG_AUDIO_MODE`, which selects **CLOAD
+capture**, not DOS playback.
+
+Supported playback is the Sound Blaster 2-compatible **8-bit mono DSP subset**:
+
+- Base port **220h**, virtual **IRQ 5**, virtual **DMA channel 1**.
+- DSP reset/version, direct DAC output, time-constant sample rates, single-cycle
+  and auto-init 8-bit DMA, pause/continue, speaker control and block interrupts.
+- For game setup, select Sound Blaster digital effects, address 220, IRQ 5, DMA 1.
+  If needed, type `SET BLASTER=A220 I5 D1 T3` inside DOS or put it in AUTOEXEC.BAT.
+  This does not install a driver or guarantee an application's compatibility.
+- No AdLib/OPL/FM music, MIDI, recording, 16-bit SB16 playback or full mixer
+  register emulation. Select **no music** if the game requires one of these.
+
+Guest DMA reads only private emulator RAM; no guest ISA DMA, PIC or audio-port
+writes reach native hardware. Native playback uses bounded 48 kHz stereo
+buffers through supported Intel ICH AC'97 controllers or a discoverable analog
+Intel HDA pin/DAC path. AC'97 and analog HDA output are verified by QEMU
+recordings, including repeated initialization and F8 during playback. Native
+HDA interrupts stay masked; response-status polling keeps codec commands
+moving, and shutdown disconnects the codec before stopping command DMA.
+It is not arbitrary PCI sound-card, HDMI, USB-audio or
+Bluetooth support. Codec topology and firmware vary; QEMU tests do not certify
+a particular physical PC.
+
+If enabled but no supported output is available, an explicit diagnostic reports
+silent audio. Guest DMA and interrupt timing still progress, so waiting for an
+audio interrupt does not freeze the DOS program. When disabled, DSP detection
+fails as an absent device. The existing PC-speaker path remains independent.
+F8, faults and normal exit stop native playback; re-entry resets guest audio.
 
 For a backup, stop the guest and back up the host disk image using appropriate
 host/emulator tools. Editing or deleting `MSDOS622.HDD` loses the DOS

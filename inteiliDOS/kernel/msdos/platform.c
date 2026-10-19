@@ -2,11 +2,14 @@
  * No guest port accesses reach host hardware. Only bounded speaker tones,
  * text output, keyboard events and private-file disk sectors are exported. */
 #include "msdos.h"
+#include "sound.h"
+#include "../pcm.h"
 #include "mbr.h"
 #include "../fs.h"
 #include "../memory.h"
 #include "../timer.h"
 #include "../keyboard.h"
+#include "keyboard_input.h"
 #include "../vga.h"
 #include "../iso9660.h"
 #include "../fdc.h"
@@ -26,10 +29,14 @@ static iso9660_dirent_t floppy_entry;
 static uint8_t media_cache[2048];
 static uint32_t media_cached_lba;
 static int disc = -1, media_index, physical, pending = -1, io_failed;
+static int delivered_keyboard_state = -1;
 static int auto_media, physical_ready;
 static int media_changed;
 static int usb_drive = -1;
-static char usb_image[32];
+static char usb_image[128];
+#define USB_GAME_DISKS 8
+static char usb_game_paths[USB_GAME_DISKS][128];
+static unsigned usb_game_count, usb_game_index;
 static uint16_t screen[2000], saved[2000];
 static int row, col, save_row, save_col, region_top, region_bottom;
 static uint8_t attr, ansi, bright;
@@ -277,6 +284,34 @@ static int select_usb_media(int selected) {
     return -1;
 }
 
+/* Game media need not contain DOS system files. Match the supported floppy
+ * geometries, and stream sectors through the same bounded USB cache. */
+static int load_usb_game(const char *path) {
+    uint8_t boot[512];
+    uint32_t size=0;
+    if (kstrlen(path)>=sizeof(usb_image)) {
+        vga_puts("MS-DOS: USB image path is too long.\n");return -1;
+    }
+    int rc=usb_file_read_at(path,0,boot,sizeof(boot),&size);
+    if (rc) {
+        vga_printf("MS-DOS: cannot read USB game image: %s\n",usb_storage_error(rc));
+        return -1;
+    }
+    unsigned total=u16(boot+19),track=u16(boot+24);
+    if (boot[510]!=0x55 || boot[511]!=0xaa || u16(boot+11)!=512 ||
+        u16(boot+26)!=2 || size!=total*512u ||
+        !((track==9 && (total==720 || total==1440)) ||
+          (track==15 && total==2400) || (track==18 && total==2880))) {
+        vga_puts("MS-DOS: invalid USB floppy image; use 360K, 720K, 1.2M or 1.44M FAT media.\n");
+        return -1;
+    }
+    kstrcpy(usb_image,path);
+    usb_drive=path[3]-'0';floppy_size=size;media_index=-1;physical=0;
+    media_cached_lba=0xffffffff;media_changed=1;
+    vga_printf("MS-DOS: loaded %s as read-only A:.\n",path);
+    return 0;
+}
+
 static int ensure_physical_floppy(void) {
     /* Unlike LaunchPad, entering MS-DOS need not have initialized the FDC.
      * BIOS leftovers are not a usable controller contract (notably in 86Box).
@@ -406,31 +441,56 @@ int msdos_pc_disk(int drive, uint32_t offset, uint8_t *data,
     }
     return 1;
 }
-/* Encode SDL-style BIOS key events; no guest access to the host IRQ queue. */
-int msdos_pc_key(void) {int k=pending;pending=-1;return k;}
+/* Deliver one key with its original modifier snapshot. An idle resync also
+ * repairs a missed modifier release if the existing pending slot was busy,
+ * and initializes a new guest while a modifier is already physically held. */
+int msdos_pc_key(void) {
+    int k=pending;pending=-1;
+    if (k<0) {
+        keyboard_event_t state;
+        keyboard_current_event(&state);
+        unsigned current=msdos_keyboard_state(&state);
+        if ((int)current==delivered_keyboard_state) return -1;
+        k=(int)(current | MSDOS_KEY_STATE_ONLY);
+    }
+    delivered_keyboard_state=k & MSDOS_KEY_STATE_MASK;
+    return k;
+}
 int msdos_pc_poll(const uint8_t *ram, const uint8_t *ports) {
-    int key=keyboard_poll();
+    keyboard_event_t event;
+    int key=keyboard_poll_event(&event) ? event.character : -1;
     if (key==KEY_F8 || io_failed) return 1;
     if (key==KEY_F1+5) {
         auto_media=0;
+        if (usb_image[0] && media_index<0) {
+            if (usb_game_count>1) {
+                unsigned next=(usb_game_index+1)%usb_game_count;
+                if (!load_usb_game(usb_game_paths[next])) usb_game_index=next;
+                else vga_puts("MS-DOS: USB disk swap failed; previous disk retained.\n");
+            } else {
+                vga_puts("MS-DOS: one USB image selected; list more paths after /USB to swap with F6.\n");
+            }
+        } else if (usb_game_count>1) {
+            /* Resume the chosen USB set after temporarily selecting F7. */
+            unsigned next=(usb_game_index+1)%usb_game_count;
+            if (!load_usb_game(usb_game_paths[next])) usb_game_index=next;
+            else vga_puts("MS-DOS: USB disk swap failed; previous disk retained.\n");
+        } else {
         int next=(floppy_size || physical) ? (media_index+1)%4 : 0;
         if (usb_drive>=0 ? load_usb_media(next) :
             ((disc<0 && find_install_cd()) || load_media(next,media_names[next]))) {
             vga_puts("MS-DOS: could not load next installation disk.\n");
             /* Optional A: media failure must not stop the saved DOS C:. */
         }
+        }
     } else if (key==KEY_F1+6) {
         auto_media=physical_ready=0;physical=1;media_changed=1;pending=-1;
     }
-    else if (key>=0 && pending<0) {
-        int symbol=key;
-        if (key>=KEY_UP && key<=KEY_RIGHT) {
-            static const unsigned s[]={273,274,276,275};
-            symbol=s[key-KEY_UP];
-        } else if (key>=KEY_F1 && key<KEY_F8) symbol=282+key-KEY_F1;
-        pending=0x400|symbol; /* key down, no SDL modifier flags */
+    else if (key>0 && pending<0) {
+        pending=msdos_keyboard_encode(&event);
     }
     uint32_t now=timer_get_ticks();
+    msdos_devices_audio_poll();
     if (now-last_refresh>=16) {
         msdos_devices_update(ram,ports);
         if (!msdos_devices_graphics()) {
@@ -486,6 +546,16 @@ static int reserve_disk(uint8_t drive) {
 }
 /* Extract FAT12 files directly from the user's boot disk into the private
  * FAT16 volume. IO.SYS is first, contiguous, and starts at cluster two. */
+static int seed_file(const uint8_t *e) {
+    return e[0] && e[0]!=0xe5 && !(e[11]&0x18) && e[11]!=15 && u32(e+28) &&
+           kmemcmp(e,"AUTOEXECBAT",11) && kmemcmp(e,"CONFIG  SYS",11) &&
+           kmemcmp(e,"SETUP   ",8) && kmemcmp(e,"DRVSPACEBIN",11);
+}
+static void seed_progress(int row,const char *phase,uint32_t done,uint32_t total) {
+    vga_set_cursor(row,0);
+    vga_printf("DOS HDD %s: %u%% (%u/%u KiB)  F8 cancels          ",
+               phase,total ? done*100/total : 100,done/1024,total/1024);
+}
 static int seed_disk(void) {
     uint8_t sector[512];
     uint8_t *fat=kcalloc(1,32*512), *root=kcalloc(1,32*512);
@@ -496,21 +566,40 @@ static int seed_disk(void) {
     int rc=FS_ERR_IO;
     const char *phase="read system disk";
     uint32_t progress=0;
+    int progress_row=0, progress_col=0, progress_active=0;
+    uint32_t copy_total=0, copy_done=0, shown_percent=0;
     if (read_floppy(19*512,source_root,224*32) ||
         read_floppy(512,source_fat,9*512) ||
         kmemcmp(source_root,"IO      SYS",11) ||
         kmemcmp(source_root+32,"MSDOS   SYS",11)) goto done;
+    for (unsigned i=0;i<224 && source_root[i*32];i++) {
+        const uint8_t *e=source_root+i*32;
+        if (!seed_file(e)) continue;
+        uint32_t size=u32(e+28);
+        if (size>FLOPPY_BYTES-copy_total) goto done;
+        copy_total+=size;
+    }
     kmemset(sector,0,512);
     vga_puts("Creating private DOS disk (native files are kept; F8 cancels)...\n");
+    vga_get_cursor(&progress_row,&progress_col);
+    progress_active=1;
+    seed_progress(progress_row,"clear",0,DISK_SECTORS*512);
     phase="clear private disk";
     for (uint32_t n=0;n<DISK_SECTORS;n+=128) {
         progress=n;
         uint32_t count=DISK_SECTORS-n;
         if (count>128) count=128;
+        if (keyboard_poll()==KEY_F8) {rc=SEED_CANCELLED;goto done;}
         if (fs_image_zero(&hard,n,count)) goto done;
+        uint32_t percent=(n+count)*100/DISK_SECTORS;
+        if (percent!=shown_percent) {
+            seed_progress(progress_row,"clear",(n+count)*512,DISK_SECTORS*512);
+            shown_percent=percent;
+        }
         if (keyboard_poll()==KEY_F8) {rc=SEED_CANCELLED;goto done;}
     }
     phase="boot sectors";
+    seed_progress(progress_row,"boot",0,1024);
     kmemcpy(sector,msdos_mbr,msdos_mbr_size);
     sector[446]=0x80; sector[448]=2; sector[450]=4;
     sector[451]=0; sector[452]=0xbf; sector[453]=7;
@@ -527,14 +616,14 @@ static int seed_disk(void) {
     if (put_sector(1,sector)) goto done;
     w16(fat,0xfff8); w16(fat+2,0xffff);
     unsigned cluster=2, entry=0;
+    shown_percent=0;
+    seed_progress(progress_row,"copy",0,copy_total);
     for (unsigned i=0;i<224;i++) {
         phase="copy system files";progress=i;
         const uint8_t *e=source_root+i*32;
         if (!e[0]) break;
-        if (e[0]==0xe5 || e[11]&0x18 || e[11]==15) continue;
-        /* Setup is for real disks; ship a command prompt on virtual C instead. */
-        if (!kmemcmp(e,"AUTOEXECBAT",11) || !kmemcmp(e,"CONFIG  SYS",11) ||
-            !kmemcmp(e,"SETUP   ",8) || !kmemcmp(e,"DRVSPACEBIN",11)) continue;
+        /* Setup is for real disks; ship a prompt on virtual C instead. */
+        if (!seed_file(e)) continue;
         uint32_t size=u32(e+28), left=size, src=u16(e+26);
         if (!size) continue;
         uint32_t count=(size+2047)/2048;
@@ -544,6 +633,7 @@ static int seed_disk(void) {
         for (uint32_t c=0;c<count;c++) {
             w16(fat+cluster*2,c+1==count?0xffff:cluster+1);
             for (unsigned s=0;s<4;s++) {
+                if (keyboard_poll()==KEY_F8) {rc=SEED_CANCELLED;goto done;}
                 kmemset(sector,0,512);
                 unsigned chunk=left>512?512:left;
                 if (chunk) {
@@ -555,6 +645,12 @@ static int seed_disk(void) {
                     left-=chunk;
                 }
                 if (put_sector(98+(cluster-2)*4+s,sector)) goto done;
+                copy_done+=chunk;
+                uint32_t percent=copy_total ? copy_done*100/copy_total : 100;
+                if (percent!=shown_percent) {
+                    seed_progress(progress_row,"copy",copy_done,copy_total);
+                    shown_percent=percent;
+                }
             }
             ++cluster;
         }
@@ -562,6 +658,7 @@ static int seed_disk(void) {
     }
     /* Add a startup file without any 386 memory managers or disk drivers. */
     phase="startup and FAT";
+    seed_progress(progress_row,"FAT",0,96*512);
     const char *startup="@ECHO OFF\r\nPROMPT $P$G\r\nPATH C:\\\r\nECHO MS-DOS 6.22 - F6 swap disks, F7 floppy, F8 exit\r\n";
     uint8_t *e=root+entry*32;
     kmemcpy(e,"AUTOEXECBAT",11); e[11]=32;
@@ -570,12 +667,20 @@ static int seed_disk(void) {
     kmemcpy(sector,startup,kstrlen(startup));
     if (put_sector(98+(cluster-2)*4,sector)) goto done;
     for (unsigned s=0;s<32;s++) {
+        if (keyboard_poll()==KEY_F8) {rc=SEED_CANCELLED;goto done;}
         if (put_sector(2+s,fat+s*512) || put_sector(34+s,fat+s*512) ||
             put_sector(66+s,root+s*512)) goto done;
     }
     phase="publish virtual disk";
+    if (keyboard_poll()==KEY_F8) {rc=SEED_CANCELLED;goto done;}
+    seed_progress(progress_row,"FAT",96*512,96*512);
     rc=fs_image_publish(IMAGE_NAME,&hard);
 done:
+    if (progress_active) {
+        vga_set_cursor(progress_row,0);
+        vga_puts(rc ? "DOS HDD creation stopped.                                      \n" :
+                      "DOS HDD ready; starting MS-DOS 6.22...                         \n");
+    }
     if (rc) vga_printf("DOS disk initialization failed: %s (%u, code %d).\n",phase,progress,rc);
     kfree(fat);kfree(root);kfree(source_root);kfree(source_fat);return rc;
 }
@@ -587,22 +692,32 @@ static int prepare_disk(int argc, const char *argv[]) {
         (!kstrcmp(argv[0],"/FLOPPY") || !kstrcmp(argv[0],"/floppy"));
     int use_image=argc==2 &&
         (!kstrcmp(argv[0],"/IMAGE") || !kstrcmp(argv[0],"/image"));
-    int use_usb=(argc==1 || argc==2) &&
+    int use_usb=(argc>=1 && argc<=USB_GAME_DISKS+1) &&
         (!kstrcmp(argv[0],"/USB") || !kstrcmp(argv[0],"/usb"));
     int selected_usb=-1;
-    if (use_usb && argc==2) {
-        const char *p=argv[1];
-        if (kstrlen(p)!=5 || (p[0]!='U' && p[0]!='u') ||
+    int usb_game=0;
+    for (int a=1;use_usb && a<argc;a++) {
+        const char *p=argv[a];
+        unsigned len=kstrlen(p);
+        if (len<5 || (p[0]!='U' && p[0]!='u') ||
             (p[1]!='S' && p[1]!='s') || (p[2]!='B' && p[2]!='b') ||
             p[3]<'0' || p[3]>='0'+USB_STORAGE_MAX || p[4]!=':') use_usb=0;
-        else selected_usb=p[3]-'0';
+        else if (len==5 && argc==2) selected_usb=p[3]-'0';
+        else if (len>6 && len<sizeof(usb_image) && (p[5]=='\\' || p[5]=='/')) {
+            if (a==1) selected_usb=p[3]-'0';
+            usb_game=1;
+        } else use_usb=0;
     }
     if (argc && !use_floppy && !use_image && !use_usb) {
-        vga_puts("Usage: MS-DOS [/FLOPPY | /IMAGE <CD image> | /USB [USB0:..USB3:]]\n");return 1;
+        vga_puts("Usage: MS-DOS [/FLOPPY | /IMAGE <CD image> | /USB [USB0:..USB3:]]\n"
+                 "       MS-DOS /USB USB0:\\DISK1.IMG [USB0:\\DISK2.IMG ...]\n"
+                 "       Up to 8 game images; F6 cycles them in the supplied order.\n");return 1;
     }
-    floppy_size=0; disc=-1; pending=-1; io_failed=0; media_index=0;physical=0;
+    floppy_size=0; disc=-1; pending=-1; delivered_keyboard_state=-1;
+    io_failed=0; media_index=0;physical=0;
     auto_media=physical_ready=0;
     usb_drive=-1;usb_image[0]=0;media_changed=0;
+    usb_game_count=usb_game_index=0;
     int existing=-1, candidate=-1;
     uint8_t native_drive;
     int storage_rc=fs_volume_drive(0, &native_drive);
@@ -636,7 +751,17 @@ static int prepare_disk(int argc, const char *argv[]) {
     }
     /* Explicit USB selection must succeed even with a saved C:. Never
      * silently fall back to CD/floppy or reserve a new HDD for bad USB media. */
-    if (use_usb && select_usb_media(selected_usb)) return 1;
+    if (usb_game && existing<0) {
+        vga_puts("MS-DOS: install DOS first using Disk 1; a game image cannot create DOS C:.\n");
+        return 1;
+    }
+    if (use_usb && (usb_game ? load_usb_game(argv[1]) :
+                              select_usb_media(selected_usb))) return 1;
+    if (use_usb && usb_game) {
+        usb_game_count=argc-1;
+        for (unsigned i=0;i<usb_game_count;i++)
+            kstrcpy(usb_game_paths[i],argv[i+1]);
+    }
     if (existing<0 && reserve_disk(candidate)) return 1;
     if (existing<0) {
         if (use_usb) {
@@ -668,6 +793,7 @@ static int prepare_disk(int argc, const char *argv[]) {
 
 int msdos_run(int argc, const char *argv[]) {
     if (prepare_disk(argc,argv)) return 1;
+    vga_puts("DOS CPU: Intel 80286 real-mode compatibility.\n");
     int sr,sc;
     vga_get_cursor(&sr,&sc);
     for (int i=0;i<2000;i++) saved[i]=SCREEN[i];
@@ -675,12 +801,21 @@ int msdos_run(int argc, const char *argv[]) {
     region_top=0;region_bottom=24;blank(0,2000);
     rtc_init();last_refresh=timer_get_ticks()-16;media_changed=0;
     int rc=msdos_cpu_run(hard.sectors);
+    int audio_error=msdos_sound_error();
+    const char *audio_backend=pcm_backend();
     msdos_devices_restore();
     floppy_size=0;
     for (int i=0;i<2000;i++) SCREEN[i]=saved[i];
     vga_set_cursor(sr,sc);
+    if (audio_error) vga_puts("DOS audio: an unsupported DSP command or invalid DMA buffer was used.\n");
+    if (audio_backend) {vga_puts("DOS audio output stopped: ");vga_puts(audio_backend);vga_puts(".\n");}
+#if defined(CONFIG_MSDOS_SOUND) && CONFIG_MSDOS_SOUND
+    else {vga_puts("DOS audio was silent: ");vga_puts(pcm_error());vga_puts(".\n");}
+#endif
     vga_puts(io_failed?"MS-DOS stopped: disk I/O failed.\n":
-             rc==-2?"MS-DOS stopped: unsupported CPU instruction (286/386/x87).\n":
+             rc==-3?"MS-DOS stopped: protected mode is not supported (real-mode 80286 guest).\n":
+             rc==-4?"MS-DOS stopped: invalid guest interrupt table.\n":
+             rc==-2?"MS-DOS stopped: unsupported CPU instruction or unhandled fault (386/x87).\n":
              rc?"MS-DOS: not enough memory for the emulator.\n":
                 "Returned from MS-DOS. Completed disk writes are saved.\n");
     return rc || io_failed;

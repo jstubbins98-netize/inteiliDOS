@@ -17,7 +17,7 @@ def run(*args):
     subprocess.run([str(a) for a in args], check=True)
 
 
-def build(folder, modern=False):
+def build(folder, modern=False, dos_sound=False):
     tmp = Path(folder).resolve()
     tmp.mkdir(parents=True, exist_ok=True)
     cc = shutil.which("i686-elf-gcc") or shutil.which("gcc")
@@ -37,6 +37,7 @@ def build(folder, modern=False):
 #define CONFIG_ENABLE_ATAPI_CDROM 1
 #define CONFIG_ENABLE_FLOPPY 1
 #define CONFIG_AUDIO_MODE 0
+#define CONFIG_MSDOS_SOUND 0
 #define CONFIG_TIMER_HZ 1000
 #define CONFIG_AUDIO_NONE 0
 #define CONFIG_AUDIO_AC97 1
@@ -63,6 +64,12 @@ def build(folder, modern=False):
         }.items():
             profile=re.sub(r"^#define "+key+r" .*?$","",profile,flags=re.M)
             profile+=f"\n#define {key} {value}\n"
+        config.write_text(profile)
+    if dos_sound:
+        profile=config.read_text()
+        for key in ("CONFIG_ENABLE_PCI","CONFIG_MSDOS_SOUND"):
+            profile=re.sub(r"^#define "+key+r" .*?$","",profile,flags=re.M)
+            profile+=f"\n#define {key} 1\n"
         config.write_text(profile)
     cmake = (ROOT/"CMakeLists.txt").read_text()
     objects = []

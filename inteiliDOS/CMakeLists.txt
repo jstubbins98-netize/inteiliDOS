@@ -112,6 +112,7 @@ set(KERNEL_C_SOURCES
     kernel/isr.c
     kernel/timer.c
     kernel/thermal.c
+    kernel/battery.c
     kernel/thermal_hw.c
     kernel/keyboard.c
     kernel/memory.c
@@ -119,12 +120,18 @@ set(KERNEL_C_SOURCES
     kernel/pci.c
     kernel/usb.c
     kernel/usb_xhci.c
+    kernel/usb_ehci.c
+    kernel/usb_bot.c
+    kernel/usb_transport.c
     kernel/usb_storage.c
     kernel/fatfs/ff.c
+    kernel/fatfs/ffunicode.c
+    kernel/div64.c
     kernel/cdrom.c
     kernel/sata_optical.c
     kernel/fs.c
     kernel/hda.c
+    kernel/pcm.c
     kernel/ac97.c
     kernel/iso9660.c
     kernel/fdc.c
@@ -136,6 +143,9 @@ set(KERNEL_C_SOURCES
     kernel/msdos/tiny.c
     kernel/msdos/platform.c
     kernel/msdos/devices.c
+    kernel/msdos/video.c
+    kernel/msdos/real286.c
+    kernel/msdos/sound.c
 )
 
 set(SHELL_C_SOURCES

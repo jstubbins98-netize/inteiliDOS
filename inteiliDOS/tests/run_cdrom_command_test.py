@@ -55,13 +55,18 @@ def main():
             g.wait("Welcome to inteiliDOS")
             shell(g,"cls")
             shell(g,"cdrom")
+            g.wait("Show command usage")
+            shell(g,"cdrom /?")
+            g.wait("Unknown CDROM option")
+            shell(g,"cls")
+            shell(g,"cdrom /drive-info")
             if empty:
                 g.wait("SATA / AHCI optical")
                 g.wait("No readable data disc")
                 g.command("blockdev-change-medium",{"device":"optical",
                           "filename":str(cd),"format":"raw"})
                 g.command("blockdev-close-tray",{"device":"optical"})
-                shell(g,"cls");shell(g,"cdrom")
+                shell(g,"cls");shell(g,"cdrom /drive-info")
             g.wait("volume: CDROM_TEST")
             g.wait("ATAPI")
             if sata:g.wait("SATA / AHCI optical")
@@ -82,11 +87,11 @@ def main():
             block=next(b for b in g.command("query-block")
                        if b.get("inserted",{}).get("file")==str(cd))
             shell(g,"cdrom /eject");g.wait("Eject command accepted")
-            shell(g,"cdrom");g.wait("No readable data disc")
+            shell(g,"cdrom /drive-info");g.wait("No readable data disc")
             g.command("blockdev-change-medium",{"device":block["device"],
                       "filename":str(cd),"format":"raw"})
             g.command("blockdev-close-tray",{"device":block["device"]})
-            shell(g,"cls");shell(g,"cdrom");g.wait("volume: CDROM_TEST")
+            shell(g,"cls");shell(g,"cdrom /drive-info");g.wait("volume: CDROM_TEST")
             shell(g,"cdrom /bad");g.wait("Unknown CDROM option")
             assert hashlib.sha256(cd.read_bytes()).digest()==digest
             assert hashlib.sha256(disk.read_bytes()).digest()==hdd_before

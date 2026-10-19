@@ -24,6 +24,7 @@ static void outb(uint16_t p, uint8_t v) {
 #endif
 
 static uint16_t base;
+static int bus_borrowed;
 static uint8_t stage, active, transaction, bank, changed, failed;
 static uint8_t vendor_lo, vendor_hi, chip, config, div12, div3, div_high;
 static uint8_t raw_temp[3], temp_config[2], raw_fan[3], temp_low[2], cpu_channel;
@@ -102,6 +103,7 @@ static uint8_t firmware_cpu_channel(void) {
 #endif
 
 int thermal_hw_init(void) {
+    bus_borrowed=0;
     base=active=transaction=changed=0;
     cpu_channel=CONFIG_THERMAL_CPU_CHANNEL;
 #ifndef THERMAL_HW_TEST
@@ -122,6 +124,12 @@ int thermal_hw_init(void) {
 }
 uint8_t thermal_hw_cpu_channel(void) { return cpu_channel; }
 
+int thermal_hw_bus_claim(uint16_t io_base) {
+    if (bus_borrowed || (base==io_base && active)) return 0;
+    bus_borrowed=1;return 1;
+}
+void thermal_hw_bus_release(void) { bus_borrowed=0; }
+
 /* One SMBus byte-data operation, no wait loops. Ownership remains ours
  * until completion; the next host IRQ advances it. */
 static int request(uint8_t reg, int write, uint8_t val, uint32_t now) {
@@ -136,6 +144,7 @@ static int request(uint8_t reg, int write, uint8_t val, uint32_t now) {
 }
 
 int thermal_hw_start(uint32_t now) {
+    if (bus_borrowed) return -1; /* defer, not a sensor failure */
     if (!base || active || (inb(base)&1)) return 0;
     stage=0; active=1; changed=failed=0; name="Unavailable";
     if (!request(0x4E,0,0,now)) { active=0; return 0; }

@@ -28,6 +28,7 @@
  * Safe to call multiple times — subsequent calls are no-ops.
  * Returns 1 if a controller was found and initialised, 0 otherwise. */
 int  hda_init(void);
+void hda_stop_capture(void);
 
 /* Returns 1 if the capture stream has audio above the noise floor,
  * 0 if the input is silent or the controller is not present.        */

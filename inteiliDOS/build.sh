@@ -155,6 +155,30 @@ uppercase() {
     printf '%s' "$1" | tr '[:lower:]' '[:upper:]'
 }
 
+prepare_dependencies() {
+    local env_file="${PREFIX:-$HOME/opt/cross}/env.sh"
+    ask_menu \
+        "Have you installed the build dependencies?" \
+        "Choose Yes if the build tools are already installed. Choose No to run install-deps.sh now; it may download software, request administrator access, and update your shell PATH. macOS uses Homebrew; Linux builds the cross-compiler from source." \
+        1 \
+        "Yes, continue with the build" \
+        "No, run install-deps.sh now"
+    if [[ "$REPLY" -eq 2 ]]; then
+        willburd "I shall run the dependency installer before checking the build tools."
+        if ! bash "${SCRIPT_DIR}/install-deps.sh"; then
+            error "Dependency installation failed. Fix the error above and rerun build.sh."
+        fi
+    fi
+    # A child installer cannot change this shell's PATH. Load its generated
+    # environment so newly installed tools work without reopening the terminal.
+    if [[ -f "$env_file" ]]; then
+        source "$env_file"
+    elif [[ -d "${PREFIX:-$HOME/opt/cross}/bin" ]]; then
+        export PATH="${PREFIX:-$HOME/opt/cross}/bin:${PATH}"
+    fi
+    hash -r
+}
+
 set_default_profile() {
     PROFILE_NAME="Generic 1990s PC"
     CPU_CLASS=3
@@ -169,6 +193,7 @@ set_default_profile() {
     ENABLE_ATAPI=1
     ENABLE_FLOPPY=1
     AUDIO_MODE=0
+    MSDOS_SOUND=0
     TIMER_HZ=1000
     TARGET_X86_64=0
     case "$PROFILE_PRESET" in
@@ -236,6 +261,14 @@ run_wizard() {
         7) CPU_CLASS=9 ;;
     esac
     [[ "$CPU_CLASS" -ge 8 ]] && TARGET_X86_64=1 || TARGET_X86_64=0
+    if [[ "$CPU_CLASS" -ge 7 ]]; then
+        ask_menu \
+            "Enable sound card emulation in the MS-DOS emulator?" \
+            "Provides Sound Blaster-compatible 8-bit digital playback at A220 I5 D1 through supported Intel ICH AC'97 or analog HDA outputs. Both paths are verified in QEMU; physical codec compatibility varies. No FM music, MIDI, recording or SB16. This is separate from CLOAD capture. Choose No if sound is not needed." \
+            2 "Yes" "No"
+        [[ "$REPLY" -eq 1 ]] && MSDOS_SOUND=1 || MSDOS_SOUND=0
+        [[ "$MSDOS_SOUND" -eq 0 ]] || ENABLE_PCI=1
+    fi
 
     ask_number \
         "How many megabytes of RAM are installed?" \
@@ -351,6 +384,7 @@ write_config() {
 #define CONFIG_ENABLE_ATAPI_CDROM ${ENABLE_ATAPI}
 #define CONFIG_ENABLE_FLOPPY ${ENABLE_FLOPPY}
 #define CONFIG_AUDIO_MODE ${AUDIO_MODE}
+#define CONFIG_MSDOS_SOUND ${MSDOS_SOUND}
 #define CONFIG_TIMER_HZ ${TIMER_HZ}
 
 #define CONFIG_AUDIO_NONE 0
@@ -382,6 +416,10 @@ write_config() {
 #error "AHCI support requires PCI probing"
 #endif
 
+#if CONFIG_MSDOS_SOUND && !CONFIG_ENABLE_PCI
+#error "MS-DOS sound output requires PCI probing"
+#endif
+
 #endif
 EOF
 }
@@ -403,6 +441,7 @@ print_profile() {
     echo "  ATAPI CD-ROM     : ${ENABLE_ATAPI}"
     echo "  Floppy controller: ${ENABLE_FLOPPY}"
     echo "  Audio mode       : ${AUDIO_MODE}"
+    echo "  DOS sound card   : ${MSDOS_SOUND} (0=off, 1=8-bit digital playback)"
     echo "  PIT timer        : ${TIMER_HZ} Hz"
     echo "  Header           : ${CONFIG_HEADER}"
     echo ""
@@ -425,10 +464,14 @@ if [[ "$CONFIG_ONLY" -eq 1 ]]; then
     exit 0
 fi
 
+if [[ "$USE_DEFAULTS" -eq 0 && -t 0 ]]; then
+    prepare_dependencies
+fi
+
 willburd "Now I shall inspect the workshop tools."
 for cmd in cmake nasm i686-elf-gcc i686-elf-ld i686-elf-objcopy; do
     command -v "${cmd}" >/dev/null 2>&1 ||
-        error "'${cmd}' is required. See BUILD.md for toolchain setup."
+        error "'${cmd}' is required. Run bash \"${SCRIPT_DIR}/install-deps.sh\"; see BUILD.md for toolchain setup."
     info "Found: $(command -v "${cmd}")"
 done
 
@@ -487,5 +530,7 @@ fi
 if [[ "$BOOT_MEDIA" -eq 1 || "$BOOT_MEDIA" -eq 3 ]]; then
     success "Raw floppy image:   ${BUILD_DIR}/inteiliDOS_1990s_floppy.img"
 fi
+source "${SCRIPT_DIR}/scripts/media_prompts.sh"
+offer_media_writing
 willburd "The spell is complete. May your interrupts be orderly and your sectors readable!"
 echo ""

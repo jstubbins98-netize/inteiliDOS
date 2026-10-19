@@ -497,6 +497,15 @@ int hda_init(void)
  * most recently written, and checks whether any sample deviates more than
  * a threshold from the 0x80 silence midpoint (8-bit unsigned PCM).
  * ========================================================================= */
+void hda_stop_capture(void)
+{
+    if (g_hda_present) {
+        hda_wr8(g_hda_mmio,0x80,0);
+        hda_wr8(g_hda_mmio,0x4c,0);
+        hda_wr8(g_hda_mmio,0x5c,0);
+    }
+    g_hda_present=0;
+}
 int hda_has_signal(void)
 {
     uint32_t lpib, check_start, i;
