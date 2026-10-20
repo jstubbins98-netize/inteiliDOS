@@ -60,7 +60,7 @@ the boot media. Test in an emulator before installing on physical hardware.
 Building requires a bare-metal i686-elf toolchain and the dependencies listed
 in the build guide.
 
-Useful shell commands:
+Useful inteiliShell commands:
 
 ```text
   HELP          Show available commands.
