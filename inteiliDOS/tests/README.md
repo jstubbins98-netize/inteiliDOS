@@ -497,3 +497,60 @@ The fixture also declares the model's actual 40-track mechanism in CMOS,
 because QEMU's 1.2M-labelled profile does not emulate physical double stepping.
 The register-level FDC fixture separately checks 80-track drive double stepping,
 all four supported geometries, invalid BPBs, and incomplete/failed seeks.
+
+### Optional DOS PS/2 and USB mouse
+
+```bash
+gcc -std=gnu11 -O1 -Wall -Wextra -Werror tests/msdos_mouse_test.c \
+  kernel/msdos/mouse.c -o /tmp/dos-mouse-test
+/tmp/dos-mouse-test
+python3 tests/run_usb_controller_tests.py
+python3 tests/run_keyboard_modifiers_test.py
+# Build complete kernels including DOS audio and save the full link maps:
+PYTHONPATH=tests python3 -c 'from build_test_kernel import build; build("/tmp/mouse-modern", modern=True, dos_sound=True); build("/tmp/mouse-legacy", dos_sound=True)'
+python3 tests/run_msdos_mouse_test.py /tmp/mouse-modern/inteilidOS.elf --usb
+python3 tests/run_msdos_mouse_test.py /tmp/mouse-modern/inteilidOS.elf --ehci
+python3 tests/run_msdos_mouse_test.py /tmp/mouse-modern/inteilidOS.elf --ehci --mouse-first
+python3 tests/run_msdos_mouse_test.py /tmp/mouse-modern/inteilidOS.elf --ehci --split-companions
+python3 tests/run_msdos_mouse_test.py /tmp/mouse-modern/inteilidOS.elf --uhci
+python3 tests/run_msdos_mouse_test.py /tmp/mouse-legacy/inteilidOS.elf
+python3 tests/run_usb_mixed_test.py /tmp/mouse-modern/inteilidOS.elf
+```
+
+The USB mouse fixture disables the 8042 entirely. `--usb` connects an xHCI boot
+mouse, keyboard and storage device on different root ports. `--ehci` connects
+USB 1.x boot mouse/keyboard to both ports of one ICH9 UHCI companion, with
+high-speed BOT storage on EHCI root port 3 (no xHCI); `--mouse-first` reverses
+the two HID ports. `--uhci` uses standalone PIIX3 UHCI input with separate
+EHCI storage. `--split-companions` places keyboard/mouse on separate UHCI
+companions of the same EHCI controller, with storage still on EHCI.
+USB 1.x is explicitly requested on the older-controller HID
+fixtures: QEMU's default USB 2.0 HID negotiates high speed on EHCI and would
+not test companion routing. These fixtures exercise full-speed USB 1.x;
+the low-speed TD flag path also has host-model coverage, not a physical-device
+claim. The fixture runs real
+separately supplied DOS with an interactive INT 33h test image from USB,
+checking movement, three buttons, callbacks, text/VGA cursor presentation,
+F8/font restoration, `/MOUSE` re-entry, opt-in isolation, keyboard operation
+and repeated scans of mounted storage. A second boot omits the mouse and
+8042, confirming bounded failure and working USB keyboard/F8. The legacy
+fixture covers PS/2 fallback with no USB controller present. Both protect
+native disk sentinels. The xHCI fixture checks the entire source stick is
+unchanged; older-controller fixtures copy/read a file after each DOS exit,
+eject/remount it, and independently verify persisted bytes, FAT mirrors and
+an unchanged DOS game image. Screenshots are under ignored
+`generated-artifacts/msdos-mouse-{ps2,usb,ehci,ehci-mouse-first,ehci-split,uhci}`.
+
+Controller-model tests additionally check signed negative boot motion,
+reserved button bits, truncated reports, saturation, unplug release,
+out-of-session discard, transfer-ring wrap and mouse events during a
+synchronous storage wait. The mixed-storage fixture includes a live mouse
+endpoint while mounting, copying, ejecting and reconnecting drives.
+The UHCI model additionally checks both root-port orders, independent HID
+QHs, empty/short/error reports, saturation, pre-session pending reports,
+disconnect/replacement release and zero port/controller writes during DOS
+start/stop/poll. Boot control DMA retirement halts (never resets) just its UHCI
+engine and resumes the same HID schedule; failed halt quarantines its DMA
+until reboot rather than reusing potentially active descriptors.
+Every complete kernel link rejects overlap with LaunchPad staging at
+`0x500000`; the test builder writes `kernel.map` alongside the ELF.

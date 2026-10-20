@@ -48,11 +48,22 @@ assuming that the first USB device is a keyboard. Caps/Shift/Ctrl, function keys
 arrows and report rollover handling use the shared decoder. System Health's
 System Info tab shows the initialized keyboard backend.
 
+`MS-DOS /MOUSE` accepts a direct-root-port xHCI or UHCI HID boot mouse, with
+relative X/Y and three buttons, or falls back to PS/2. UHCI mice must be
+attached before OS boot; up to eight UHCI controllers with two root ports
+each are probed for one keyboard and one UHCI mouse. Native USB keyboard
+support must be enabled for UHCI enumeration/polling. EHCI supports input only
+by handing low/full-speed root ports to a UHCI companion; it has no HID
+periodic/split-transaction driver. OHCI companions, high-speed EHCI HID,
+wheels, hubs and arbitrary report-protocol devices are unsupported. USB input
+and storage keep shared host controller ownership across DOS entry/F8 exit;
+see [DOS_COMPATIBILITY.md](DOS_COMPATIBILITY.md#optional-mouse).
+
 USB storage on direct xHCI or EHCI high-speed root ports supports FAT12/16/32 read/write via
 `USB /MOUNT` and `USB /EJECT`; see [USB_STORAGE.md](USB_STORAGE.md).
-EHCI hands low/full-speed keyboard ports to their companions before UHCI
+EHCI hands low/full-speed keyboard/mouse ports to their companions before UHCI
 startup; it does not implement HID input itself. Mount/eject leave companion
-keyboard ports alone. The current keyboard driver does not implement OHCI,
+keyboard/mouse ports alone. The current keyboard driver does not implement OHCI,
 EHCI HID, external hubs,
 arbitrary report-protocol keyboards, or keyboard hotplug/reconnection. Keep the
 keyboard attached before boot; reboot after moving it. xHCI ports must already

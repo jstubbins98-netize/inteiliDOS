@@ -12,6 +12,7 @@
 #include "video.h"
 #include "real286.h"
 #include "sound.h"
+#include "mouse.h"
 #include "config.h"
 #ifndef CONFIG_MSDOS_SOUND
 #define CONFIG_MSDOS_SOUND 0
@@ -331,6 +332,10 @@ return 0;
 
 char pc_interrupt(unsigned char interrupt_num)
 {
+/* DOS initializes its reserved vectors after BIOS boot. Publish the resident
+ * mouse just before its first EXEC (normally COMMAND.COM), not during POST
+ * where DOS would replace INT33 with its default empty handler. */
+if (interrupt_num==0x21 && regs8[REG_AH]==0x4b) msdos_mouse_install(mem);
 unsigned vector=cpu286.idt_base+4u*interrupt_num;
 if (4u*interrupt_num+3>cpu286.idt_limit || vector>RAM_SIZE-4) {
     cpu_stop=-4;return 0;
@@ -447,6 +452,8 @@ void audio_callback(void *data, unsigned char *stream, int len)
 // Emulator entry point
 int msdos_cpu_run(uint32_t sectors)
 {
+unsigned short mouse_saved[12],mouse_return_ip=0,mouse_return_flags=0;
+int mouse_callback=0;
 mem = kcalloc(1, RAM_SIZE + 32);
 if (!mem) return -1;
 kmemset(io_ports, 0, sizeof(io_ports));
@@ -528,6 +535,20 @@ i += length;
 	for (; opcode_stream = mem + 16 * regs16[REG_CS] + reg_ip, opcode_stream != mem;)
 	{
 if (!seg_override_en && !rep_override_en) instruction_start=reg_ip;
+/* A real IVT entry permits DOS detection, guest hooks and PUSHF/FAR CALL
+ * chaining. The two entry stubs live beyond the checked upstream ROM/overlay. */
+if (msdos_mouse_enabled() && regs16[REG_CS]==0xf000 &&
+    reg_ip==MSDOS_MOUSE_ENTRY) {
+    msdos_mouse_poll(mem[0x449]);
+    msdos_mouse_bios(regs16,mem);
+    R_M_POP(reg_ip);R_M_POP(regs16[REG_CS]);R_M_POP(scratch_uint);
+    set_flags(scratch_uint);continue;
+}
+if (mouse_callback && regs16[REG_CS]==0xf000 && reg_ip==MSDOS_MOUSE_RETURN) {
+    kmemcpy(regs16,mouse_saved,sizeof(mouse_saved));
+    reg_ip=mouse_return_ip;set_flags(mouse_return_flags);mouse_callback=0;
+    continue;
+}
 /* The checked upstream INT 10h entry also handles PUSHF/FAR CALL chains. */
 if (regs16[REG_CS]==0xf000 && reg_ip==0x0742 && msdos_video_bios(regs16)) {
     R_M_POP(reg_ip);R_M_POP(regs16[REG_CS]);R_M_POP(scratch_uint);
@@ -1087,6 +1108,18 @@ if (!(inst_counter % 2000) && msdos_pc_poll(mem,io_ports)) break;
 if (!seg_override_en && !rep_override_en && regs8[FLAG_IF] && !regs8[FLAG_TF]) {
     int irq=msdos_sound_irq();
     if (irq>=0) pc_interrupt((unsigned char)irq);
+}
+/* Mouse event handlers are far procedures ending in RETF. Never nest one,
+ * interrupt a REP/prefix, or run it while the guest has disabled interrupts. */
+if (!mouse_callback && !(inst_counter%2000) && !seg_override_en &&
+    !rep_override_en && regs8[FLAG_IF] && !regs8[FLAG_TF]) {
+    unsigned short segment,offset;
+    kmemcpy(mouse_saved,regs16,sizeof(mouse_saved));
+    if (msdos_mouse_event(regs16,&segment,&offset)) {
+        mouse_return_ip=reg_ip;make_flags();mouse_return_flags=scratch_uint;
+        R_M_PUSH(0xf000);R_M_PUSH(MSDOS_MOUSE_RETURN);
+        regs16[REG_CS]=segment;reg_ip=offset;mouse_callback=1;
+    }
 }
 	}
 

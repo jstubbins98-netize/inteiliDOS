@@ -1,4 +1,4 @@
-/* Shared xHCI driver: boot keyboard and up to four direct-root BOT drives.
+/* Shared xHCI driver: boot keyboard/mouse and up to four direct-root BOT drives.
  * Intel xHCI 1.x register/TRB/context layouts. Identity-mapped 32-bit DMA;
  * a 64-bit CPU is not required. No hubs, MSI or above-4GiB BARs.
  * Storage rescans never reset the controller or interrupt a live keyboard.
@@ -15,7 +15,10 @@
 #define TRB_TYPE(n) ((uint32_t)(n)<<10)
 typedef struct { uint32_t lo, hi, size, flags; } trb_t;
 typedef struct {
-    trb_t trbs[RING_SIZE];
+    /* Leave the last 16-byte cell for producer metadata. This keeps the
+     * entire ring in 1 KiB (not 2 KiB after alignment padding), and still
+     * prevents its DMA segment crossing a 64 KiB boundary. */
+    trb_t trbs[RING_SIZE-1];
     unsigned index, cycle;
 } __attribute__((aligned(1024))) ring_t; /* TRB segment cannot cross 64 KiB */
 static ring_t commands;
@@ -25,8 +28,8 @@ typedef struct {
     unsigned slot_id, port, rate, in_dci, out_dci;
     unsigned used, storage, failed;
 } __attribute__((aligned(64))) device_t;
-static device_t devices[5] __attribute__((aligned(64)));
-static device_t *current, *keyboard_device, *disks[4];
+static device_t devices[6] __attribute__((aligned(64)));
+static device_t *current, *keyboard_device, *mouse_device, *disks[4];
 #define control_ring (current->control)
 #define keyboard_ring (current->in)
 #define input_context (current->input)
@@ -42,6 +45,9 @@ static uint64_t scratch_list[32] __attribute__((aligned(64)));
 static uint8_t scratch_pages[32][4096] __attribute__((aligned(4096)));
 static uint8_t data[512] __attribute__((aligned(64)));
 static uint8_t report[8] __attribute__((aligned(64))), previous[8];
+static uint8_t mouse_report[3] __attribute__((aligned(64)));
+static int mouse_ready, mouse_active, mouse_x, mouse_y;
+static unsigned mouse_buttons;
 static uint8_t bulk_data[512] __attribute__((aligned(512)));
 static uint32_t op, doorbell, interrupter;
 static unsigned stride, event_index, event_cycle, max_devices, ports;
@@ -77,7 +83,7 @@ static int wait_bits(uint32_t p, uint32_t mask, uint32_t wanted, uint32_t ms) {
 static void init_ring(ring_t *r) {
     kmemset(r,0,sizeof(*r));
     r->cycle=1;
-    r->trbs[RING_SIZE-1]=(trb_t){phys(r->trbs),0,0,TRB_TYPE(6)|2};
+    r->trbs[RING_SIZE-2]=(trb_t){phys(r->trbs),0,0,TRB_TYPE(6)|2};
 }
 static uint32_t enqueue(ring_t *r,uint32_t lo,uint32_t hi,uint32_t size,uint32_t flags) {
     volatile trb_t *t=&r->trbs[r->index];
@@ -85,9 +91,9 @@ static uint32_t enqueue(ring_t *r,uint32_t lo,uint32_t hi,uint32_t size,uint32_t
     __asm__ volatile("":::"memory");
     t->flags=flags|r->cycle;
     uint32_t address=phys(t);
-    if (++r->index==RING_SIZE-1) {
+    if (++r->index==RING_SIZE-2) {
         /* Publish a cycle-matched Link TRB before toggling on wrap. */
-        r->trbs[RING_SIZE-1].flags=TRB_TYPE(6)|2|r->cycle;
+        r->trbs[RING_SIZE-2].flags=TRB_TYPE(6)|2|r->cycle;
         r->index=0; r->cycle^=1;
     }
     return address;
@@ -162,14 +168,15 @@ static int descriptor(unsigned type,unsigned length) {
     return control(0x80,6,(uint16_t)(type<<8),0,(uint16_t)length);
 }
 static void arm_report(void) {
-    enqueue(&keyboard_ring,phys(report),0,8,TRB_TYPE(1)|(1<<5));
+    int mouse=current==mouse_device;
+    enqueue(&keyboard_ring,phys(mouse?mouse_report:report),0,mouse?3:8,
+            TRB_TYPE(1)|(1<<5));
     wr(doorbell+slot*4,dci);
 }
 void usb_xhci_poll(void) {
-    if (!ready || busy || dma_unsafe) return;
-    current=keyboard_device;
-    if ((rd(op+4)&4) || !(rd(op+0x400+(root_port-1)*16)&1)) {
-        ready=0;
+    if (!running || busy || dma_unsafe) return;
+    if (rd(op+4)&4) {
+        ready=mouse_ready=0;mouse_buttons=0;
         return;
     }
     /* Bound interrupt-handler work; never wait, enumerate or print here. */
@@ -181,15 +188,34 @@ void usb_xhci_poll(void) {
 }
 
 static void keyboard_event(const trb_t *e) {
-    if (!ready || !keyboard_device || ((e->flags>>10)&63)!=32 ||
-        (e->flags>>24)!=keyboard_device->slot_id ||
-        ((e->flags>>16)&31)!=keyboard_device->in_dci) return;
+    if (((e->flags>>10)&63)!=32) return;
+    device_t *dev=0;
+    if (ready && keyboard_device && (e->flags>>24)==keyboard_device->slot_id)
+        dev=keyboard_device;
+    if (mouse_ready && mouse_device && (e->flags>>24)==mouse_device->slot_id)
+        dev=mouse_device;
+    if (!dev || ((e->flags>>16)&31)!=dev->in_dci) return;
+    int mouse=dev==mouse_device;
     unsigned code=e->size>>24;
-    if (code!=1 && code!=13) {ready=0;return;}
-    if (!(e->size&0xFFFFFF) && usb_process_boot_report(report,previous))
-        kmemcpy(previous,report,8);
+    if ((code!=1 && code!=13) || !(rd(op+0x400+(dev->port-1)*16)&1)) {
+        if (mouse) {mouse_ready=0;mouse_buttons=0;}
+        else ready=0;
+        return;
+    }
+    if (!(e->size&0xFFFFFF)) {
+        if (mouse && mouse_active) {
+            /* Boot report: buttons, signed X, signed Y; Y already points down.
+             * Ignore reserved bits and do not advertise report-ID/wheel formats. */
+            mouse_buttons=mouse_report[0]&7;
+            int x=mouse_x+(int8_t)mouse_report[1];
+            int y=mouse_y+(int8_t)mouse_report[2];
+            mouse_x=x<-32767?-32767:x>32767?32767:x;
+            mouse_y=y<-32767?-32767:y>32767?32767:y;
+        } else if (!mouse && usb_process_boot_report(report,previous))
+            kmemcpy(previous,report,8);
+    }
     device_t *saved=current;
-    current=keyboard_device;
+    current=dev;
     arm_report();
     current=saved;
 }
@@ -286,9 +312,12 @@ static int keyboard_on_port(unsigned port) {
     unsigned length=data[2]|((unsigned)data[3]<<8);
     if (length<9 || length>sizeof(data) || descriptor(2,length)) return -1;
     usb_keyboard_descriptor_t info;
-    if (usb_parse_boot_keyboard(data,length,&info))
-        return configure_storage(length);
-    if (keyboard_device) return -1;
+    int mouse=0;
+    if (usb_parse_boot_keyboard(data,length,&info)) {
+        if (usb_parse_boot_hid(data,length,2,&info)) return configure_storage(length);
+        mouse=1;
+    }
+    if (mouse ? mouse_device!=0 : keyboard_device!=0) return -1;
     if (control(0,9,info.configuration,0,0) ||
         control(0x21,11,0,info.interface,0)) return -1; /* boot protocol */
     /* SET_IDLE is advisory and not implemented by every keyboard. Do not
@@ -309,10 +338,11 @@ static int keyboard_on_port(unsigned port) {
     ep[0]=interval<<16;
     ep[1]=(3<<1)|(7<<3)|((uint32_t)info.packet_size<<16);
     ep[2]=phys(keyboard_ring.trbs)|1;
-    ep[4]=8|((uint32_t)info.packet_size<<16);
+    ep[4]=(mouse?3u:8u)|((uint32_t)info.packet_size<<16);
     if (command(12,phys(input_context),slot<<24,&event)) return -1;
-    kmemset(previous,0,sizeof(previous));
-    keyboard_device=current;ready=1;arm_report();
+    if (mouse) {mouse_device=current;mouse_ready=1;}
+    else {kmemset(previous,0,sizeof(previous));keyboard_device=current;ready=1;}
+    arm_report();
     return 1;
 }
 
@@ -325,6 +355,9 @@ static int release_device(device_t *dev) {
         dev->failed=1;dma_unsafe=1;return -1;
     }
     if (slot) dcbaa[slot]=0;
+    if (dev==mouse_device) {
+        mouse_device=0;mouse_ready=0;mouse_x=mouse_y=0;mouse_buttons=0;
+    }
     for (unsigned i=0;i<4;i++) if (disks[i]==dev) disks[i]=0;
     kmemset(dev,0,sizeof(*dev));
     return 0;
@@ -498,7 +531,7 @@ static int controller(const pci_device_t *device) {
     kmemset((void *)events,0,sizeof(events));
     kmemset(dcbaa,0,sizeof(dcbaa));
     event_index=0;event_cycle=1;
-    max_devices=(hcs&255)<5 ? (hcs&255) : 5;
+    max_devices=(hcs&255)<6 ? (hcs&255) : 6;
     kmemset(devices,0,sizeof(devices));
     for (unsigned i=0;i<pads;i++) scratch_list[i]=phys(scratch_pages[i]);
     if (pads) dcbaa[0]=phys(scratch_list);
@@ -545,6 +578,30 @@ int usb_xhci_storage_scan(void) {
     int count=0;
     for (unsigned i=0;i<4;i++) if (usb_xhci_storage_present(i)) count++;
     return count;
+}
+int usb_xhci_mouse_start(void) {
+    usb_xhci_init();
+    if (!running || busy || dma_unsafe) return 0;
+    busy=1;scan_ports();
+    busy=0;
+    usb_xhci_poll(); /* discard any completed report from outside the session */
+    mouse_x=mouse_y=0;mouse_buttons=0;
+    mouse_active=mouse_ready && !dma_unsafe;
+    return mouse_active;
+}
+void usb_xhci_mouse_stop(void) {
+    mouse_active=0;mouse_x=mouse_y=0;mouse_buttons=0;
+}
+void usb_xhci_mouse_poll(int *dx,int *dy,unsigned *buttons) {
+    /* Also supports PCI builds that did not enable the USB keyboard timer.
+     * mouse_input calls with IRQs masked, so this cannot race that timer. */
+    usb_xhci_poll();
+    if (!mouse_device || !mouse_ready || dma_unsafe ||
+        !(rd(op+0x400+(mouse_device->port-1)*16)&1)) {
+        mouse_x=mouse_y=0;mouse_buttons=0;
+    }
+    *dx=mouse_x;*dy=mouse_y;*buttons=mouse_buttons;
+    mouse_x=mouse_y=0;
 }
 int usb_xhci_storage_present(unsigned disk) {
     return disk<4 && disks[disk] && !disks[disk]->failed &&

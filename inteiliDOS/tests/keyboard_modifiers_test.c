@@ -5,6 +5,8 @@
 #include "../kernel/keyboard.c"
 #include "../kernel/usb.h"
 #include "../kernel/msdos/keyboard_input.h"
+static unsigned mouse_bytes;
+void mouse_input_byte(uint8_t value) {assert(value==0x1e);++mouse_bytes;}
 
 static keyboard_event_t next(void) {
     keyboard_event_t e;
@@ -24,6 +26,10 @@ static void bios(uint8_t c,uint8_t scan,uint8_t mods,unsigned expected) {
            (expected | msdos_keyboard_state(&e) | (physical<<24)));
 }
 int main(void) {
+    keyboard_ps2_input(0x21,0x1e);
+    assert(mouse_bytes==1 && kb_head==kb_tail); /* AUX never types 'a' */
+    keyboard_ps2_input(0xc1,0x1e);
+    assert(kb_head==kb_tail); /* discard parity/timeout bytes */
     /* Left/right releases must be independent, including E0 right Ctrl/Alt. */
     keyboard_scancode(0x2a);expect(0,0,2);
     keyboard_scancode(0x36);expect(0,0,0x22);

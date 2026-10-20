@@ -5,6 +5,7 @@
 
 #include "keyboard.h"
 #include "isr.h"
+#include "mouse_input.h"
 #include <stdint.h>
 
 #define KB_DATA 0x60
@@ -145,9 +146,15 @@ static void keyboard_scancode(uint8_t sc) {
 
 static void keyboard_handler(registers_t *regs) {
     (void)regs;
-    keyboard_scancode(inb(KB_DATA));
+    uint8_t status=inb(KB_STATUS);
+    if (status&1) keyboard_ps2_input(status,inb(KB_DATA));
 }
 
+void keyboard_ps2_input(uint8_t status, uint8_t value) {
+    if (status&0xc0) return; /* parity/timeout */
+    if (status&0x20) mouse_input_byte(value);
+    else keyboard_scancode(value);
+}
 void keyboard_init(void) {
     isr_register_handler(33, keyboard_handler);
 }

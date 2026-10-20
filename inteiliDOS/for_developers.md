@@ -633,6 +633,38 @@ See `kernel/msdos/README.md` for upstream provenance.
 
 ## Validation
 
+### Optional DOS mouse
+
+`MS-DOS /MOUSE` enables the built-in INT 33h subset using a native PS/2
+mouse/touchpad. Media selection is independent of the switch. Mouse packets
+are routed by the shared 8042 status AUX bit, never through the keyboard
+scancode decoder. Guest mouse services never access native ports.
+
+The resident entry must be installed after DOS initializes reserved vectors,
+at its first EXEC rather than BIOS boot. Guest vector replacement and
+PUSHF/FAR CALL chaining remain possible. Event handlers are non-nested RETF
+callbacks; restore interrupted registers and flags. Cursor rendering must
+remain an overlay, leaving guest framebuffer contents untouched. Native
+reporting is stopped on F8 and other emulator exits.
+
+Tests (all created disk fixtures are disposable):
+
+```sh
+gcc -std=gnu11 -O1 -g -fsanitize=address,undefined \
+  tests/msdos_mouse_test.c kernel/msdos/mouse.c -o /tmp/msdos-mouse-test
+ASAN_OPTIONS=detect_leaks=0 /tmp/msdos-mouse-test
+python3 tests/run_msdos_mouse_test.py /path/to/test-kernel.elf
+# For a modern USB-keyboard/storage-enabled test kernel:
+python3 tests/run_msdos_mouse_test.py /path/to/modern-test-kernel.elf --usb
+```
+
+The QEMU test needs separately supplied DOS media. It checks INT 33h
+detection, far-call chaining, physical PS/2 movement/buttons, callbacks,
+pointer rendering, native font restoration, F8, re-entry, and opt-in state.
+The USB variant also checks combined USB game media/PS/2 mouse input and
+bounded failure with the PS/2 controller absent. It does not certify native
+USB mouse support or physical motherboard/touchpad compatibility.
+
 ### Compile all C for i386
 
 Use the same flags as CMake and compile every translation unit. Warnings should

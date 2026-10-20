@@ -6,6 +6,12 @@ import tempfile
 
 root=Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix="usb-controllers-") as folder:
+    out=Path(folder)/"usb_uhci_mouse_test"
+    subprocess.run(["gcc","-std=gnu11","-O1","-Wall","-Wextra",
+                    "-Wno-pointer-to-int-cast","-ffunction-sections","-fdata-sections",
+                    str(root/"tests/usb_uhci_mouse_test.c"),"-Wl,--gc-sections",
+                    "-o",str(out)],check=True)
+    subprocess.run([str(out)],check=True)
     for name in ("usb_xhci_init_test","usb_ehci_init_test","usb_bot_test","usb_transport_test"):
         out=Path(folder)/name
         extra=[] if name=="usb_transport_test" else [str(root/"kernel/usb_bot.c")]

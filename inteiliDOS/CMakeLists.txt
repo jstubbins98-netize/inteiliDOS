@@ -115,6 +115,7 @@ set(KERNEL_C_SOURCES
     kernel/battery.c
     kernel/thermal_hw.c
     kernel/keyboard.c
+    kernel/mouse_input.c
     kernel/memory.c
     kernel/ata.c
     kernel/pci.c
@@ -146,6 +147,7 @@ set(KERNEL_C_SOURCES
     kernel/msdos/video.c
     kernel/msdos/real286.c
     kernel/msdos/sound.c
+    kernel/msdos/mouse.c
 )
 
 set(SHELL_C_SOURCES

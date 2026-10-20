@@ -3,6 +3,7 @@
  * text output, keyboard events and private-file disk sectors are exported. */
 #include "msdos.h"
 #include "sound.h"
+#include "mouse.h"
 #include "../pcm.h"
 #include "mbr.h"
 #include "../fs.h"
@@ -457,6 +458,7 @@ int msdos_pc_key(void) {
     return k;
 }
 int msdos_pc_poll(const uint8_t *ram, const uint8_t *ports) {
+    msdos_mouse_poll(ram[0x449]);
     keyboard_event_t event;
     int key=keyboard_poll_event(&event) ? event.character : -1;
     if (key==KEY_F8 || io_failed) return 1;
@@ -486,6 +488,10 @@ int msdos_pc_poll(const uint8_t *ram, const uint8_t *ports) {
     } else if (key==KEY_F1+6) {
         auto_media=physical_ready=0;physical=1;media_changed=1;pending=-1;
     }
+    else if (key==KEY_F12 && msdos_mouse_enabled() &&
+             !(event.modifiers&(KEY_MOD_SHIFT|KEY_MOD_CTRL|KEY_MOD_ALT))) {
+        msdos_mouse_toggle_cursor();
+    }
     else if (key>0 && pending<0) {
         pending=msdos_keyboard_encode(&event);
     }
@@ -494,7 +500,7 @@ int msdos_pc_poll(const uint8_t *ram, const uint8_t *ports) {
     if (now-last_refresh>=16) {
         msdos_devices_update(ram,ports);
         if (!msdos_devices_graphics()) {
-            for (int i=0;i<2000;i++) SCREEN[i]=screen[i];
+            for (int i=0;i<2000;i++) SCREEN[i]=msdos_mouse_text(i,screen[i]);
             vga_set_cursor(row,col);
         }
         last_refresh=now;
@@ -709,7 +715,7 @@ static int prepare_disk(int argc, const char *argv[]) {
         } else use_usb=0;
     }
     if (argc && !use_floppy && !use_image && !use_usb) {
-        vga_puts("Usage: MS-DOS [/FLOPPY | /IMAGE <CD image> | /USB [USB0:..USB3:]]\n"
+        vga_puts("Usage: MS-DOS [/MOUSE] [/FLOPPY | /IMAGE <CD image> | /USB [USB0:..USB3:]]\n"
                  "       MS-DOS /USB USB0:\\DISK1.IMG [USB0:\\DISK2.IMG ...]\n"
                  "       Up to 8 game images; F6 cycles them in the supplied order.\n");return 1;
     }
@@ -792,7 +798,28 @@ static int prepare_disk(int argc, const char *argv[]) {
 }
 
 int msdos_run(int argc, const char *argv[]) {
-    if (prepare_disk(argc,argv)) return 1;
+    /* Strip the independent /MOUSE switch before the existing media parser.
+     * Retain path spelling/order; it may appear before or after USB paths. */
+    const char *media_args[USB_GAME_DISKS+1];
+    int media_argc=0,mouse=0;
+    for (int i=0;i<argc;i++) {
+        const char *p=argv[i],*option="/MOUSE";
+        int same=1;
+        for (unsigned j=0;;j++) {
+            char c=p[j];if (c>='a' && c<='z') c-=32;
+            if (c!=option[j]) {same=0;break;}
+            if (!c) break;
+        }
+        if (same) mouse=1;
+        else if (media_argc<(int)(sizeof(media_args)/sizeof(media_args[0])))
+            media_args[media_argc++]=p;
+        else {vga_puts("MS-DOS: too many media arguments.\n");return 1;}
+    }
+    if (prepare_disk(media_argc,media_args)) return 1;
+    int mouse_ready=msdos_mouse_start(mouse);
+    if (mouse) vga_puts(mouse_ready?
+        "DOS mouse: driver enabled; pointer hidden, F12 toggles visibility.\n":
+        "DOS mouse unavailable: no supported USB boot mouse or responding PS/2 mouse/touchpad.\n");
     vga_puts("DOS CPU: Intel 80286 real-mode compatibility.\n");
     int sr,sc;
     vga_get_cursor(&sr,&sc);
@@ -801,6 +828,7 @@ int msdos_run(int argc, const char *argv[]) {
     region_top=0;region_bottom=24;blank(0,2000);
     rtc_init();last_refresh=timer_get_ticks()-16;media_changed=0;
     int rc=msdos_cpu_run(hard.sectors);
+    msdos_mouse_stop();
     int audio_error=msdos_sound_error();
     const char *audio_backend=pcm_backend();
     msdos_devices_restore();

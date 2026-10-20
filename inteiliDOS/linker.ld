@@ -40,6 +40,7 @@ SECTIONS
 
     /* Symbol marking the end of the kernel image */
     _kernel_end = ALIGN(4K);
+    ASSERT(_kernel_end <= 0x500000, "Kernel overlaps LaunchPad staging at 0x500000")
 
     /DISCARD/ : {
         *(.comment)

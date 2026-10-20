@@ -77,6 +77,10 @@ void *kmemcpy(void *p,const void *q,size_t n) {return memcpy(p,q,n);}
 int usb_parse_boot_keyboard(const uint8_t *p,unsigned n,usb_keyboard_descriptor_t *out) {
     (void)p;(void)n;(void)out;return -1;
 }
+int usb_parse_boot_hid(const uint8_t *p,unsigned n,unsigned protocol,
+                       usb_keyboard_descriptor_t *out) {
+    (void)protocol;return usb_parse_boot_keyboard(p,n,out);
+}
 int usb_process_boot_report(const uint8_t a[8],const uint8_t b[8]) {
     (void)a;(void)b;return 0;
 }
@@ -105,7 +109,8 @@ static pci_device_t fresh(void) {
     memset(regs,0,sizeof(regs));memset(cfg,0,sizeof(cfg));
     memset(&info,0,sizeof(info));
     memset(disks,0,sizeof(disks));memset(devices,0,sizeof(devices));
-    keyboard_device=0;ready=running=dma_unsafe=initialized=0;
+    keyboard_device=mouse_device=0;
+    ready=mouse_ready=mouse_active=running=dma_unsafe=initialized=0;
     ticks=0;ready_at=5;bios_at=2;
     refuse_bios=stuck_cnr=refuse_halt=refuse_reset=refuse_start=reject_routes=0;
     reject_takeover=reclaim_ownership=refuse_smi=reject_os=0;
@@ -207,6 +212,49 @@ int main(void) {
     p=fresh();regs[(OP+8-BASE)/4]=0;
     assert(!controller(&p) && !route_writes);
     assert(strstr(info.status,"4 KiB pages"));
+
+    /* Mouse boot decoding, event demultiplexing, short reports, clamping,
+     * session gating and a synchronous storage wait sharing the event ring. */
+    p=fresh();assert(controller(&p));
+    assert(sizeof(ring_t)==1024);
+    ring_t test_ring;init_ring(&test_ring);
+    for (unsigned i=0;i<3*(RING_SIZE-2);i++)
+        enqueue(&test_ring,i,0,3,TRB_TYPE(1));
+    assert(!test_ring.index && !test_ring.cycle);
+    assert((test_ring.trbs[RING_SIZE-2].flags&1)==1);
+    mouse_device=&devices[0];mouse_device->used=1;
+    mouse_device->slot_id=1;mouse_device->port=1;mouse_device->in_dci=3;
+    regs[(OP+0x400-BASE)/4]=1;
+    init_ring(&mouse_device->in);
+    mouse_ready=1;mouse_active=0;
+    mouse_report[0]=0xff;mouse_report[1]=0x80;mouse_report[2]=127;
+    trb_t me={0,0,1u<<24,TRB_TYPE(32)|(1u<<24)|(3u<<16)};
+    current=&devices[2];
+    keyboard_event(&me);
+    assert(!mouse_x && !mouse_y && !mouse_buttons && current==&devices[2]);
+    mouse_active=1;keyboard_event(&me);
+    assert(mouse_x==-128 && mouse_y==127 && mouse_buttons==7);
+    me.size|=1;keyboard_event(&me); /* incomplete report: no stale movement */
+    assert(mouse_x==-128 && mouse_y==127);
+    me.size=1u<<24;me.flags^=1u<<24;keyboard_event(&me); /* wrong slot */
+    assert(mouse_x==-128);
+    me.flags^=1u<<24;
+    mouse_x=-32760;mouse_y=32760;keyboard_event(&me);
+    assert(mouse_x==-32767 && mouse_y==32767);
+    int x,y;unsigned buttons;
+    usb_xhci_mouse_poll(&x,&y,&buttons);
+    assert(x==-32767 && y==32767 && buttons==7 && !mouse_x && !mouse_y);
+    events[0]=me;events[0].flags|=1;
+    events[1]=(trb_t){0x1234,0,1u<<24,TRB_TYPE(32)|1};
+    trb_t completion;
+    assert(!wait_event(32,0x1234,&completion));
+    assert(mouse_x==-128 && mouse_y==127 && current==&devices[2]);
+    usb_xhci_mouse_stop();keyboard_event(&me);
+    assert(!mouse_active && !mouse_buttons && !mouse_x && !mouse_y);
+    mouse_active=1;keyboard_event(&me);
+    regs[(OP+0x400-BASE)/4]=0;
+    usb_xhci_mouse_poll(&x,&y,&buttons);
+    assert(!x && !y && !buttons); /* unplug cannot leave a held button */
 
     /* A missing completion must preserve all potentially DMA-owned state. */
     p=fresh();assert(controller(&p));

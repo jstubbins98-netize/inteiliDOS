@@ -108,6 +108,72 @@ MS-DOS /USB USB1:
 MS-DOS /USB USB0:\ZORK.IMG
 ```
 
+### Optional mouse
+
+Append `/MOUSE` to the inteiliShell command to enable the built-in DOS
+mouse driver for that session:
+
+```text
+MS-DOS /MOUSE
+MS-DOS /IMAGE GAME.IMG /MOUSE
+MS-DOS /MOUSE /USB USB0:\GAME1.IMG USB0:\GAME2.IMG
+```
+
+The switch is case-insensitive and can go before or after the media options.
+No separate `MOUSE.COM` is required. Without `/MOUSE`, the emulator does not
+install its mouse driver or consume native mouse input.
+
+Input prefers a **USB HID boot mouse connected directly to an xHCI root port**,
+then a **direct-root UHCI boot mouse**, falling back to a responding **PS/2
+mouse or PS/2-compatible touchpad**. USB reports provide relative X/Y and left,
+right and middle buttons. The UHCI path requires native USB keyboard support
+enabled in the build (as in the modern profiles), PCI I/O/bus mastering, and
+the mouse connected **before native OS boot**. Up to eight UHCI controllers
+are probed, with two root ports each; one keyboard and one UHCI mouse are
+selected, each using one boot interface at alternate setting zero. UHCI
+supports low/full-speed (1.5/12 Mb/s) devices, configuration descriptors up to
+512 bytes and interrupt packet sizes up to 8 bytes at low speed or 64 bytes
+at full speed. Only the three-byte boot mouse report is consumed.
+
+An **EHCI + UHCI companion** arrangement works when EHCI hands the mouse and
+keyboard's low/full-speed root ports to UHCI during boot. EHCI itself has
+**no HID periodic/split-transaction driver**: high-speed HID devices, EHCI-only
+ports without a supported companion, and EHCI + OHCI companions are not mouse
+paths. High-speed storage stays owned by EHCI; UHCI storage is unsupported.
+Hubs (including internal hubs), non-boot/report-ID devices, Bluetooth mice,
+wheel extensions and I2C-only touchpads are not supported by these native
+mouse paths. BIOS legacy USB-to-PS/2 translation may work if firmware keeps it
+active; this is not guaranteed. If no supported device responds, startup
+reports that the mouse is unavailable and DOS continues without a mouse driver.
+
+USB enumeration/polling remains owned by the host; entering/exiting DOS and
+storage scans do not reset an active keyboard, mouse or mounted storage port.
+F8 stops DOS input consumption, not the shared USB controller. UHCI devices
+are enumerated once at OS boot: `/MOUSE` never resets or reprobes their ports.
+After unplugging, buttons and pending movement are cleared; reboot to use a
+reconnected UHCI mouse. xHCI can discover a mouse on a later `/MOUSE` launch;
+connect it before entering that session. Live reconnection is not implemented.
+
+The implemented INT 33h subset includes reset/detection, three buttons,
+position/ranges, show/hide, press/release counts, motion counters, movement
+ratios/sensitivity and far-procedure event callbacks. A software cursor is
+composited over text and graphics without changing guest video memory.
+The emulator's pointer starts hidden, even if a DOS program requests that it
+be shown. Press **F12** to allow it to appear; press F12 again to hide it.
+Movement, clicks and callbacks remain active while it is hidden. DOS programs
+can still hide their own driver cursor. This setting resets to hidden on
+each new emulator session. It does not hide pointers drawn by a game itself.
+With `/MOUSE` active, plain F12 is reserved for this toggle; modified F12
+combinations still reach DOS. Without an active mouse driver, F12 reaches DOS
+normally.
+This is not a full Microsoft mouse-driver implementation: driver-state
+save/restore, alternate callback tables and direct PS/2/serial mouse
+hardware access are not emulated. Programs that replace the driver with
+their own hardware-only driver may not work.
+
+F6/F7 still select media; F8 exits and stops native mouse reporting. A later
+plain `MS-DOS` launch does not retain the previous `/MOUSE` setting.
+
 ### DOS installation images on USB
 
 Copy your own licensed **1.44 MB FAT12 disk images** into the root of a

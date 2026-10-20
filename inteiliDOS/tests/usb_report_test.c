@@ -42,6 +42,15 @@ int main(void) {
     assert(info.configuration==5 && info.interface==2 && info.endpoint==2);
     assert(info.packet_size==8 && info.interval==10);
     cfg[16]=2;assert(usb_parse_boot_keyboard(cfg,sizeof(cfg),&info)); /* mouse */
+    cfg[22]=3;
+    assert(!usb_parse_boot_hid(cfg,sizeof(cfg),2,&info));
+    assert(info.packet_size==3 && info.interface==2 && info.endpoint==2);
+    assert(usb_parse_boot_hid(cfg,sizeof(cfg),0,&info));
+    cfg[22]=2;assert(usb_parse_boot_hid(cfg,sizeof(cfg),2,&info));
+    cfg[22]=3;cfg[15]=0;assert(usb_parse_boot_hid(cfg,sizeof(cfg),2,&info));
+    cfg[15]=1;cfg[12]=1;assert(usb_parse_boot_hid(cfg,sizeof(cfg),2,&info));
+    cfg[12]=0;cfg[20]=0x92;assert(usb_parse_boot_hid(cfg,sizeof(cfg),2,&info));
+    cfg[20]=0x82;cfg[22]=8;
     cfg[16]=1;cfg[12]=1;assert(usb_parse_boot_keyboard(cfg,sizeof(cfg),&info));
     cfg[12]=0;cfg[19]=0;assert(usb_parse_boot_keyboard(cfg,sizeof(cfg),&info));
     cfg[19]=5;assert(usb_parse_boot_keyboard(cfg,sizeof(cfg)-1,&info));

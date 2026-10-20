@@ -46,7 +46,8 @@ USB /EJECT
 - **USB /MOUNT** scans the first supported xHCI and first supported EHCI
   controller's direct root ports and mounts detected FAT/exFAT volumes for reading
   and saving. Up to four mounted storage devices across both controllers,
-  plus one UHCI/xHCI boot-protocol keyboard, are supported. Each drive
+  plus one UHCI/xHCI boot-protocol keyboard and a direct-root UHCI or xHCI boot mouse
+  (for `MS-DOS /MOUSE`), are supported. Scans/eject preserve both input devices. Each drive
   receives an explicit `USB0:` through `USB3:` identifier; they never replace
   the installed native `C:` or `D:` volumes. Repeating `/MOUNT` refreshes
   media, without resetting live controller engines or the keyboard.
@@ -145,10 +146,12 @@ floppy image as DOS A:. See `DOS_COMPATIBILITY.md`.
   independently of xHCI. Direct **USB 2.0 high-speed (480 Mb/s)** BOT drives
   work without any xHCI controller. USB 1.x/full-speed storage is unsupported.
   EHCI firmware ownership must be released before register/schedule changes.
-  Initial port routing and companion handoff happen before UHCI keyboard
+  Initial port routing and companion handoff happen before UHCI keyboard/mouse
   startup; mount/eject never reroute ports or reset the controller. Companion-
-  owned ports are left alone. EHCI does not supply a keyboard driver itself:
-  use a UHCI companion keyboard, xHCI keyboard on another controller, or PS/2.
+  owned ports are left alone. EHCI does not supply a HID driver itself:
+  use a low/full-speed UHCI companion boot keyboard/mouse, xHCI input on
+  another controller, or PS/2. See the precise limits in
+  [DOS mouse support](DOS_COMPATIBILITY.md#optional-mouse).
 - Direct root-port USB mass storage using **SCSI transparent Bulk-Only
   Transport (BOT)**, alternate setting zero, one bulk IN/OUT pair, **LUN 0**.
   USB 2 devices can work on xHCI ports when firmware routes them there.
@@ -158,7 +161,7 @@ floppy image as DOS A:. See `DOS_COMPATIBILITY.md`.
   exFAT bitmaps, directory updates and synchronization.
 - **ASCII/CP437 filenames**, including long names within the limits above.
 
-Not supported: UHCI/OHCI **storage** (UHCI keyboards still work),
+Not supported: UHCI/OHCI **storage** (UHCI boot keyboards/mice still work),
 external hubs, UAS-only devices, other LUNs, NTFS, native 4Kn
 sectors, above-4-GiB controller BARs, and filesystem formatting.
 Drive IDs can change after physical unplug/replacement; check `/MOUNT`

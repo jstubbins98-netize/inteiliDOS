@@ -1,7 +1,7 @@
 /* EHCI high-speed root-port BOT. No periodic schedule, hub/TT, or IRQ owner.
  * One controller; 32-bit identity DMA. Every schedule is retired before its
  * descriptors are reused. Failure to retire pins all DMA until reboot.
- * Companion-owned ports (including the native keyboard) are never touched.
+ * Companion-owned ports (including native keyboard/mouse) are never touched.
  */
 #include "usb_ehci.h"
 #include "usb_bot.h"
@@ -202,7 +202,7 @@ static int controller(const pci_device_t *dev) {
     wr(op+8,0);wr(op,1);
     info.status="EHCI controller did not start";
     if (wait_bits(op+4,1u<<12,0,1000)) {unsafe=1;return 0;}
-    wr(op+0x40,1); /* route once, BEFORE companion keyboard initialization */
+    wr(op+0x40,1); /* route once, BEFORE companion HID initialization */
     for (unsigned p=1;p<=ports;p++) if (hcs&(1u<<4)) port_write(p,0,1u<<12);
     timer_sleep(100);
     /* Return ALL existing full/low-speed ports before UHCI starts, even when

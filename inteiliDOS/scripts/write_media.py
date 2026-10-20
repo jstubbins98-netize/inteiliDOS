@@ -39,7 +39,7 @@ def protected_mount(p):
     return p in ("/", "/home", "/usr", "/var", "[SWAP]") or p.startswith(("/boot", "/home/"))
 
 
-def linux_devices(kind):
+def linux_devices(kind, include_unavailable=False):
     tree = json.loads(output(["lsblk", "--json", "--bytes", "--output",
         "PATH,TYPE,SIZE,RM,RO,TRAN,MODEL,SERIAL,MOUNTPOINTS"]))["blockdevices"]
     if not any("/" in mounts(n) for disk in tree for n in children(disk)):
@@ -47,7 +47,16 @@ def linux_devices(kind):
     choices = []
     for disk in tree:
         nodes = list(children(disk))
-        if any(protected_mount(p) for n in nodes for p in mounts(n)):
+        protected = any(protected_mount(p) for n in nodes for p in mounts(n))
+        usb_disk = kind == "usb" and disk["type"] == "disk" and disk.get("tran") == "usb"
+        unavailable = ""
+        if protected:
+            unavailable = "system disk or protected mounted filesystem"
+        elif disk.get("ro"):
+            unavailable = "read-only drive"
+        elif not int(disk["size"]):
+            unavailable = "no media or zero capacity"
+        if protected and not (include_unavailable and usb_disk):
             continue
         path = disk["path"]
         if kind == "optical":
@@ -59,14 +68,19 @@ def linux_devices(kind):
             else:
                 eligible &= bool(re.fullmatch(r"/dev/fd\d+", path) or
                     (disk.get("tran") == "usb" and int(disk["size"]) <= 64*1024*1024))
+        if kind == "usb":
+            eligible = usb_disk and (not unavailable or include_unavailable)
         if eligible:
-            choices.append(dict(path=path, size=int(disk["size"]),
+            choice = dict(path=path, size=int(disk["size"]),
                 model=(disk.get("model") or "").strip(), serial=disk.get("serial") or "",
-                mounts=[(n["path"], p) for n in nodes for p in mounts(n)]))
+                mounts=[(n["path"], p) for n in nodes for p in mounts(n)])
+            if kind == "usb" and unavailable:
+                choice["unavailable"] = unavailable
+            choices.append(choice)
     return choices
 
 
-def mac_devices(kind):
+def mac_devices(kind, include_unavailable=False):
     def plist(args):
         return plistlib.loads(output(args))
     root = plist(["diskutil", "info", "-plist", "/"])
@@ -85,16 +99,25 @@ def mac_devices(kind):
     choices = []
     for disk in listing.get("AllDisksAndPartitions", []):
         name = disk["DeviceIdentifier"]
-        if name in protected or not re.fullmatch(r"disk\d+", name):
+        if not re.fullmatch(r"disk\d+", name):
+            continue
+        if name in protected and not (kind == "usb" and include_unavailable):
             continue
         info = plist(["diskutil", "info", "-plist", "/dev/"+name])
         if info.get("Internal", True) or not info.get("Whole", False):
             continue
-        if info.get("MediaReadOnly", False) or info.get("Writable") is False:
-            continue
         if info.get("BusProtocol", info.get("Protocol")) != "USB":
             continue
         size = int(info["TotalSize"])
+        unavailable = ""
+        if name in protected:
+            unavailable = "system disk"
+        elif info.get("MediaReadOnly", False) or info.get("Writable") is False:
+            unavailable = "read-only drive"
+        elif not size:
+            unavailable = "no media or zero capacity"
+        if unavailable and not (kind == "usb" and include_unavailable):
+            continue
         if kind == "floppy" and size > 64*1024*1024:
             continue
         mounted = [(n["DeviceIdentifier"], n["MountPoint"])
@@ -111,17 +134,20 @@ def mac_devices(kind):
                    for p in container["PhysicalStores"]):
                 mounted += [(v["DeviceIdentifier"], v["MountPoint"])
                             for v in container.get("Volumes", []) if v.get("MountPoint")]
-        choices.append(dict(path="/dev/"+name, size=size,
+        choice = dict(path="/dev/"+name, size=size,
             model=info.get("MediaName", ""), serial=info.get("DeviceTreePath", ""),
-            mounts=mounted))
+            mounts=mounted)
+        if unavailable:
+            choice["unavailable"] = unavailable
+        choices.append(choice)
     return choices
 
 
-def devices(kind):
+def devices(kind, include_unavailable=False):
     if sys.platform == "darwin":
-        return mac_devices(kind)
+        return mac_devices(kind, include_unavailable)
     if sys.platform.startswith("linux"):
-        return linux_devices(kind)
+        return linux_devices(kind, include_unavailable)
     raise RuntimeError("Automatic media writing supports macOS and Linux only.")
 
 
@@ -256,18 +282,57 @@ def burn(image, confirm=input):
     return True
 
 
-def select(options, confirm=input):
+def size_label(size):
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if size < 1024 or unit == "TiB":
+            return f"{size:.1f} {unit}"
+        size /= 1024
+
+
+def display_text(value):
+    # USB-supplied labels must not inject terminal control sequences or rows.
+    return "".join(c if c.isprintable() else "?" for c in str(value))
+
+
+def select(options, confirm=input, kind=None):
+    if kind == "usb":
+        print("\nConnected USB drives (whole devices):")
     if not options:
-        print("No eligible drives found. Connect/insert suitable media and try again.")
+        print("No USB drives found. Connect a drive and try again." if kind == "usb" else
+              "No eligible drives found. Connect/insert suitable media and try again.")
         return None
     for i, d in enumerate(options, 1):
-        print(f"{i}. {d['path']}  {d['size']//1024} KiB  {d['model']}  {d['serial']}")
-    reply = confirm("Choose a drive NUMBER, or Enter to cancel: ").strip()
-    if not reply:
+        print(f"{i}. {display_text(d['path'])}  {size_label(d['size'])}  "
+              f"{display_text(d['model'] or 'Unknown model')}")
+        if d["serial"]:
+            print("   ID:", display_text(d["serial"]))
+        print("   Mounted at:", ", ".join(display_text(p) for _, p in d["mounts"]) or
+              "not mounted")
+        if d.get("unavailable"):
+            print("   UNAVAILABLE:", display_text(d["unavailable"]))
+    if not any(not d.get("unavailable") for d in options):
+        print("No writable drives available; nothing will be flashed.")
         return None
-    if not reply.isdecimal() or not 1 <= int(reply) <= len(options):
-        raise RuntimeError("Invalid drive selection; no media changed.")
-    return options[int(reply)-1]
+    while True:
+        reply = confirm("Choose a drive NUMBER to flash, or Enter to cancel: " if kind == "usb"
+                        else "Choose a drive NUMBER, or Enter to cancel: ").strip()
+        if not reply:
+            print("Cancelled; no media changed.")
+            return None
+        if not reply.isascii() or not reply.isdecimal() or len(reply) > 6:
+            print("Invalid selection. Choose a listed drive number, or Enter to cancel.")
+            continue
+        number = int(reply)
+        if not 1 <= number <= len(options):
+            print("Invalid selection. Choose a listed drive number, or Enter to cancel.")
+            continue
+        device = options[number-1]
+        if device.get("unavailable"):
+            print("That drive cannot be selected:", display_text(device["unavailable"]))
+            continue
+        print("Selected:", display_text(device["path"]), "—",
+              display_text(device["model"] or "Unknown model"), size_label(device["size"]))
+        return device
 
 
 def main():
@@ -284,9 +349,10 @@ def main():
     if args.kind == "optical":
         burn(image)
     else:
-        device = select(devices(args.kind))
+        options = devices(args.kind, include_unavailable=True) if args.kind == "usb" else devices(args.kind)
+        device = select(options, confirm=input, kind=args.kind)
         if device:
-            flash(image, device, args.kind)
+            flash(image, device, args.kind, confirm=input)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 #include "msdos.h"
 #include "video.h"
 #include "sound.h"
+#include "mouse.h"
 #include "../pcm.h"
 #include "config.h"
 #ifndef CONFIG_MSDOS_SOUND
@@ -131,7 +132,8 @@ void msdos_devices_update(const uint8_t *ram,const uint8_t *ports) {
         unsigned width=msdos_video_width(),height=msdos_video_height();
         for (unsigned y=0;y<200;y++)
             for (unsigned x=0;x<320;x++)
-                pixels[y*320+x]=msdos_video_pixel(x*width/320,y*height/200);
+                pixels[y*320+x]=msdos_mouse_pixel(x*width/320,y*height/200,width,
+                    msdos_video_pixel(x*width/320,y*height/200));
         return;
     }
     if (guest_vga) {legacy_palette();guest_vga=0;}
@@ -160,7 +162,7 @@ void msdos_devices_update(const uint8_t *ram,const uint8_t *ports) {
                 unsigned address=(hy&3)*8192+(hy/4)*90+hx/8;
                 color=ram[base+address]&(128>>(hx&7)) ? 15 : 0;
             }
-            pixels[y*320+x]=color;
+            pixels[y*320+x]=msdos_mouse_pixel(x,y,320,color);
         }
     }
 }

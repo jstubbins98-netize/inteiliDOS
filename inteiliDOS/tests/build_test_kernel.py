@@ -90,7 +90,8 @@ def build(folder, modern=False, dos_sound=False):
                     "-I"+str(ROOT/"shell"), "-c", ROOT/source, "-o", obj)
             objects.append(obj)
     output = tmp/"inteilidOS.elf"
-    run(ld, "-m", "elf_i386", "-nostdlib", "-T", ROOT/"linker.ld", "-o", output, *objects)
+    run(ld, "-m", "elf_i386", "-nostdlib", "-T", ROOT/"linker.ld",
+        "-Map="+str(tmp/"kernel.map"), "-o", output, *objects)
     symbols = subprocess.check_output(["nm", "-n", str(output)], text=True)
     end = int(re.search(r"^([0-9a-fA-F]+) \w _kernel_end$", symbols, re.M).group(1), 16)
     if end > 0x500000:

@@ -58,6 +58,8 @@ An already initialized virtual HDD can boot without the CD.
 - F1-F5 and F9-F12 reach DOS applications. F11/F12 return BIOS codes
   `8500h`/`8600h` through both legacy INT 16h `00h`/`01h` and enhanced
   `10h`/`11h` read/check services. F6/F7/F8 remain reserved host controls.
+  Exception: with `/MOUSE` active, plain F12 toggles the emulator's pointer
+  instead of reaching DOS. Modified F12 shortcuts still reach the guest.
 - PS/2 and USB keys carry event-time Shift/Ctrl/Alt snapshots and physical
   key positions. DOS receives BIOS modified function-key codes (for example
   Shift-F1=`5400h`, Ctrl-F1=`5E00h`, Alt-F1=`6800h`) and correct control-letter,
@@ -70,6 +72,29 @@ An already initialized virtual HDD can boot without the CD.
   on return. No guest PIC/PIT write changes the host's timer or keyboard IRQs.
 
 ## Compatibility boundary
+
+`MS-DOS /MOUSE` installs an optional built-in INT 33h driver. The independent,
+case-insensitive switch combines with `/USB`, `/IMAGE` or `/FLOPPY` in either
+order. It uses a direct-root xHCI USB HID boot mouse (preferred), a UHCI boot
+mouse (including low/full-speed EHCI ports handed to a UHCI companion), or native PS/2
+mouse/touchpad input, three buttons, cursor overlays, position/ranges/counters
+and far-procedure event callbacks. USB controller ownership remains with the
+host, preserving keyboard/storage. UHCI enumeration is boot-only and requires
+native USB keyboard support enabled; it never resets ports on DOS entry/exit.
+No wheel, hub, OHCI, high-speed EHCI HID, split-transaction mouse support or
+complete hardware mouse controller is exposed to the guest.
+Without the switch, no resident mouse driver is installed.
+The emulator's cursor overlay starts hidden on each launch. F12 toggles
+visibility without stopping mouse input. DOS show/hide requests still apply
+when the overlay is allowed; guest reset or video-mode changes cannot turn on
+the overlay without the user's F12 choice.
+
+The handler is published at DOS's first EXEC, after DOS has initialized its
+reserved vectors. A real IVT entry allows normal detection and far-call
+chaining. Callbacks return with RETF; the interpreter restores the interrupted
+registers and flags and prevents nested callbacks. Native reporting is stopped
+on every return to inteiliShell. See `DOS_COMPATIBILITY.md` for the supported
+INT 33h subset and input restrictions.
 
 This is a real-mode 80286-compatible PC with 640 KB conventional memory. It is **not**
 a complete 386/Sound Blaster machine: protected-mode DOS extenders,

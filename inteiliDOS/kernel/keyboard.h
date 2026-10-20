@@ -24,6 +24,8 @@
 #define KEY_F12       0x9B
 
 void keyboard_init(void);
+/* Shared 8042 output: status bit 5 distinguishes AUX from keyboard bytes. */
+void keyboard_ps2_input(uint8_t status, uint8_t value);
 int  keyboard_getchar(void);     /* blocking read */
 int  keyboard_poll(void);        /* non-blocking; -1 if no key */
 

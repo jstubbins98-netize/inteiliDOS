@@ -19,6 +19,7 @@ def main():
               "-device","qemu-xhci,id=x",
               "-device","ich9-usb-ehci1,id=e",
               "-device","usb-kbd,bus=x.0,port=2",
+              "-device","usb-mouse,bus=x.0,port=3",
               "-drive",f"if=none,id=xd,file={x},format=raw",
               "-device","usb-storage,id=xs,drive=xd,bus=x.0,port=1",
               "-drive",f"if=none,id=ed,file={e},format=raw",
