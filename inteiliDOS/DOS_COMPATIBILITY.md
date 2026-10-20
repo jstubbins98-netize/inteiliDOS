@@ -457,7 +457,12 @@ Supported playback is the Sound Blaster 2-compatible **8-bit mono DSP subset**:
 - DSP reset/version, direct DAC output, time-constant sample rates, single-cycle
   and auto-init 8-bit DMA, pause/continue, speaker control and block interrupts.
 - For game setup, select Sound Blaster digital effects, address 220, IRQ 5, DMA 1.
-  If needed, type `SET BLASTER=A220 I5 D1 T3` inside DOS or put it in AUTOEXEC.BAT.
+  When `CONFIG_MSDOS_SOUND` is enabled, inteiliDOS automatically adds
+  `SET BLASTER=A220 I5 D1 T3` to the private DOS HDD's `AUTOEXEC.BAT`.
+  This applies to new and saved DOS disks, preserves other startup commands,
+  and does not duplicate an existing matching line on subsequent launches.
+  Disabled builds do not add the line or remove existing user settings.
+  Some games still require selecting Sound Blaster in their setup program.
   This does not install a driver or guarantee an application's compatibility.
 - No AdLib/OPL/FM music, MIDI, recording, 16-bit SB16 playback or full mixer
   register emulation. Select **no music** if the game requires one of these.

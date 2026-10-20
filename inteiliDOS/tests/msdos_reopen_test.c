@@ -56,6 +56,11 @@ int keyboard_poll_event(keyboard_event_t *e) {
 }
 void keyboard_current_event(keyboard_event_t *e) {*e=(keyboard_event_t){0};}
 void msdos_devices_restore(void) {}
+void msdos_devices_audio_poll(void) {}
+void msdos_mouse_poll(uint8_t mode) {(void)mode;}
+int msdos_mouse_enabled(void) {return 0;}
+void msdos_mouse_toggle_cursor(void) {}
+uint16_t msdos_mouse_text(unsigned cell,uint16_t value) {(void)cell;return value;}
 int msdos_devices_graphics(void) {return 0;}
 void msdos_devices_update(const uint8_t *a,const uint8_t *b) {(void)a;(void)b;}
 int msdos_cpu_run(uint32_t n) {

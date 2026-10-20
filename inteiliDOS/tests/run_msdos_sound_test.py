@@ -95,15 +95,25 @@ def main():
                 assert not registers[0x4c]&2,"CORB DMA still running"
                 assert not registers[0x5c]&2,"RIRB DMA still running"
 
+        def check_environment():
+            clear_dos(guest);shell(guest,"set")
+            if disabled:
+                guest.wait("COMSPEC=")
+                assert "BLASTER=" not in guest.screen()
+            else:
+                guest.wait("BLASTER=A220 I5 D1 T3")
+
         try:
             guest.wait("Welcome to inteiliDOS");guest.wait("> ")
             shell(guest,"ms-dos")
             guest.wait("MS-DOS 6.22 -",180);guest.wait("C:\\>")
+            check_environment()
             base=check_output()
             guest.key("f8");guest.wait("Returned from MS-DOS")
             check_stopped(base)
             shell(guest,"ms-dos /image SOUND.IMG")
             guest.wait("MS-DOS 6.22 -",90);guest.wait("C:\\>")
+            check_environment()
             base=check_output()
             clear_dos(guest);shell(guest,"a:\\sound.com")
             guest.wait("NO DSP DETECTED" if disabled else "SOUND IRQ OK",30)

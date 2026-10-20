@@ -4,6 +4,7 @@
 #include "msdos.h"
 #include "sound.h"
 #include "mouse.h"
+#include "startup.h"
 #include "../pcm.h"
 #include "mbr.h"
 #include "../fs.h"
@@ -665,7 +666,11 @@ static int seed_disk(void) {
     /* Add a startup file without any 386 memory managers or disk drivers. */
     phase="startup and FAT";
     seed_progress(progress_row,"FAT",0,96*512);
-    const char *startup="@ECHO OFF\r\nPROMPT $P$G\r\nPATH C:\\\r\nECHO MS-DOS 6.22 - F6 swap disks, F7 floppy, F8 exit\r\n";
+    const char *startup="@ECHO OFF\r\nPROMPT $P$G\r\nPATH C:\\\r\n"
+#if defined(CONFIG_MSDOS_SOUND) && CONFIG_MSDOS_SOUND
+        MSDOS_BLASTER_LINE "\r\n"
+#endif
+        "ECHO MS-DOS 6.22 - F6 swap disks, F7 floppy, F8 exit\r\n";
     uint8_t *e=root+entry*32;
     kmemcpy(e,"AUTOEXECBAT",11); e[11]=32;
     w16(e+26,cluster); w32(e+28,kstrlen(startup));
@@ -816,6 +821,12 @@ int msdos_run(int argc, const char *argv[]) {
         else {vga_puts("MS-DOS: too many media arguments.\n");return 1;}
     }
     if (prepare_disk(media_argc,media_args)) return 1;
+#if defined(CONFIG_MSDOS_SOUND) && CONFIG_MSDOS_SOUND
+    if (msdos_startup_sound(&hard)) {
+        vga_puts("MS-DOS: could not configure AUTOEXEC.BAT for sound; startup cancelled.\n");
+        return 1;
+    }
+#endif
     int mouse_ready=msdos_mouse_start(mouse);
     if (mouse) vga_puts(mouse_ready?
         "DOS mouse: driver enabled; pointer hidden, F12 toggles visibility.\n":
