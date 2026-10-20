@@ -55,7 +55,7 @@ native storage. Back up existing files before installation or disk changes.
 
 ## GETTING STARTED
 
-Read the build guide, configure a hardware profile with Willburd, and build
+Read the build guide (`inteiliDOS/BUILD.md`), configure a hardware profile with Willburd, and build
 the boot media. Test in an emulator before installing on physical hardware.
 Building requires a bare-metal i686-elf toolchain and the dependencies listed
 in the build guide.
