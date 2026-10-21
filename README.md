@@ -1,5 +1,7 @@
 # inteiliDOS
 
+> "the command line of the future!"
+
 inteiliDOS is an independent, bare-metal operating system written in C and
 NASM assembly. It brings a classic command-line environment to compatible
 PCs from the 1990s, 2000s and early 2010s. It is **NOT** built on Linux or MS-DOS.
