@@ -113,7 +113,7 @@ Upstream projects maintain their complete individual contributor lists.
   ([FatFs project](https://elm-chan.org/fsw/ff/)), with upstream contributor
   and copyright notices retained in `kernel/fatfs/`. The vendored source
   was obtained through the **Zephyr Project's FatFs mirror**.
-- **MS-DOS 6.22** — **Microsoft Corporation**. This is separately supplied
+- **[MS-DOS 6.22** — **Microsoft Corporation](https://en.wikipedia.org/wiki/MS-DOS#MS-DOS_6.x)**. This is separately supplied
   guest software, not part of inteiliDOS and not included in this repository.
   Users must supply their own licensed disk images.
 
