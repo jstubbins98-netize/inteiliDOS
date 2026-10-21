@@ -56,7 +56,13 @@ void msdos_mouse_install(uint8_t *ram) {
      * first EXEC, after those writes. Keep later guest replacement/chaining legal. */
     ram[0x33*4]=MSDOS_MOUSE_ENTRY&255;ram[0x33*4+1]=MSDOS_MOUSE_ENTRY>>8;
     ram[0x33*4+2]=0;ram[0x33*4+3]=0xf0;
-    ram[0xf0000+MSDOS_MOUSE_ENTRY]=0xcf; /* valid IRET/probe signature */
+    /* Games commonly reject an INT 33h handler whose first byte is IRET:
+     * DOS uses that dummy handler for uninstalled services. Publish a real
+     * short-jump stub instead. The CPU intercepts its entry before execution;
+     * the trailing IRET also leaves a valid, bounded instruction sequence. */
+    ram[0xf0000+MSDOS_MOUSE_ENTRY]=0xeb;
+    ram[0xf0000+MSDOS_MOUSE_ENTRY+1]=0x00;
+    ram[0xf0000+MSDOS_MOUSE_ENTRY+2]=0xcf;
     ram[0xf0000+MSDOS_MOUSE_RETURN]=0x90;
     m.installed=1;
 }

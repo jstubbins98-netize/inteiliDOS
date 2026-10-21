@@ -22,7 +22,8 @@ int main(void) {
     available=1;assert(msdos_mouse_start(1));
     msdos_mouse_install(ram);
     assert(msdos_mouse_enabled() && ram[0xcc]==0 && ram[0xcd]==0x30 &&
-           ram[0xcf]==0xf0 && ram[0xf3000]==0xcf);
+           ram[0xcf]==0xf0 && ram[0xf3000]==0xeb &&
+           ram[0xf3001]==0 && ram[0xf3002]==0xcf);
     call(0,0,0,0);assert(r[0]==0xffff && r[3]==3);
     call(3,0,0,0);assert(r[1]==320 && r[2]==100);
     assert(msdos_mouse_text(1000,0x0741)==0x0741);

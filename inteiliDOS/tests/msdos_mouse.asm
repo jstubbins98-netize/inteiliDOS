@@ -2,6 +2,15 @@ bits 16
 cpu 8086
 org 0x100
     mov bp,1
+    ; Typical game detection: DOS Get Interrupt Vector, reject a null vector
+    ; or the dummy IRET handler before making any mouse-service calls.
+    mov ax,0x3533
+    int 0x21
+    mov ax,es
+    or ax,bx
+    jz fail
+    cmp byte [es:bx],0xcf
+    je fail
     xor ax,ax
     int 0x33
     cmp ax,0xffff
