@@ -17,7 +17,7 @@ def run(*args):
     subprocess.run([str(a) for a in args], check=True)
 
 
-def build(folder, modern=False, dos_sound=False):
+def build(folder, modern=False, dos_sound=False, dos_sound_model=2):
     tmp = Path(folder).resolve()
     tmp.mkdir(parents=True, exist_ok=True)
     cc = shutil.which("i686-elf-gcc") or shutil.which("gcc")
@@ -70,6 +70,7 @@ def build(folder, modern=False, dos_sound=False):
         for key in ("CONFIG_ENABLE_PCI","CONFIG_MSDOS_SOUND"):
             profile=re.sub(r"^#define "+key+r" .*?$","",profile,flags=re.M)
             profile+=f"\n#define {key} 1\n"
+        profile+=f"\n#define CONFIG_MSDOS_SOUND_MODEL {dos_sound_model}\n"
         config.write_text(profile)
     cmake = (ROOT/"CMakeLists.txt").read_text()
     objects = []

@@ -1,6 +1,11 @@
 bits 16
 cpu 286
 org 0x100
+%ifdef SB16
+%define BYTES 32000
+%else
+%define BYTES 16000
+%endif
 push cs
 pop ds
 push cs
@@ -36,7 +41,7 @@ mov bx,16
 mul bx
 add ax,si
 adc dx,0
-cmp ax,65536-16000
+cmp ax,65536-BYTES
 jbe aligned_buffer
 neg ax
 add si,ax
@@ -48,6 +53,21 @@ aligned_buffer:
 mov [physical],ax
 mov [page],dl
 mov di,si
+%ifdef SB16
+mov cx,2000
+fill:
+mov ax,0xa000
+stosw
+stosw
+stosw
+stosw
+mov ax,0x6000
+stosw
+stosw
+stosw
+stosw
+loop fill
+%else
 mov cx,2000
 fill:
 mov ax,0x2020
@@ -57,6 +77,7 @@ mov ax,0xe0e0
 stosw
 stosw
 loop fill
+%endif
 ; Save PIC mask and install the guest's IRQ5 (INT 0D) handler.
 in al,0x21
 mov [old_mask],al
@@ -73,6 +94,64 @@ mov word [es:0x34],handler
 mov ax,cs
 mov [es:0x36],ax
 sti
+%ifdef SB16
+mov dx,0xd4
+mov al,5
+out dx,al
+mov dx,0xd8
+xor al,al
+out dx,al
+mov ax,[physical]
+shr ax,1
+test byte [page],1
+jz word_address
+or ax,0x8000
+word_address:
+mov dx,0xc4
+out dx,al
+mov al,ah
+out dx,al
+mov al,[page]
+out 0x8b,al
+mov ax,15999
+mov dx,0xc6
+out dx,al
+mov al,ah
+out dx,al
+mov dx,0xd6
+%ifdef AUTO
+mov al,0x59
+%else
+mov al,0x49
+%endif
+out dx,al
+mov dx,0xd4
+mov al,1
+out dx,al
+mov dx,0x22c
+mov al,0x41
+out dx,al
+mov al,0x1f
+out dx,al
+mov al,0x40
+out dx,al
+%ifdef AUTO
+mov al,0xb6
+%else
+mov al,0xb0
+%endif
+out dx,al
+mov al,0x10
+out dx,al
+%ifdef AUTO
+mov ax,7999
+%else
+mov ax,15999
+%endif
+out dx,al
+mov al,ah
+out dx,al
+%else
 mov al,5
 out 0x0a,al
 xor al,al
@@ -111,14 +190,6 @@ mov al,ah
 out dx,al
 mov al,0x1c
 out dx,al
-wait_irq:
-cmp byte [events],3
-jb wait_irq
-mov al,0xda
-out dx,al
-wait_finish:
-cmp byte [events],4
-jb wait_finish
 %else
 mov al,0x14
 out dx,al
@@ -126,7 +197,22 @@ mov ax,15999
 out dx,al
 mov al,ah
 out dx,al
+%endif
+%endif
 wait_irq:
+%ifdef AUTO
+cmp byte [events],3
+jb wait_irq
+%ifdef SB16
+mov al,0xd9
+%else
+mov al,0xda
+%endif
+out dx,al
+wait_finish:
+cmp byte [events],4
+jb wait_finish
+%else
 cmp byte [events],1
 jb wait_irq
 %endif
@@ -152,7 +238,11 @@ int 0x21
 handler:
 push ax
 push dx
+%ifdef SB16
+mov dx,0x22f
+%else
 mov dx,0x22e
+%endif
 in al,dx
 mov al,0x20
 out 0x20,al
@@ -172,4 +262,5 @@ old_vector dd 0
 detected db 'DSP DETECTED',13,10,'$'
 success db 'SOUND IRQ OK',13,10,'$'
 no_device db 'NO DSP DETECTED',13,10,'$'
-buffer times 32000 db 0
+align 2
+buffer times BYTES*2 db 0

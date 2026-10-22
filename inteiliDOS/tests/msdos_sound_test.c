@@ -25,6 +25,25 @@ int main(void) {
     reset();dsp(0xe1);assert(in(0x22a)==2 && in(0x22a)==1);
     dsp(0xe0);dsp(0x3c);assert(in(0x22a)==0xc3);
     dsp(0xe4);dsp(0x57);dsp(0xe8);assert(in(0x22a)==0x57);
+    /* Hardware-only DMA detection: E2h is not PCM, does not raise IRQ5,
+     * waits for channel 1 to be armed, and resets its accumulator per DSP reset. */
+    reset();ram[0x100]=0xcc;
+    dsp(0xe2);dsp(0);
+    dma(0x100,1,0);assert(ram[0x100]==0xcc); /* wrong transfer direction */
+    out(0x0b,0x44);assert(ram[0x100]==0xcc); /* channel 0 is not our card */
+    out(0x0b,0x45);assert(ram[0x100]==0x40);
+    assert(in(3)==255 && in(3)==255 && in(8)==2 && !msdos_sound_error());
+    out(0x21,0xdf);assert(msdos_sound_irq()==-1);
+    dma(0x101,1,0);out(0x0b,0x45);
+    dsp(0xe2);dsp(255);assert(ram[0x101]==0x9a);
+    reset();dma(0x102,1,0);out(0x0b,0x45);dsp(0xe2);dsp(0);
+    assert(ram[0x102]==0x40);
+    reset();dma(0xff0000,1,0);out(0x0b,0x45);dsp(0xe2);dsp(0);
+    assert(msdos_sound_error()==255);
+    reset();dsp(0xe2);dsp(0);out(0x226,1);out(0x226,0);
+    ram[0x100]=0xcc;dma(0x100,1,0);out(0x0b,0x45);
+    assert(ram[0x100]==0xcc); /* no pending probe leaks across reset */
+    reset();
     dsp(0xd1);dsp(0x10);dsp(255);msdos_sound_render(output,480);
     assert(output[0]==32512 && output[1]==32512);
     dsp(0xd3);msdos_sound_render(output,480);assert(!output[0]);
@@ -59,6 +78,6 @@ int main(void) {
     reset();out(0x20,0x13);out(0x21,0x50);out(0x21,1);
     out(0x21,0xdf);dsp(0xf2);assert(msdos_sound_irq()==0x55);
     reset();out(0x21,0xdf);assert(msdos_sound_irq()==-1);
-    puts("PASS: disabled device, reset/version, DAC, single/auto DMA, 64K wrap, "
+    puts("PASS: disabled device, reset/version, E2 DMA detection, DAC, single/auto DMA, 64K wrap, "
          "IRQ/PIC acknowledgement, pause/continue/exit, invalid DMA, reset/re-entry");
 }

@@ -17,6 +17,9 @@ def main():
     parser.add_argument("kernel",type=Path)
     parser.add_argument("backend",nargs="?",choices=("ac97","hda","none"),default="ac97")
     parser.add_argument("--disabled",action="store_true")
+    parser.add_argument("--sound16",action="store_true")
+    parser.add_argument("--sound2",action="store_true")
+    parser.add_argument("--default16",action="store_true")
     parser.add_argument("--hda-controller",choices=("intel-hda","ich9-intel-hda"),
                         default="ich9-intel-hda")
     parser.add_argument("--hda-codec",choices=("hda-output","hda-duplex","hda-micro"),
@@ -24,11 +27,18 @@ def main():
     options=parser.parse_args()
     kernel=options.kernel.resolve()
     backend,disabled=options.backend,options.disabled
+    if options.sound16 and options.sound2:parser.error("choose one sound model")
+    switch=" /SOUND16" if options.sound16 else " /SOUND2" if options.sound2 else ""
+    is16=options.sound16 or options.default16
+    expected="A220 I5 D1 H5 T6" if is16 else "A220 I5 D1 T3"
     tag=backend
     if backend=="hda" and (options.hda_controller!="ich9-intel-hda" or
                            options.hda_codec!="hda-duplex"):
         tag+=f"-{options.hda_controller}-{options.hda_codec}"
     if disabled: tag+="-disabled"
+    if is16:tag+="-sb16"
+    if options.default16:tag+="-default"
+    elif options.sound2:tag+="-sb2"
     out=ROOT.parent/"generated-artifacts/msdos-sound"
     out.mkdir(parents=True,exist_ok=True)
     wav=out/(tag+".wav")
@@ -36,10 +46,14 @@ def main():
         tmp=Path(folder)
         prepare(ROOT.parent/"MS-DOS_disks",tmp/"disc")
         for name,flags in (("SOUND",()),("AUTO",("-DAUTO=1",))):
-            run("nasm","-f","bin",*flags,ROOT/"tests/msdos_sound.asm","-o",tmp/(name+".com"))
+            run("nasm","-f","bin",*flags,*(("-DSB16=1",) if is16 else ()),
+                ROOT/"tests/msdos_sound.asm","-o",tmp/(name+".com"))
+        run("nasm","-f","bin",*(("-DSB16=1",) if is16 else ()),
+            ROOT/"tests/msdos_sound_detect.asm","-o",tmp/"DETECT.com")
         (tmp/"disc/SOUND.IMG").write_bytes(fat12_image({
             "SOUND.COM":(tmp/"SOUND.com").read_bytes(),
             "AUTO.COM":(tmp/"AUTO.com").read_bytes(),
+            "DETECT.COM":(tmp/"DETECT.com").read_bytes(),
         }))
         run("xorriso","-as","mkisofs","-quiet","-o",tmp/"dos.iso",tmp/"disc")
         native=tmp/"native.img";native_disk(native);safe=protected(native)
@@ -64,9 +78,10 @@ def main():
 
         def check_output():
             if disabled:
-                assert "backend" not in locations,"Disabled build contains PCI audio state"
+                if "backend" in locations:
+                    assert symbol("backend")==0,"Sound-off session opened native audio"
                 return 0
-            actual=symbol("backend")
+            actual=symbol("backend") if "backend" in locations else 0
             if backend=="none":
                 assert actual==0,("Unexpected native output",actual)
                 return 0
@@ -86,7 +101,7 @@ def main():
             return 0
 
         def check_stopped(base):
-            if disabled: return
+            if disabled or "backend" not in locations: return
             assert symbol("backend")==0,"Native audio backend survived F8"
             # Restoring PCI memory decoding to off also hides the registers.
             if base and symbol("saved_command",2)&2:
@@ -101,20 +116,26 @@ def main():
                 guest.wait("COMSPEC=")
                 assert "BLASTER=" not in guest.screen()
             else:
-                guest.wait("BLASTER=A220 I5 D1 T3")
+                guest.wait("BLASTER="+expected)
 
         try:
             guest.wait("Welcome to inteiliDOS");guest.wait("> ")
-            shell(guest,"ms-dos")
+            shell(guest,"ms-dos /SOUND2 /SOUND16")
+            guest.wait("choose /SOUND2 or /SOUND16, not both")
+            shell(guest,"ms-dos"+switch)
             guest.wait("MS-DOS 6.22 -",180);guest.wait("C:\\>")
             check_environment()
             base=check_output()
             guest.key("f8");guest.wait("Returned from MS-DOS")
             check_stopped(base)
-            shell(guest,"ms-dos /image SOUND.IMG")
+            shell(guest,"ms-dos /image SOUND.IMG"+switch)
             guest.wait("MS-DOS 6.22 -",90);guest.wait("C:\\>")
             check_environment()
             base=check_output()
+            if not disabled:
+                clear_dos(guest);shell(guest,"a:\\detect.com")
+                guest.wait("SB DETECTION OK - ENV PORTS VERSION DMA")
+                guest.command("screendump",{"filename":str(out/(tag+"-detection.ppm"))})
             clear_dos(guest);shell(guest,"a:\\sound.com")
             guest.wait("NO DSP DETECTED" if disabled else "SOUND IRQ OK",30)
             if not disabled:
@@ -128,7 +149,7 @@ def main():
             if not disabled and backend!="none":
                 guest.wait("DOS audio output stopped:")
             guest.command("screendump",{"filename":str(out/(tag+"-shell.ppm"))})
-            shell(guest,"ms-dos /image SOUND.IMG")
+            shell(guest,"ms-dos /image SOUND.IMG"+switch)
             guest.wait("MS-DOS 6.22 -",90);guest.wait("C:\\>")
             base=check_output()
             clear_dos(guest);shell(guest,"a:\\sound.com")
@@ -151,7 +172,12 @@ def main():
             # The shared Guest.close kills QEMU; WAV headers need a clean quit.
             if guest.proc.poll() is None:
                 guest.command("quit")
-                guest.proc.wait(timeout=5)
+                try:
+                    guest.proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    guest.proc.kill()
+                    guest.proc.communicate()
+                    raise
             guest.sock.close()
         assert protected(native)==safe
     if backend!="none" and (not disabled or wav.stat().st_size):

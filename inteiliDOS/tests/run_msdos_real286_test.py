@@ -16,9 +16,12 @@ def wait(guest, text, timeout=45, old_errors=0):
         screen=guest.screen()
         if text in screen:
             return screen
-        if screen.count("MS-DOS stopped:")>old_errors or "REAL286 CPU TEST FAILED" in screen:
+        if (screen.count("MS-DOS stopped:")>old_errors or
+                "REAL286 CPU TEST FAILED" in screen or "A20 WRAP TEST FAILED" in screen):
             raise AssertionError(screen)
         time.sleep(.1)
+    guest.command("pmemsave",{"val":0,"size":16*1024*1024,
+        "filename":str(ROOT.parent/"generated-artifacts/msdos-real286/failure-ram.bin")})
     raise AssertionError(f"Missing {text!r}:\n{guest.screen()}")
 
 
@@ -31,6 +34,7 @@ def main():
         media=Path(sys.argv[2]).resolve() if len(sys.argv)>2 else ROOT.parent/"MS-DOS_disks"
         prepare(media,tmp/"disc")
         run("nasm","-f","bin",ROOT/"tests/msdos_real286.asm","-o",tmp/"cpu.com")
+        run("nasm","-f","bin",ROOT/"tests/msdos_a20.asm","-o",tmp/"a20.com")
         # SMSW AX; OR AX,1; LMSW AX. Protected mode must not be entered.
         pm=bytes.fromhex("0f01e083c8010f01f0ebfe")
         invalid=bytes.fromhex("6690ebfe")  # 386 operand-size prefix on a 286
@@ -56,6 +60,7 @@ ready db 'PORT LOOP READY',13,10,'$'
         (tmp/"disc/CPU286.IMG").write_bytes(fat12_image({
             "CPU.COM":(tmp/"cpu.com").read_bytes(),"PROTECT.COM":pm,
             "I386.COM":invalid,"PORTS.COM":(tmp/"ports.com").read_bytes(),
+            "A20.COM":(tmp/"a20.com").read_bytes(),
         }))
         run("xorriso","-as","mkisofs","-quiet","-iso-level","1",
             "-o",tmp/"dos.iso",tmp/"disc")
@@ -76,6 +81,9 @@ ready db 'PORT LOOP READY',13,10,'$'
             shell(guest,"a:\\cpu.com")
             print(wait(guest,"REAL286 CPU TEST OK"),flush=True)
             guest.command("screendump",{"filename":str(out/"real286-dos.ppm")})
+            clear_dos(guest);shell(guest,"a:\\a20.com")
+            wait(guest,"A20 WRAP TEST OK")
+            guest.command("screendump",{"filename":str(out/"a20-wrap.ppm")})
             clear_dos(guest)
             prompts=guest.screen().count("C:\\>")
             shell(guest,"echo REAL286-SAVED>c:\\cpu.txt")
@@ -97,7 +105,7 @@ ready db 'PORT LOOP READY',13,10,'$'
         finally:
             guest.close()
         assert protected(native)==safe
-        print("PASS: 286 detection/PUSH SP/shift masks, MSW/GDT/IDT/CLTS, "
+        print("PASS: closed-A20 data/word/REP/fetch/disk wrap, 286 detection/PUSH SP/shift masks, MSW/GDT/IDT/CLTS, "
               "relocated interrupts, #BR/#UD/#DE restart IP, byte/word REP port I/O, "
               "PE refusal, 386 rejection, saved DOS C:, F8 under CLI/REP, native files",flush=True)
 

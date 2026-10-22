@@ -194,6 +194,7 @@ set_default_profile() {
     ENABLE_FLOPPY=1
     AUDIO_MODE=0
     MSDOS_SOUND=0
+    MSDOS_SOUND_MODEL=2
     TIMER_HZ=1000
     TARGET_X86_64=0
     case "$PROFILE_PRESET" in
@@ -264,9 +265,16 @@ run_wizard() {
     if [[ "$CPU_CLASS" -ge 7 ]]; then
         ask_menu \
             "Enable sound card emulation in the MS-DOS emulator?" \
-            "Provides Sound Blaster-compatible 8-bit digital playback at A220 I5 D1 through supported Intel ICH AC'97 or analog HDA outputs. Both paths are verified in QEMU; physical codec compatibility varies. No FM music, MIDI, recording or SB16. This is separate from CLOAD capture. Choose No if sound is not needed." \
+            "Provides Sound Blaster 2 or Sound Blaster 16 digital playback through supported Intel ICH AC'97 or analog HDA outputs. Physical codec compatibility varies. No FM music, MIDI or recording. This is separate from CLOAD capture. Choose No if sound is not needed." \
             2 "Yes" "No"
         [[ "$REPLY" -eq 1 ]] && MSDOS_SOUND=1 || MSDOS_SOUND=0
+        if [[ "$MSDOS_SOUND" -eq 1 ]]; then
+            ask_menu \
+                "Which sound card should the MS-DOS emulator use?" \
+                "Sound Blaster 2: 8-bit mono PCM at A220 I5 D1. Sound Blaster 16: 8/16-bit mono or stereo PCM at A220 I5 D1 H5. This selects the default; MS-DOS /SOUND2 or /SOUND16 overrides it per session. Neither option includes FM music or MIDI." \
+                1 "Sound Blaster 2" "Sound Blaster 16"
+            [[ "$REPLY" -eq 2 ]] && MSDOS_SOUND_MODEL=16 || MSDOS_SOUND_MODEL=2
+        fi
         [[ "$MSDOS_SOUND" -eq 0 ]] || ENABLE_PCI=1
     fi
 
@@ -385,6 +393,7 @@ write_config() {
 #define CONFIG_ENABLE_FLOPPY ${ENABLE_FLOPPY}
 #define CONFIG_AUDIO_MODE ${AUDIO_MODE}
 #define CONFIG_MSDOS_SOUND ${MSDOS_SOUND}
+#define CONFIG_MSDOS_SOUND_MODEL ${MSDOS_SOUND_MODEL}
 #define CONFIG_TIMER_HZ ${TIMER_HZ}
 
 #define CONFIG_AUDIO_NONE 0
@@ -419,6 +428,9 @@ write_config() {
 #if CONFIG_MSDOS_SOUND && !CONFIG_ENABLE_PCI
 #error "MS-DOS sound output requires PCI probing"
 #endif
+#if CONFIG_MSDOS_SOUND_MODEL != 2 && CONFIG_MSDOS_SOUND_MODEL != 16
+#error "MS-DOS sound model must be 2 or 16"
+#endif
 
 #endif
 EOF
@@ -441,7 +453,7 @@ print_profile() {
     echo "  ATAPI CD-ROM     : ${ENABLE_ATAPI}"
     echo "  Floppy controller: ${ENABLE_FLOPPY}"
     echo "  Audio mode       : ${AUDIO_MODE}"
-    echo "  DOS sound card   : ${MSDOS_SOUND} (0=off, 1=8-bit digital playback)"
+    echo "  DOS sound card   : ${MSDOS_SOUND} (Sound Blaster ${MSDOS_SOUND_MODEL})"
     echo "  PIT timer        : ${TIMER_HZ} Hz"
     echo "  Header           : ${CONFIG_HEADER}"
     echo ""

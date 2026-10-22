@@ -42,8 +42,8 @@ void msdos_devices_init(void) {
     msdos_video_font(font);
     guest_vga=0;guest_palette_version=0;
     audio_tick=timer_get_ticks();
-    pcm_available=CONFIG_MSDOS_SOUND && pcm_start(msdos_sound_render);
-    if (CONFIG_MSDOS_SOUND) {
+    pcm_available=msdos_sound_model() && pcm_start(msdos_sound_render);
+    if (msdos_sound_model()) {
         vga_puts("DOS digital audio: ");
         vga_puts(pcm_available?pcm_backend():pcm_error());
         if (!pcm_available) vga_puts("; audio will be silent");
@@ -51,7 +51,7 @@ void msdos_devices_init(void) {
     }
 }
 void msdos_devices_audio_poll(void) {
-    if (!CONFIG_MSDOS_SOUND) return;
+    if (!msdos_sound_model()) return;
     if (pcm_available) {pcm_poll();return;}
     /* Keep DMA/IRQ time progressing if no physical output is available.
      * This case is reported explicitly by the command, not a fake codec. */

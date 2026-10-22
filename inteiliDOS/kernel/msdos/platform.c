@@ -18,6 +18,12 @@
 #include "../cdrom.h"
 #include "../ata.h"
 #include "../usb_storage.h"
+#ifndef CONFIG_MSDOS_SOUND
+#define CONFIG_MSDOS_SOUND 0
+#endif
+#ifndef CONFIG_MSDOS_SOUND_MODEL
+#define CONFIG_MSDOS_SOUND_MODEL 2
+#endif
 
 #define DISK_SECTORS (520u * 63u)
 #define FLOPPY_BYTES 1474560u
@@ -720,7 +726,8 @@ static int prepare_disk(int argc, const char *argv[]) {
         } else use_usb=0;
     }
     if (argc && !use_floppy && !use_image && !use_usb) {
-        vga_puts("Usage: MS-DOS [/MOUSE] [/FLOPPY | /IMAGE <CD image> | /USB [USB0:..USB3:]]\n"
+        vga_puts("Usage: MS-DOS [/MOUSE] [/SOUND2 | /SOUND16]\n"
+                 "       [/FLOPPY | /IMAGE <CD image> | /USB [USB0:..USB3:]]\n"
                  "       MS-DOS /USB USB0:\\DISK1.IMG [USB0:\\DISK2.IMG ...]\n"
                  "       Up to 8 game images; F6 cycles them in the supplied order.\n");return 1;
     }
@@ -802,11 +809,20 @@ static int prepare_disk(int argc, const char *argv[]) {
     return 0;
 }
 
+static int sound_option(const char *p,const char *option) {
+    for (unsigned j=0;;j++) {
+        char c=p[j];if (c>='a' && c<='z') c-=32;
+        if (c!=option[j]) return 0;
+        if (!c) return 1;
+    }
+}
 int msdos_run(int argc, const char *argv[]) {
     /* Strip the independent /MOUSE switch before the existing media parser.
      * Retain path spelling/order; it may appear before or after USB paths. */
     const char *media_args[USB_GAME_DISKS+1];
-    int media_argc=0,mouse=0;
+    int media_argc=0,mouse=0,explicit_sound=0;
+    unsigned model=CONFIG_MSDOS_SOUND?(CONFIG_MSDOS_SOUND_MODEL==16?
+        MSDOS_SOUND_SB16:MSDOS_SOUND_SB2):MSDOS_SOUND_OFF;
     for (int i=0;i<argc;i++) {
         const char *p=argv[i],*option="/MOUSE";
         int same=1;
@@ -815,18 +831,26 @@ int msdos_run(int argc, const char *argv[]) {
             if (c!=option[j]) {same=0;break;}
             if (!c) break;
         }
-        if (same) mouse=1;
+        if (sound_option(p,"/SOUND2") || sound_option(p,"/SOUND16")) {
+            unsigned next=sound_option(p,"/SOUND16")?MSDOS_SOUND_SB16:MSDOS_SOUND_SB2;
+            if (explicit_sound && model!=next) {
+                vga_puts("MS-DOS: choose /SOUND2 or /SOUND16, not both.\n");return 1;
+            }
+            model=next;explicit_sound=1;
+        } else if (same) mouse=1;
         else if (media_argc<(int)(sizeof(media_args)/sizeof(media_args[0])))
             media_args[media_argc++]=p;
         else {vga_puts("MS-DOS: too many media arguments.\n");return 1;}
     }
+    msdos_sound_select(model);
     if (prepare_disk(media_argc,media_args)) return 1;
-#if defined(CONFIG_MSDOS_SOUND) && CONFIG_MSDOS_SOUND
-    if (msdos_startup_sound(&hard)) {
+    if (model && msdos_startup_sound_for(&hard,model==MSDOS_SOUND_SB16)) {
         vga_puts("MS-DOS: could not configure AUTOEXEC.BAT for sound; startup cancelled.\n");
         return 1;
     }
-#endif
+    if (model) vga_puts(model==MSDOS_SOUND_SB16?
+        "DOS sound: Sound Blaster 16 digital PCM, 220h IRQ5 DMA1/5.\n":
+        "DOS sound: Sound Blaster 2 digital PCM, 220h IRQ5 DMA1.\n");
     int mouse_ready=msdos_mouse_start(mouse);
     if (mouse) vga_puts(mouse_ready?
         "DOS mouse: driver enabled; pointer hidden, F12 toggles visibility.\n":
@@ -848,9 +872,7 @@ int msdos_run(int argc, const char *argv[]) {
     vga_set_cursor(sr,sc);
     if (audio_error) vga_puts("DOS audio: an unsupported DSP command or invalid DMA buffer was used.\n");
     if (audio_backend) {vga_puts("DOS audio output stopped: ");vga_puts(audio_backend);vga_puts(".\n");}
-#if defined(CONFIG_MSDOS_SOUND) && CONFIG_MSDOS_SOUND
-    else {vga_puts("DOS audio was silent: ");vga_puts(pcm_error());vga_puts(".\n");}
-#endif
+    else if (model) {vga_puts("DOS audio was silent: ");vga_puts(pcm_error());vga_puts(".\n");}
     vga_puts(io_failed?"MS-DOS stopped: disk I/O failed.\n":
              rc==-3?"MS-DOS stopped: protected mode is not supported (real-mode 80286 guest).\n":
              rc==-4?"MS-DOS stopped: invalid guest interrupt table.\n":

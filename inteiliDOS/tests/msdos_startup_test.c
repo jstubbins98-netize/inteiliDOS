@@ -13,6 +13,7 @@ void kfree(void *p) {free(p);}
 void *kmemcpy(void *d,const void *s,size_t n) {return memcpy(d,s,n);}
 void *kmemset(void *d,int c,size_t n) {return memset(d,c,n);}
 int kmemcmp(const void *a,const void *b,size_t n) {return memcmp(a,b,n);}
+size_t kstrlen(const char *p) {return strlen(p);}
 int fs_image_sector(const fs_image_t *image,uint32_t n,uint8_t *buf,int write) {
     assert(n<image->sectors);
     if (write) {
@@ -58,6 +59,11 @@ int main(void) {
     fixture(NULL);
     assert(!msdos_startup_sound(&image));expect(line);
     writes=0;assert(!msdos_startup_sound(&image) && !writes);
+    assert(!msdos_startup_sound_for(&image,1));
+    expect(MSDOS_BLASTER16_LINE "\r\n");
+    writes=0;assert(!msdos_startup_sound_for(&image,1) && !writes);
+    assert(!msdos_startup_sound_for(&image,0));
+    expect(line);
     fixture("@ECHO OFF\r\nPATH C:\\\r\n");
     assert(!msdos_startup_sound(&image));
     expect("@ECHO OFF\r\nPATH C:\\\r\n" MSDOS_BLASTER_LINE "\r\n");

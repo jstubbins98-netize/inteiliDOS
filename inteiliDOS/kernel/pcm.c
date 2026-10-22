@@ -4,7 +4,7 @@
  * All controller DMA references statically allocated native buffers. MPL-2.0. */
 #include "pcm.h"
 #include "config.h"
-#if defined(CONFIG_MSDOS_SOUND) && CONFIG_MSDOS_SOUND && CONFIG_ENABLE_PCI
+#if CONFIG_ENABLE_PCI
 #include "pci.h"
 #include "timer.h"
 #include "ac97.h"
@@ -289,5 +289,5 @@ int pcm_start(void (*render)(int16_t *,unsigned)) {(void)render;return 0;}
 void pcm_poll(void) {}
 void pcm_stop(void) {}
 const char *pcm_backend(void) {return 0;}
-const char *pcm_error(void) {return "sound card emulation disabled";}
+const char *pcm_error(void) {return "native PCM requires a build with PCI enabled";}
 #endif

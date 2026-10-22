@@ -416,6 +416,13 @@ are masked to five bits. The inherited 80186 instructions remain available,
 and BOUND and byte/word string port I/O (`INS`, `OUTS`, including REP and segment
 overrides) are supported.
 
+Guest memory uses DOS-era closed-A20 addressing: addresses past 1 MiB wrap
+to low memory. CPU reads/writes, instruction fetches and BIOS disk transfers
+share that behavior, including words and instructions crossing the boundary.
+This lets EXEPACK-packed executables such as Mario Teaches Typing's `SETUP.EXE`
+unpack normally instead of falsely reporting **"Packed file is corrupt"**.
+This does not add HMA or XMS support.
+
 Real-mode `SGDT`, `SIDT`, `LGDT`, `LIDT`, `SMSW`, `LMSW` and `CLTS` operate on
 private guest state. Interrupts use the guest IDTR, never the host's IDT.
 Handled #BR, #UD and divide faults return to the faulting instruction, including
@@ -438,33 +445,66 @@ and the existing floppy/CD/USB media options normally.
 
 When a 2000s, Athlon 64/Core 2, or early-2010s processor family is selected,
 Willburd asks whether to enable sound-card emulation immediately after the CPU
-question. The default is **No**. Legacy CPU choices skip the question.
+question. The default is **No**. Answering **Yes** opens a second question:
+**Sound Blaster 2** (the default choice) or **Sound Blaster 16**.
+Legacy CPU choices skip both questions.
 Non-interactive presets also leave it off.
 
 The generated `configurations/config.h` contains:
 
 ```c
-#define CONFIG_MSDOS_SOUND 1  /* 0 disables the emulated sound device */
+#define CONFIG_MSDOS_SOUND 1        /* 0=off by default, 1=on by default */
+#define CONFIG_MSDOS_SOUND_MODEL 16 /* 2=Sound Blaster 2, 16=Sound Blaster 16 */
 ```
 
 Rebuild after changing it. Enabled sound also requires `CONFIG_ENABLE_PCI 1`.
 This setting is independent of `CONFIG_AUDIO_MODE`, which selects **CLOAD
 capture**, not DOS playback.
 
-Supported playback is the Sound Blaster 2-compatible **8-bit mono DSP subset**:
+Use the configured default with `MS-DOS`, or override it for one session:
 
-- Base port **220h**, virtual **IRQ 5**, virtual **DMA channel 1**.
+```text
+MS-DOS /SOUND2
+MS-DOS /SOUND16
+MS-DOS /MOUSE /SOUND16 /USB USB0:\GAME.IMG
+```
+
+The switches enable the chosen device, even if the build default is off.
+Native output still requires PCI-enabled firmware support as described below.
+Both switches together are rejected before any disk changes. They can appear
+before or after media arguments; F8 exits and the next launch uses its own selection.
+
+Supported playback is a **digital DSP subset**, not every function of the cards:
+
+- SB2: DSP **2.01**, 8-bit unsigned mono, port **220h**, **IRQ5**, **DMA1**.
+- SB16: DSP **4.05**, 8/16-bit signed/unsigned mono/stereo PCM, the same port,
+  IRQ5 and DMA1 plus word-addressed **DMA5** for 16-bit data.
+  Single/auto-init output, explicit sample rate, pause/resume, finish-auto-init,
+  separate 8/16-bit interrupt acknowledgements and mixer IRQ-status discovery
+  are supported. Master/PCM left/right volume and mixer reset are implemented.
+  IRQ/DMA mixer selection registers report the fixed wiring, not other channels.
+- Games may read `BLASTER` from their DOS environment or probe the DSP directly:
+  reset returns **AAh**, the version query matches the selected card, and E0h/E2h
+  identification handshakes support direct-port and DMA-channel detection.
+  Probes at other base addresses do not report another sound card.
+  E2h writes only to the guest's private memory; it is not recording support.
 - DSP reset/version, direct DAC output, time-constant sample rates, single-cycle
   and auto-init 8-bit DMA, pause/continue, speaker control and block interrupts.
 - For game setup, select Sound Blaster digital effects, address 220, IRQ 5, DMA 1.
-  When `CONFIG_MSDOS_SOUND` is enabled, inteiliDOS automatically adds
-  `SET BLASTER=A220 I5 D1 T3` to the private DOS HDD's `AUTOEXEC.BAT`.
+  When sound is selected, inteiliDOS updates the private DOS HDD's `AUTOEXEC.BAT`
+  with `SET BLASTER=A220 I5 D1 T3` for SB2 or
+  `SET BLASTER=A220 I5 D1 H5 T6` for SB16. Choose DMA5/High DMA5 for 16-bit games.
   This applies to new and saved DOS disks, preserves other startup commands,
   and does not duplicate an existing matching line on subsequent launches.
-  Disabled builds do not add the line or remove existing user settings.
+  Switching cards replaces the previous emulator-managed line rather than
+  accumulating conflicting settings. Sessions with sound off leave settings alone.
   Some games still require selecting Sound Blaster in their setup program.
+  For Mario Teaches Typing, select **Sound Blaster** for **digital voice**,
+  address **220h**, IRQ **5**, and enable the Digital Voice option. Its
+  displayed factory IRQ default of **7** does not match this emulator.
+  Selecting Sound Blaster only for music does not enable digital speech.
   This does not install a driver or guarantee an application's compatibility.
-- No AdLib/OPL/FM music, MIDI, recording, 16-bit SB16 playback or full mixer
+- No AdLib/OPL/FM music, MPU-401/MIDI, recording, DSP/ASP effects or full mixer
   register emulation. Select **no music** if the game requires one of these.
 
 Guest DMA reads only private emulator RAM; no guest ISA DMA, PIC or audio-port

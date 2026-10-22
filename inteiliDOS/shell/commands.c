@@ -183,6 +183,7 @@ static int cmd_help(int argc, const char *argv[]) {
     println("  DEMO     - inteiliDOS feature showcase");
     println("  HEALTH   - Live System Health / Disk Health / System Info");
     println("  MS-DOS   - MS-DOS 6.22 emulator; persistent C: drive; F8 returns here");
+    println("             /SOUND2 or /SOUND16 - Select Sound Blaster digital audio");
     println("             MS-DOS /USB [USB0:..USB3:] - Read supplied DOS USB images");
     println("             MS-DOS /USB USB0:\\GAME.IMG - Load a USB game disk as A:");
     println("             Add /MOUSE - Enable DOS mouse (xHCI/UHCI USB boot mouse or PS/2)");

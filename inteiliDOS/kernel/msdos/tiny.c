@@ -27,6 +27,10 @@
 // Emulator system constants
 #define IO_PORT_COUNT 0x10000
 #define RAM_SIZE 0x10FFF0
+/* DOS runs with A20 closed (no XMS/HMA service is advertised). EXEPACK's
+ * backwards unpacker deliberately underflows segment registers and relies
+ * on the resulting 20-bit physical wrap, even on a real-mode 286. */
+#define ADDRESS_MASK 0xfffff
 #define REGS_BASE 0xF0000
 #define VIDEO_RAM_SIZE 0x10000
 
@@ -195,8 +199,9 @@ unsigned short vid_addr_lookup[VIDEO_RAM_SIZE], cga_colors[4] = {0 /* Black */, 
 // Helper functions
 static inline unsigned bus_read(unsigned address,int wide)
 {
-if (address>=RAM_SIZE) return wide?0xffff:0xff;
-if (wide && address==RAM_SIZE-1) return bus_read(address,0)|0xff00;
+address&=ADDRESS_MASK;
+if (wide && address==ADDRESS_MASK)
+    return bus_read(address,0)|(bus_read(0,0)<<8);
 if (address<0x9ffff || (address==0x9ffff && !wide) || address>=0xc0000)
     return wide?(unsigned)mem[address]|((unsigned)mem[address+1]<<8):mem[address];
 unsigned value=msdos_video_mapped(address)?msdos_video_read(address):mem[address];
@@ -206,8 +211,10 @@ return value;
 }
 static inline void bus_write(unsigned address,unsigned value,int wide)
 {
-if (address>=RAM_SIZE) return;
-if (wide && address==RAM_SIZE-1) {bus_write(address,value,0);return;}
+address&=ADDRESS_MASK;
+if (wide && address==ADDRESS_MASK) {
+    bus_write(address,value,0);bus_write(0,value>>8,0);return;
+}
 if (address<0x9ffff || (address==0x9ffff && !wide) || address>=0xc0000) {
     mem[address]=value;if (wide) mem[address+1]=value>>8;return;
 }
@@ -223,7 +230,9 @@ if (wide) {
 static int bus_disk(int drive,unsigned offset,unsigned address,unsigned length,int write)
 {
 if (address>RAM_SIZE || length>RAM_SIZE-address) return 0;
-if (!msdos_video_active() || address>=0xc0000 || address+length<=0xa0000)
+address&=ADDRESS_MASK;
+if (length<=ADDRESS_MASK+1-address &&
+    (!msdos_video_active() || address>=0xc0000 || address+length<=0xa0000))
     return msdos_pc_disk(drive,offset,mem+address,length,write);
 if (!length || (length&511)) return 0;
 uint8_t sector[512];
@@ -458,7 +467,7 @@ mem = kcalloc(1, RAM_SIZE + 32);
 if (!mem) return -1;
 kmemset(io_ports, 0, sizeof(io_ports));
 if (msdos_video_reset(mem)) {kfree(mem);mem=0;return -1;}
-msdos_sound_reset(CONFIG_MSDOS_SOUND,mem,RAM_SIZE);
+msdos_sound_reset(msdos_sound_model(),mem,RAM_SIZE);
 msdos_devices_init();
 seg_override_en = rep_override_en = trap_flag = int8_asap = io_hi_lo = 0;
 inst_counter = 0;
@@ -532,8 +541,16 @@ i += length;
 			bios_table_lookup[i][j] = regs8[regs16[0x81 + i] + j];
 
 	// Instruction execution loop. Terminates if CS:IP = 0:0
-	for (; opcode_stream = mem + 16 * regs16[REG_CS] + reg_ip, opcode_stream != mem;)
+unsigned char wrapped_opcode[16];
+for (; opcode_stream = mem + ((16 * regs16[REG_CS] + reg_ip)&ADDRESS_MASK),
+       regs16[REG_CS] || reg_ip;)
 	{
+if (opcode_stream-mem>ADDRESS_MASK-sizeof(wrapped_opcode)) {
+    unsigned address=opcode_stream-mem;
+    for (unsigned b=0;b<sizeof(wrapped_opcode);b++)
+        wrapped_opcode[b]=bus_read(address+b,0);
+    opcode_stream=wrapped_opcode;
+}
 if (!seg_override_en && !rep_override_en) instruction_start=reg_ip;
 /* A real IVT entry permits DOS detection, guest hooks and PUSHF/FAR CALL
  * chaining. The two entry stubs live beyond the checked upstream ROM/overlay. */
