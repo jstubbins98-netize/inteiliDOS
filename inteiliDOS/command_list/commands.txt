@@ -216,6 +216,12 @@ MS-DOS
   the persistent private DOS C: disk. Required DOS images are not included
   in the repository; users must supply them separately.
 
+MS-DOS /CDROM
+    Exposes the files/folders on an ISO 9660 game CD/DVD as read-only D:.
+    Uses supported SATA/AHCI or IDE optical drives, not floppy IMG files.
+    Install/save to virtual C:. May combine with /MOUSE and sound switches.
+    Not MSCDEX/CD-audio emulation. Exit with F8 before changing the disc.
+
 MS-DOS /FLOPPY
   Read user-supplied DOS boot media from physical floppy drive A:.
 

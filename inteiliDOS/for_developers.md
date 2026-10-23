@@ -412,6 +412,19 @@ static int cmd_example(int argc, const char *argv[]) {
 
 ## MS-DOS 6.22 emulator
 
+`MS-DOS /CDROM` adds an opt-in, read-only D: for game files on an ISO 9660
+SATA/IDE optical disc. `kernel/msdos/cdrom.c` synthesizes bounded FAT16 metadata
+and streams file sectors through the native CD reader. The checked ROM INT13
+entry bridge presents BIOS drive 81h, leaving the persistent private DOS
+HDD at 80h. Guest writes to the optical view are refused; native AHCI engines
+remain owned by the shared SATA driver. This is a file bridge, not MSCDEX or
+CD-audio emulation. Keep its limits and DOS 8.3 aliases documented in
+`DOS_COMPATIBILITY.md`.
+
+Run `python3 tests/test_msdos_cdrom.py` for host filesystem regressions and
+`python3 tests/run_msdos_cdrom_test.py` for real DOS game/resource access,
+read-only refusal, private C: saves and optical/HDD coexistence on AHCI.
+
 `MS-DOS` in inteiliShell enters a software-interpreted real-mode 80286-compatible PC running
 the user's supplied DOS 6.22 system. F8 returns to the native shell without
 rebooting the host. DOS COM/MZ programs now run inside that environment;

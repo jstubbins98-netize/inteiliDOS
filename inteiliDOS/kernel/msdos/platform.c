@@ -5,6 +5,7 @@
 #include "sound.h"
 #include "mouse.h"
 #include "startup.h"
+#include "cdrom.h"
 #include "../pcm.h"
 #include "mbr.h"
 #include "../fs.h"
@@ -436,6 +437,12 @@ int msdos_pc_floppy_params(unsigned *sectors, unsigned *spt) {
 int msdos_pc_disk(int drive, uint32_t offset, uint8_t *data,
                   uint32_t length, int write) {
     if (!length || length%512 || offset%512) return 0;
+    if (drive==2) {
+        if (write) return 0;
+        for (uint32_t i=0;i<length;i+=512)
+            if (msdos_cdrom_read((offset+i)/512,data+i)) return 0;
+        return 1;
+    }
     if (drive==1) {
         if (write) return 0; /* supplied images and physical floppy read-only */
         return !read_floppy(offset,data,length);
@@ -726,7 +733,7 @@ static int prepare_disk(int argc, const char *argv[]) {
         } else use_usb=0;
     }
     if (argc && !use_floppy && !use_image && !use_usb) {
-        vga_puts("Usage: MS-DOS [/MOUSE] [/SOUND2 | /SOUND16]\n"
+        vga_puts("Usage: MS-DOS [/MOUSE] [/SOUND2 | /SOUND16] [/CDROM]\n"
                  "       [/FLOPPY | /IMAGE <CD image> | /USB [USB0:..USB3:]]\n"
                  "       MS-DOS /USB USB0:\\DISK1.IMG [USB0:\\DISK2.IMG ...]\n"
                  "       Up to 8 game images; F6 cycles them in the supplied order.\n");return 1;
@@ -820,7 +827,8 @@ int msdos_run(int argc, const char *argv[]) {
     /* Strip the independent /MOUSE switch before the existing media parser.
      * Retain path spelling/order; it may appear before or after USB paths. */
     const char *media_args[USB_GAME_DISKS+1];
-    int media_argc=0,mouse=0,explicit_sound=0;
+    int media_argc=0,mouse=0,explicit_sound=0,optical=0;
+    msdos_cdrom_close();
     unsigned model=CONFIG_MSDOS_SOUND?(CONFIG_MSDOS_SOUND_MODEL==16?
         MSDOS_SOUND_SB16:MSDOS_SOUND_SB2):MSDOS_SOUND_OFF;
     for (int i=0;i<argc;i++) {
@@ -837,14 +845,21 @@ int msdos_run(int argc, const char *argv[]) {
                 vga_puts("MS-DOS: choose /SOUND2 or /SOUND16, not both.\n");return 1;
             }
             model=next;explicit_sound=1;
-        } else if (same) mouse=1;
+        } else if (sound_option(p,"/CDROM")) optical=1;
+        else if (same) mouse=1;
         else if (media_argc<(int)(sizeof(media_args)/sizeof(media_args[0])))
             media_args[media_argc++]=p;
         else {vga_puts("MS-DOS: too many media arguments.\n");return 1;}
     }
     msdos_sound_select(model);
     if (prepare_disk(media_argc,media_args)) return 1;
+    if (optical && msdos_cdrom_open()) {
+        vga_puts("MS-DOS: cannot mount game CD: ");
+        vga_puts(msdos_cdrom_error());vga_puts(".\n");return 1;
+    }
+    if (optical) vga_puts("DOS game CD: ISO files available read-only on D:.\n");
     if (model && msdos_startup_sound_for(&hard,model==MSDOS_SOUND_SB16)) {
+        msdos_cdrom_close();
         vga_puts("MS-DOS: could not configure AUTOEXEC.BAT for sound; startup cancelled.\n");
         return 1;
     }
@@ -863,6 +878,7 @@ int msdos_run(int argc, const char *argv[]) {
     region_top=0;region_bottom=24;blank(0,2000);
     rtc_init();last_refresh=timer_get_ticks()-16;media_changed=0;
     int rc=msdos_cpu_run(hard.sectors);
+    msdos_cdrom_close();
     msdos_mouse_stop();
     int audio_error=msdos_sound_error();
     const char *audio_backend=pcm_backend();

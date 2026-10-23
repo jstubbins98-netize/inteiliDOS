@@ -1,5 +1,58 @@
 # MS-DOS 6.22 in inteiliDOS
 
+## Game files from a SATA CD-ROM / DVD-ROM
+
+Insert an ISO 9660 game disc (or mount a game ISO as the emulator's optical
+media), then enter `MS-DOS /CDROM`. Supported SATA ATAPI/AHCI and IDE ATAPI
+drives expose the first readable ISO as a read-only **D:** drive:
+
+```text
+MS-DOS /CDROM
+MS-DOS /MOUSE /SOUND2 /CDROM
+```
+
+Inside DOS, use the actual directory/executable names shown by `DIR`:
+
+```dos
+D:
+DIR
+CD \GAME
+GAME
+```
+
+Run game installers from D: and select a directory on the private virtual C:
+for installation and saves. F8 still returns to inteiliShell; C: persists.
+DOS must already be installed, or its separately supplied boot media must
+also be available. A game-only CD is not a DOS boot disk.
+
+Unlike `/IMAGE GAME.IMG`, `/CDROM` reads **the ISO's game files and folders**,
+not a floppy image stored on the disc. No IMG file is required. Large game
+assets are streamed from the optical drive rather than copied into RAM.
+Executables, installers, batch files and their DAT/WAD/VOC/etc. resources are
+accessible: restricting the view to executable extensions would break games.
+
+This is a synthesized, read-only FAT16 file-access drive backed by the native
+optical driver. It does not require a guest CONFIG.SYS CD driver or MSCDEX.
+It is **not MSCDEX emulation**: MSCDEX detection/raw CD APIs, CD-audio tracks,
+and disc copy protection are not implemented. Real-mode 286 CPU limitations
+still apply; this does not make 386/DOS-extender games compatible.
+
+Limits: ISO 9660 with 2048-byte sectors (not UDF-only DVDs), 4096 total
+directory/file records including the root, 511 root entries, 32 directory
+levels, and about 1.8 GiB of allocated DOS-view clusters. Long filenames
+receive stable DOS 8.3 aliases; Joliet/Rock Ridge names are not exposed.
+Unsupported layouts and exceeded limits produce an explicit error. D: reports
+no writable space, and guest BIOS writes to it are refused.
+
+Keep the disc inserted until F8. Exit DOS before changing it and enter with
+`/CDROM` again to rebuild the directory view. SATA/AHCI support must be enabled
+in the OS build for SATA drives.
+
+Tests: `tests/test_msdos_cdrom.py` checks directory/asset reads, large files,
+FAT chains, aliases and failure handling. `tests/run_msdos_cdrom_test.py`
+checks actual DOS game execution, nested assets, seeks, C: saves, write
+refusal and F8/re-entry with the optical drive and native HDD sharing AHCI.
+
 The `MS-DOS` command opens a software-emulated, real-mode 80286-compatible PC running the real
 MS-DOS 6.22 system files supplied on the installation disks. DOS has its own
 memory, BIOS, command prompt, and persistent virtual hard drive. F8 stops the

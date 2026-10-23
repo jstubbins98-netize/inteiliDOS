@@ -7,6 +7,7 @@
 
 #include "msdos.h"
 #include "bios.h"
+#include "cdrom.h"
 #include "bios_keyboard.h"
 #include "keyboard_input.h"
 #include "video.h"
@@ -304,6 +305,38 @@ void set_opcode(unsigned char opcode)
  * trap below, so change-line support also works through chained handlers. */
 static int floppy_bios_service(void)
 {
+if (msdos_cdrom_sectors()) {
+    mem[0x475]=2;
+    if (regs8[REG_DL]==0x80 && regs8[REG_AH]==8) {
+        unsigned c=CAST(unsigned short)mem[0xf1068];
+        regs16[REG_AX]=regs16[REG_BX]=0;
+        regs16[REG_CX]=(c<<8)|((c>>2)&0xc0)|mem[0xf1066];
+        regs16[REG_DX]=((unsigned)mem[0xf106a]<<8)|2;
+        set_CF(0);return 1;
+    }
+    if (regs8[REG_DL]==0x81) {
+        unsigned ah=regs8[REG_AH],sectors=msdos_cdrom_sectors(),status=0;
+        if (ah==8) {
+            unsigned c=(sectors-1)/(255*63);
+            regs16[REG_CX]=(c<<8)|((c>>2)&0xc0)|63;
+            regs16[REG_DX]=0xfe02;regs16[REG_BX]=0;
+        } else if (ah==0x15) {
+            regs8[REG_AH]=3;regs16[REG_CX]=sectors>>16;
+            regs16[REG_DX]=sectors;set_CF(0);return 1;
+        } else if (ah==2 || ah==4) {
+            unsigned s=regs8[REG_CL]&63,h=regs8[REG_DH];
+            unsigned c=regs8[REG_CH]|((regs8[REG_CL]&0xc0)<<2);
+            unsigned count=regs8[REG_AL],lba=(c*255+h)*63+s-1;
+            if (!s || h>=255 || !count || lba>=sectors || count>sectors-lba)
+                status=4;
+            else if (ah==2 && !bus_disk(2,lba*512,
+                     SEGREG(REG_ES,REG_BX,),count*512,0)) status=0x20;
+            if (status) regs8[REG_AL]=0;
+        } else if (ah==3 || ah==5) status=3; /* never write an ISO */
+        else if (ah!=0 && ah!=1) status=1;
+        regs8[REG_AH]=status;set_CF(status!=0);return 1;
+    }
+}
 if (regs8[REG_DL]==0) {
     if (regs8[REG_AH]==0x15) {
         regs8[REG_AH]=2; /* floppy with working change-line support */
