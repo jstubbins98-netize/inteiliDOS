@@ -173,6 +173,21 @@ constant or stage the whole kernel below 1 MiB: larger kernels would overwrite
 the conventional-memory stack, EBDA or VGA regions. The native i386 baseline
 and 0x500000 LaunchPad staging boundary are unchanged.
 
+Before disk loading, the VBR enumerates BIOS INT 15h E820 into a zeroed
+0x5000–0x57ff handoff area. It accepts 20/24-byte records, skips disabled ACPI
+entries, and limits enumeration to 64 calls. Only a complete valid enumeration
+sets `MULTIBOOT_FLAG_MMAP`; failures never manufacture RAM from `CONFIG_RAM_MB`.
+It passes EAX=0x2BADB002 and EBX=0x5000 to the existing kernel entry. The map
+begins at 0x5100 and remains below the boot stack and 0x8000 disk bounce buffer.
+
+The physical allocator validates the complete map before freeing pages, clips
+it to IA-32 addressability, counts duplicate RAM ranges once and gives reserved
+ranges priority even when they overlap RAM. Guest allocations stay above
+16 MiB, separate from the heap, native programs and LaunchPad staging.
+`BOOTREPAIR` from updated installation media can install this VBR on recognized
+existing volumes without replacing their kernel, moving files or changing
+partition sizes; it saves and verifies the original boot sectors first.
+
 ### Kernel
 
 | File | Role |

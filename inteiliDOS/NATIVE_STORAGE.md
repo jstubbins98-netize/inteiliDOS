@@ -16,6 +16,10 @@ New installations use layout version 2. The BIOS HDD loader reads one 4 KiB
 chunk into a low-memory bounce buffer and copies it into high memory before
 reading the next chunk. It does not stage the whole kernel below 1 MiB.
 The native 1–5 MiB RAM window and LaunchPad staging boundary are unchanged.
+Before loading, the VBR collects a complete BIOS E820 memory map and passes it
+through the kernel's Multiboot interface. This enables physical RAM allocation
+after HDD-only boots, including the DOS emulator's 16 MiB guest allocation
+above physical 16 MiB. Configured RAM is not a substitute for firmware data.
 Version 1 installations retain their 512 KiB reservation and original file
 locations; runtime storage supports both layouts without moving files.
 Installing the larger kernel requires a separately confirmed new installation,
@@ -101,15 +105,18 @@ python3 tests/run_fs_layout_tests.py /tmp/native-layout-build/inteilidOS.elf
 python3 tests/run_msdos622_test.py /tmp/native-layout-build/inteilidOS.elf ../MS-DOS_disks --installed
 python3 tests/run_hdd_cold_boot_test.py /tmp/native-layout-build/inteilidOS.elf ../MS-DOS_disks
 python3 tests/run_hdd_stream_test.py
+python3 tests/run_hdd_map_boot_test.py
 python3 tests/run_small_hdd_test.py /tmp/native-layout-build/inteilidOS.elf
 ```
 
 Host checks use the real filesystem and installer preflight against disposable
 ATA fixtures, with address/undefined-behavior checks for the filesystem.
 The streaming-loader test boots on an emulated i486 and verifies every loaded
-byte with 600 KiB, 1.2 MiB and 4 MiB fixtures. The DOS portion of the HDD cold-boot
-test also requires a usable BIOS physical-memory handoff; native installation
-and shell boot passing alone do not prove HDD-only DOS startup.
+byte with 600 KiB, 1.2 MiB and 4 MiB fixtures. The memory-map boot test injects
+20/24-byte E820 replies, disabled entries, invalid signatures, partial failures
+and endless continuations. The HDD cold-boot test verifies DOS startup and
+persistence without installation media on a 64 MiB VM, real detected RAM rather
+than the 16 MiB profile constant, and safe refusal on a genuinely 16 MiB VM.
 Logical-volume fixtures cover all eight ATA indexes, selection priority,
 separate C:/D: volumes, unchanged physical APIs, failed discovery followed by
 setup, and no write redirection after corruption, I/O failure or full storage.

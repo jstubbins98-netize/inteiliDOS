@@ -9,6 +9,7 @@ Both clean and alongside-existing-partition setup paths are exercised.
 import argparse
 import hashlib
 from pathlib import Path
+import re
 import struct
 import sys
 import tempfile
@@ -147,8 +148,8 @@ def check_files(disk, dir_lba, expected, dos=False):
         assert read_at(disk, start + 1, SECTOR)[510:] == b"\x55\xaa"
 
 
-def cold_start(disk, folder, iso=None):
-    args = ["-boot", "order=c,strict=on",
+def cold_start(disk, folder, iso=None, ram_mb=64):
+    args = ["-m", str(ram_mb), "-boot", "order=c,strict=on",
             "-drive", f"file={disk},if=ide,index=0,format=raw"]
     if iso is not None:
         args += ["-drive", f"file={iso},if=ide,index=2,media=cdrom,format=raw"]
@@ -160,6 +161,10 @@ def cold_start(disk, folder, iso=None):
             assert sum(arg == "-drive" for arg in guest.argv) == 1
         guest.wait("Welcome to inteiliDOS", timeout=60)
         guest.wait("> ")
+        # The test profile intentionally configures 16 MiB. HDD boot must
+        # report real BIOS RAM, not that constant or an invented large value.
+        match=re.search(r"RAM: (\d+) MB detected",guest.screen())
+        assert match and ram_mb-2<=int(match[1])<=ram_mb, guest.screen()
         return guest
     except BaseException:
         guest.close()
@@ -273,6 +278,9 @@ def exercise(kernel, iso, folder, dual):
         dos_start(guest)
         shell(guest, "type c:\\games\\save.txt")
         guest.wait("HDD-COLD-SAVED")
+        out=ROOT.parent/"generated-artifacts/hdd-memory"
+        out.mkdir(parents=True,exist_ok=True)
+        guest.command("screendump",{"filename":str(out/f"{mode}-saved-dos.ppm")})
         clear_dos(guest)
         shell(guest, "c:\\games\\tool.com /c ver")
         guest.wait("MS-DOS Version 6.22")
@@ -286,6 +294,18 @@ def exercise(kernel, iso, folder, dual):
     check_foreign(disk, foreign)
     print(f"PASS [{mode}]: HDD-only cold reboot, both BASIC files, DOS data/program, "
           "F8, protected sectors and unrelated partition preserved", flush=True)
+    guest=cold_start(disk,folder,ram_mb=16)
+    try:
+        shell(guest,"ms-dos")
+        guest.wait("insufficient memory",timeout=60)
+        guest.wait("C:\\>")
+    finally:
+        guest.close()
+    assert digest(disk,0,dir_lba)==protected
+    check_files(disk,dir_lba,FILES,dos=True)
+    check_foreign(disk,foreign)
+    print(f"PASS [{mode}]: real 16 MiB BIOS boot detected and DOS allocation "
+          "refused without damage",flush=True)
 
 
 def main():

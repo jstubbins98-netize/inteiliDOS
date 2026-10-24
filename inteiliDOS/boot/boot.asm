@@ -5,9 +5,8 @@
 ; _start is placed at KERN_DEST (0x100000) so BOTH paths work:
 ;   • GRUB/Multiboot: GRUB reads the ELF entry point and jumps to _start.
 ;     It finds the Multiboot header by scanning the first 8 KB for the magic.
-;   • Custom MBR:     MBR copies kernel to 0x100000 then does
-;                       xor eax,eax ; xor ebx,ebx ; jmp 0x100000
-;                     which lands here and jumps over the header to _kernel_entry.
+;   • Installed VBR: streams kernel to 0x100000 and supplies a Multiboot
+;     E820 memory map. Older raw loaders may still pass zero EAX/EBX.
 ; =============================================================================
 
 BITS 32
@@ -88,7 +87,8 @@ _kernel_entry:
 
     ; Forward Multiboot info to kernel_main(magic, info_phys).
     ;   GRUB sets: eax = 0x2BADB002, ebx = Multiboot info ptr
-    ;   MBR sets:  eax = 0,          ebx = 0
+    ;   VBR sets:  eax = 0x2BADB002, ebx = BIOS map at 0x5000
+    ;   Old raw loaders may pass eax = ebx = 0 (heap-only native operation).
     push ebx        ; second arg: multiboot_info_t physical pointer
     push eax        ; first  arg: magic (0x2BADB002 or 0)
 

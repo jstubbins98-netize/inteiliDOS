@@ -662,6 +662,29 @@ installation and its saved files; do not treat it as an editable text document.
 
 ## Troubleshooting
 
+### Insufficient memory after an HDD-only boot
+
+The 486 emulator requires one contiguous 16 MiB region above physical 16 MiB;
+64 MiB of host RAM is recommended. An older installed HDD loader did not pass
+the BIOS RAM map to the kernel, so even a PC with plenty of RAM could report
+insufficient memory (and show 0 MiB detected at startup).
+
+Rebuild the inteiliDOS ISO from the updated source and boot **that installation
+media**, not the HDD. At the inteiliShell prompt run `BOOTREPAIR`, confirm the
+displayed target, and type `YES` to apply. The repair backs up and verifies the
+old boot sectors and updates only the recognized native bootstrap; it preserves
+partitions, native files and the saved `MSDOS622.HDD`. Remove the installation
+media and reboot from the HDD. A full erase/reinstall is not required.
+Keep a separate backup of important files before any boot repair.
+
+The updated loader supplies the BIOS E820 map; the kernel uses only reported
+addressable RAM, not the configured RAM number. Missing/invalid maps still
+refuse allocation rather than assuming that memory exists. Genuine low RAM or
+no sufficiently large contiguous region can also produce this message.
+
+`DOS audio was silent: no supported output controller` is a separate native
+audio-controller issue; updating the memory handoff does not add audio support.
+
 | Message/problem | Action |
 |---|---|
 | Needs an installed inteiliDOS HDD | Install the native OS/filesystem on the intended disk first; the DOS command deliberately will not format it |

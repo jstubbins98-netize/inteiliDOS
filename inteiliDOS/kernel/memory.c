@@ -139,27 +139,55 @@ void memory_init(uint32_t mb_info_phys) {
     /* Full memory map (flags bit 6) */
     if (info->flags & MULTIBOOT_FLAG_MMAP) {
         uintptr_t addr = (uintptr_t)info->mmap_addr;
+        /* A broken/truncated firmware map must not authorize allocations.
+         * Validate every entry before freeing even the first page. */
+        if (!addr || !info->mmap_length || info->mmap_length > 1024u*1024u ||
+            info->mmap_length > UINT32_MAX-info->mmap_addr) {
+            total_mem_kb=0;
+            vga_puts("Memory manager: invalid BIOS memory map; physical RAM unavailable.\n");
+            return;
+        }
         uintptr_t end  = addr + info->mmap_length;
-
+        for (uintptr_t cursor=addr;cursor<end;) {
+            multiboot_mmap_entry_t *e=(multiboot_mmap_entry_t *)cursor;
+            if (end-cursor<4u || e->size<20u || e->size>end-cursor-4u) {
+                total_mem_kb=0;
+                vga_puts("Memory manager: truncated BIOS memory map; physical RAM unavailable.\n");
+                return;
+            }
+            cursor+=e->size+4u;
+        }
+        /* Reserve non-RAM entries after freeing RAM, so overlapping firmware
+         * ranges cannot accidentally expose ACPI/firmware/MMIO pages. */
+        for (unsigned pass=0;pass<2;pass++) {
+        addr=(uintptr_t)info->mmap_addr;
         while (addr < end) {
             multiboot_mmap_entry_t *e = (multiboot_mmap_entry_t *)addr;
-            if (e->type == MULTIBOOT_MEMORY_AVAILABLE &&
+            int available=e->type==MULTIBOOT_MEMORY_AVAILABLE;
+            if (available == (pass==0) && e->length &&
                 e->base_addr < 0x100000000ULL) {
                 /* Modern BIOS maps can cross 4 GiB. Clip in 64-bit math
                  * before narrowing; base+len must not wrap into low RAM. */
                 uint64_t top=e->length>0x100000000ULL-e->base_addr ?
                              0x100000000ULL : e->base_addr+e->length;
-                uint32_t page_start=(uint32_t)((e->base_addr+PAGE_SIZE-1)/PAGE_SIZE);
-                uint32_t page_end=(uint32_t)(top/PAGE_SIZE);
+                uint32_t page_start=(uint32_t)((e->base_addr+
+                    (available?PAGE_SIZE-1u:0u))/PAGE_SIZE);
+                uint32_t page_end=(uint32_t)((top+
+                    (available?0u:PAGE_SIZE-1u))/PAGE_SIZE);
                 if (page_end>BITMAP_SIZE*8u) page_end=BITMAP_SIZE*8u;
+                if (available && top/1024u>total_mem_kb)
+                    total_mem_kb=(uint32_t)(top/1024u);
                 for (uint32_t p = page_start; p < page_end; p++) {
-                    bitmap_clear(p);
-                    free_pages++;
-                    total_pages++;
+                    if (available && bitmap_test(p)) {
+                        bitmap_clear(p);free_pages++;total_pages++;
+                    } else if (!available && !bitmap_test(p)) {
+                        bitmap_set(p);free_pages--;total_pages--;
+                    }
                 }
             }
             /* Multiboot1: advance by entry->size + 4 (size field itself) */
             addr += (uintptr_t)(e->size + 4u);
+        }
         }
     } else if ((info->flags & MULTIBOOT_FLAG_MEM) && info->mem_upper) {
         /*

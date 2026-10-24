@@ -36,6 +36,11 @@ def main():
             "-ffunction-sections","-fdata-sections","-I"+str(tmp),HERE/"setup_layout_test.c",
             "-Wl,--gc-sections","-o",tmp/"setup-layout")
         run(tmp/"setup-layout")
+        run("gcc","-std=gnu11","-Wall","-Wextra","-Werror",
+            "-Wno-pointer-to-int-cast","-fno-pie","-no-pie",
+            "-fsanitize=address,undefined","-g",HERE/"memory_map_test.c",
+            "-o",tmp/"memory-map")
+        run(tmp/"memory-map")
     if len(sys.argv)>1:
         run(sys.executable,HERE/"run_setup_test.py",Path(sys.argv[1]).resolve())
 
