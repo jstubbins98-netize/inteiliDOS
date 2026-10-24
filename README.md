@@ -108,9 +108,18 @@ Upstream projects maintain their complete individual contributor lists.
   (later **SoftVoice, Inc.**).
 - **8086tiny CPU emulator and companion BIOS** — **Adrian Cable** and
   [8086tiny contributors](https://github.com/adriancable/8086tiny).
-  This is the emulator used for the MS-DOS environment. The adapted interpreter, BIOS and local
+  The checked companion BIOS and adapted firmware/device bridge are retained.
+  The adapted interpreter, BIOS and local
   compatibility work retain their applicable MIT notices; see
   `kernel/msdos/LICENSE.txt` and `kernel/msdos/README.md`.
+- **tiny386 CPU core** — **Chunhui He**
+  ([upstream project](https://github.com/hchunhui/tiny386)), providing the
+  486 protected-mode/paging interpreter. Retain its BSD-3-Clause
+  license in `kernel/msdos/tiny386/LICENSE`.
+- **Berkeley SoftFloat Release 3e** — **John R. Hauser / The Regents of the
+  University of California** ([upstream](https://www.jhauser.us/arithmetic/SoftFloat.html)).
+  Integer-only 80-bit arithmetic for the optional DOS x87 interpreter.
+  Retain its BSD-3-Clause notice in `kernel/msdos/softfloat/LICENSE`.
 - **FatFs FAT/exFAT filesystem library and Unicode support** — **ChaN**
   ([FatFs project](https://elm-chan.org/fsw/ff/)), with upstream contributor
   and copyright notices retained in `kernel/fatfs/`. The vendored source
