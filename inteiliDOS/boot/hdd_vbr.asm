@@ -1,27 +1,32 @@
-; Installed VBR. Preserve the installer patch ABI, not handwritten offsets.
+; Streaming HDD loader. One 4 KiB BIOS bounce buffer, never the whole kernel
+; in conventional RAM (which would overwrite the stack, EBDA and VGA ROM).
 bits 16
 org 0x7C00
     jmp near start
 times 0x21-($-$$) db 0
-kernel_lba dd 0                    ; installer patches 0x21
-drive db 0
+kernel_lba dd 0                   ; installer patches 0x21
+    dd 0x324C4449                 ; IDL2 layout/loader marker at 0x25
 times 0x36-($-$$) db 0
-iterations db 128                 ; installer patches 0x36
+iterations dw 128                 ; installer patches 16-bit chunk count
+drive db 0
 attempts db 0
-times 0x40-($-$$) db 0
-dap db 16,0                       ; DAP is DWORD aligned
+destination dd 0x100000
+align 4,db 0
+dap:
+    db 0x10,0
     dw 8,0x8000,0
     dq 0
 align 8,db 0
 gdt:
     dq 0
-    dq 0x00CF9A000000FFFF
-    dq 0x00CF92000000FFFF
+    dq 0x00CF9A000000FFFF         ; 32-bit code
+    dq 0x00CF92000000FFFF         ; flat data
+    dq 0x00009A000000FFFF         ; 16-bit transition code
 gdtr:
-    dw 23
+    dw 31
     dd gdt
 times 0xDA-($-$$) db 0
-copy_dwords dd 131072              ; installer patches 0xDA
+copy_dwords dd 131072             ; installer metadata, iterations * 1024
 start:
     cli
     xor ax,ax
@@ -30,32 +35,29 @@ start:
     mov ss,ax
     mov sp,0x7C00
     cld
-    mov [drive],dl                 ; only after DS is initialized
+    mov [drive],dl
     sti
-    ; Firmware may leave a splash screen, nonzero text page or palette.
-    ; Establish mode 3/page 0 (including BIOS font/palette initialization)
-    ; BEFORE disk reads: a video BIOS call after loading can reuse low RAM.
-    ; Preserve the saved drive and segment/register state across firmware.
+    ; Establish console/font before disk reads; no later video BIOS reentry.
     pushad
     push ds
     push es
-    mov ax,0x0003
+    mov ax,3
     int 0x10
     pop es
     pop ds
     popad
-    cld
-    in al,0x92
-    or al,2
-    and al,0xFE
-    out 0x92,al
     mov eax,[kernel_lba]
     mov [dap+8],eax
-.load:
+    ; Reject corrupt load bounds before touching high memory.
+    cmp word [iterations],1
+    jb failure
+    cmp word [iterations],1024
+    ja failure
+load:
     mov byte [attempts],5
-.retry:
-    mov word [dap+2],8             ; BIOS may modify transferred count
-    mov dl,[drive]                ; never hardcode BIOS drive 0x80
+retry:
+    mov word [dap+2],8
+    mov dl,[drive]
     mov si,dap
     mov ah,0x42
     pushad
@@ -65,23 +67,23 @@ start:
     pop es
     pop ds
     popad
-    jnc .read_ok
+    jnc read_ok
     dec byte [attempts]
-    jnz .retry                    ; bounded cold-start readiness retry
+    jnz retry
+failure:
     mov ax,0xB800
     mov es,ax
-    mov word [es:0],0x4F45         ; E: boot read failed, no disk writes
+    mov word [es:0],0x4F45
 .halt:
     cli
     hlt
     jmp .halt
-.read_ok:
-    add word [dap+6],0x100
-    add dword [dap+8],8
-    dec byte [iterations]
-    jnz .load
-    ; No INT 10h firmware reentry after reads; text mode is already ready.
+read_ok:
     cli
+    in al,0x92
+    or al,2
+    and al,0xFE
+    out 0x92,al
     lgdt [gdtr]
     mov eax,cr0
     or al,1
@@ -93,22 +95,42 @@ protected:
     mov ds,ax
     mov es,ax
     mov ss,ax
-    mov esp,0x90000
-    ; Also make older installed kernels (without their own BSS clear) safe.
-    ; Native kernel RAM is 1..5 MiB; LaunchPad staging begins at 5 MiB.
-    ; Supported full builds need >=8 MiB. Source image/stack are below 1 MiB.
+    cld
+    mov edi,[destination]
+    cmp edi,0x100000
+    jne .copy
+    ; Retain warm-boot BSS clearing, including older installed kernels.
     xor eax,eax
-    mov edi,0x100000
     mov ecx,0x100000
-    cld
     rep stosd
-    mov esi,0x8000
     mov edi,0x100000
-    mov ecx,[copy_dwords]
-    cld
+.copy:
+    mov esi,0x8000
+    mov ecx,1024
     rep movsd
+    mov [destination],edi
+    add dword [dap+8],8
+    dec word [iterations]
+    jnz .more
+    mov esp,0x90000
     xor eax,eax
     xor ebx,ebx
     jmp 0x08:0x100000
+.more:
+    jmp 0x18:transition
+bits 16
+transition:
+    mov eax,cr0
+    and al,0xFE
+    mov cr0,eax
+    jmp 0:real
+real:
+    xor ax,ax
+    mov ds,ax
+    mov es,ax
+    mov ss,ax
+    mov sp,0x7C00
+    sti
+    jmp load
 times 510-($-$$) db 0
 dw 0xAA55

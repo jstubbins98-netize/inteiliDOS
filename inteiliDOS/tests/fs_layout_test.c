@@ -56,6 +56,8 @@ static void installed(uint32_t start,uint32_t count) {
     allowed_start=start+NATIVE_DATA_OFFSET;allowed_end=start+count;
     directory(allowed_dir);
     memset(sector(start),0xa5,NATIVE_CONFIG_OFFSET*512u);
+    uint32_t marker=NATIVE_VBR_V2_MAGIC;
+    memcpy(sector(start)+0x25,&marker,4);
 }
 static void saves_and_image(void) {
     uint8_t data[1024], readback[1024];
@@ -107,11 +109,30 @@ static void blocked(void) {
 static void tests(void) {
     fresh(); blocked(); /* no first-write formatting */
     fresh(); disk[0]=0xeb; directory(2048); blocked(); /* unknown VBR */
-    installed(4096,70000);
+    installed(4096,80000);
     uint8_t *prefix=malloc((size_t)allowed_dir*512);
     memcpy(prefix,disk,(size_t)allowed_dir*512);
     saves_and_image();
     assert(!memcmp(prefix,disk,(size_t)allowed_dir*512)); free(prefix);
+    /* Version 1 partitions keep their original descriptor/directory/data.
+     * No in-place migration and no writes into their 512 KiB boot reserve. */
+    installed(4096,80000);
+    memset(sector(4096+NATIVE_CONFIG_OFFSET),0,512);
+    memset(sector(4096)+0x25,0,4);
+    native_layout_t *old=(native_layout_t *)sector(4096+1025);
+    native_layout_init(old,4096,80000);
+    old->version=1;old->kernel_sectors=1024;old->dir_offset=1033;
+    old->checksum=native_layout_checksum(old);
+    allowed_dir=4096+1033;allowed_start=allowed_dir+1;
+    directory(allowed_dir);
+    prefix=malloc((size_t)allowed_dir*512);
+    memcpy(prefix,disk,(size_t)allowed_dir*512);
+    saves_and_image();
+    assert(!memcmp(prefix,disk,(size_t)allowed_dir*512));free(prefix);
+    /* A v2 marker must never authorize using a v1 descriptor. */
+    uint32_t marker=NATIVE_VBR_V2_MAGIC;
+    memcpy(sector(4096)+0x25,&marker,4);
+    blocked();
     /* Legacy files retain their physical addresses and contents. */
     fresh();directory(2048);allowed_dir=2048;allowed_start=2049;allowed_end=total;
     fs_dirent_t *e=(fs_dirent_t *)(sector(2048)+4);

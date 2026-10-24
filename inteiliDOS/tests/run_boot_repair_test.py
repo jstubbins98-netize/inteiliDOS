@@ -63,11 +63,14 @@ def main():
         finally:guest.close()
         data=bytearray(disk.read_bytes())
         start=struct.unpack_from("<I",data,454)[0]
-        kernel_before=bytes(data[(start+1)*512:(start+1033)*512])
+        kernel_before=bytes(data[(start+1)*512:(start+8201)*512])
         mbr=historical_array("mbr_bootstrap",446)+bytes(data[446:512])
         old_vbr=bytearray(historical_array("vbr_code",512))
         new_vbr=data[start*512:(start+1)*512]
-        for off,size in ((0x21,4),(0x36,1),(0xDA,4)):
+        # Historical bootstrap code, but retain the actual v2 volume marker:
+        # recovery must not reinterpret the filesystem as the old layout.
+        old_vbr[0x25:0x29]=new_vbr[0x25:0x29]
+        for off,size in ((0x21,4),(0x36,2),(0xDA,4)):
             old_vbr[off:off+size]=new_vbr[off:off+size]
         data[:512]=mbr;data[start*512:(start+1)*512]=old_vbr
         disk.write_bytes(data)
@@ -91,8 +94,8 @@ def main():
         finally:guest.close()
         repaired=disk.read_bytes()
         assert repaired[446:512]==data[446:512]
-        assert repaired[(start+1)*512:(start+1033)*512]==kernel_before
-        directory=(start+1033)*512
+        assert repaired[(start+1)*512:(start+8201)*512]==kernel_before
+        directory=(start+8201)*512
         entries=[]
         for i in range(15):
             filename,lba,size=struct.unpack_from("<24sII",repaired,directory+4+i*32)

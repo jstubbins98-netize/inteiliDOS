@@ -68,9 +68,9 @@ def main():
             lba=int.from_bytes(entry[8:12],"little")
             f.seek(lba*512);assert f.read(512)[510:]==b"\x55\xaa"
             # Read layout declared by the installer, not hardcoded FS LBAs.
-            f.seek((lba+1025)*512)
+            f.seek((lba+8193)*512)
             layout=struct.unpack("<8I",f.read(32))
-            assert layout[:7]==(0x314c4449,1,lba,131072-lba,1024,8,1033)
+            assert layout[:7]==(0x314c4449,2,lba,131072-lba,8192,8,8201)
             assert layout[7]==(0x9e3779b9 ^ layout[0] ^ layout[1] ^ layout[2] ^
                                layout[3] ^ layout[4] ^ layout[5] ^ layout[6])
             dir_lba=lba+layout[6]

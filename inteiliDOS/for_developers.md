@@ -148,11 +148,30 @@ configurations/config.h
 | File | Role |
 |---|---|
 | `boot/boot.asm` | Multiboot1 header and protected-mode kernel entry |
-| `boot/mbr.asm` | BIOS extended-read boot sector used by disk installation |
+| `boot/mbr.asm` | Standalone raw disk-image boot sector |
+| `boot/hdd_mbr.asm` | Relocating installed-HDD partition chainloader |
+| `boot/hdd_vbr.asm` | Streaming BIOS HDD kernel loader (4 KiB bounce buffer) |
 | `boot/mbr_legacy.asm` | Universal CHS floppy boot sector |
 | `boot/gdt_flush.asm` | Loads the GDT and reloads segment registers |
 | `boot/idt_load.asm` | Loads the IDT |
 | `boot/isr_stubs.asm` | Exception and IRQ assembly stubs |
+
+Installed HDDs use the versioned contract in `kernel/disk_layout.h`. New
+installations reserve 8192 sectors (4 MiB) for the kernel (layout version 2);
+the configuration descriptor is at partition offset 8193, the directory at
+8201, and file data starts at 8202. The `IDL2` VBR marker at offset 0x25 selects
+this descriptor location. Version 1 disks keep their original 1024-sector
+reserve, descriptor at 1025, directory at 1033, and data at 1034. The runtime
+validates either layout without migrating existing files. Boot repair preserves
+the selected layout and only updates bootstrap sectors after backing them up.
+
+The installed loader uses INT 13h AH=42h to read eight sectors at a time into
+physical 0x8000, then copies that chunk into the 1–5 MiB kernel window in
+protected mode. It returns to real mode for each next read. The 16-bit count
+at VBR offset 0x36 allows up to 1024 chunks. Do not increase only a disk-size
+constant or stage the whole kernel below 1 MiB: larger kernels would overwrite
+the conventional-memory stack, EBDA or VGA regions. The native i386 baseline
+and 0x500000 LaunchPad staging boundary are unchanged.
 
 ### Kernel
 

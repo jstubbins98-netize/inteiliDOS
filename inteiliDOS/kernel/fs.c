@@ -54,13 +54,17 @@ static int fs_resolve_layout(uint8_t drv) {
     if (slot >= 0) {
         if (!signed_mbr) return FS_ERR_LAYOUT;
         native_part_t p = ((native_part_t *)(layout_buf + 446))[slot];
-        if (p.sectors <= NATIVE_DATA_OFFSET) return FS_ERR_LAYOUT;
-        if (ata_read_sector(drv, p.start + NATIVE_CONFIG_OFFSET, layout_buf))
+        if (ata_read_sector(drv, p.start, layout_buf)) return FS_ERR_IO;
+        uint32_t config = native_config_offset(layout_buf);
+        if (p.sectors <= config + NATIVE_CONFIG_SECTORS + 1u) return FS_ERR_LAYOUT;
+        if (ata_read_sector(drv, p.start + config, layout_buf))
             return FS_ERR_IO;
         if (!native_layout_valid((native_layout_t *)layout_buf, p.start, p.sectors))
             return FS_ERR_LAYOUT;
-        fs_dir_lba = p.start + NATIVE_DIR_OFFSET;
-        fs_data_start = p.start + NATIVE_DATA_OFFSET;
+        native_layout_t *layout = (native_layout_t *)layout_buf;
+        if (layout->kernel_sectors + 1u != config) return FS_ERR_LAYOUT;
+        fs_dir_lba = p.start + layout->dir_offset;
+        fs_data_start = fs_dir_lba + 1u;
         fs_limit = p.start + p.sectors;
         return FS_OK;
     }

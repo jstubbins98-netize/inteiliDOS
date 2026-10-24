@@ -12,6 +12,7 @@ from pathlib import Path
 import struct
 import sys
 import tempfile
+import time
 
 from build_test_kernel import ROOT, build, run
 from run_launchpad_dos_test import Guest
@@ -107,8 +108,8 @@ def layout(disk, dual):
     assert start == (FOREIGN_START + FOREIGN_SECTORS if dual else 2048)
     assert sectors == DISK_SECTORS - start
     assert read_at(disk, start, SECTOR)[510:] == b"\x55\xaa"
-    descriptor = struct.unpack("<8I", read_at(disk, start + 1025, 32))
-    assert descriptor[:7] == (0x314c4449, 1, start, sectors, 1024, 8, 1033)
+    descriptor = struct.unpack("<8I", read_at(disk, start + 8193, 32))
+    assert descriptor[:7] == (0x314c4449, 2, start, sectors, 8192, 8, 8201)
     checksum = 0x9e3779b9
     for value in descriptor[:7]:
         checksum ^= value
@@ -200,7 +201,17 @@ def load_basic(guest, name, value):
 
 def dos_start(guest):
     shell(guest, "ms-dos")
-    guest.wait("MS-DOS 6.22 -", timeout=180)
+    # Detect a missing BIOS RAM handoff promptly rather than waiting the full
+    # startup timeout. Guest RAM needs the physical allocator, not just heap.
+    deadline = time.monotonic() + 180
+    while True:
+        screen = guest.screen()
+        assert "insufficient memory" not in screen, (
+            "HDD-only DOS boot needs a usable physical-memory map:\n" + screen)
+        if "MS-DOS 6.22 -" in screen:
+            break
+        assert time.monotonic() < deadline, "DOS startup timed out:\n" + screen
+        time.sleep(.1)
     guest.wait("C:\\>")
     clear_dos(guest)
 

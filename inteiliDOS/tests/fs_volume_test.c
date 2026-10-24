@@ -5,7 +5,7 @@
 #include <string.h>
 #include "../kernel/fs.c"
 
-#define SECTORS 8192u
+#define SECTORS 32768u
 #define BYTES ((size_t)SECTORS * 512u)
 static uint8_t *disks[ATA_MAX_DRIVES];
 static unsigned writes[ATA_MAX_DRIVES];
@@ -53,6 +53,8 @@ static void disk(unsigned d,unsigned kind) {
         p->start=2048;p->sectors=SECTORS-2048;
         native_layout_init((native_layout_t *)(mbr+(2048+NATIVE_CONFIG_OFFSET)*512u),
                            p->start,p->sectors);
+        uint32_t marker=NATIVE_VBR_V2_MAGIC;
+        memcpy(mbr+2048*512u+0x25,&marker,4);
         dir+=NATIVE_DIR_OFFSET;
     }
     uint32_t magic=NATIVE_FS_MAGIC;

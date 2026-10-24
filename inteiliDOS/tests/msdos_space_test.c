@@ -56,6 +56,21 @@ int keyboard_poll(void) {
 }
 int msdos_cpu_run(uint32_t n) { (void)n;assert(!"refused disk booted");return 0; }
 void msdos_devices_restore(void) {}
+/* Keep this storage-refusal fixture independent of optional device bridges. */
+void msdos_cdrom_close(void) {}
+int msdos_cdrom_open(void) {assert(!"refused disk opened game CD");return -1;}
+const char *msdos_cdrom_error(void) {return "test CD unavailable";}
+void msdos_sound_select(unsigned model) {(void)model;}
+int msdos_startup_sound_for(fs_image_t *d,int sb16) {
+    (void)d;(void)sb16;assert(!"refused disk configured sound");return -1;
+}
+int msdos_mouse_start(int requested) {
+    (void)requested;assert(!"refused disk started mouse");return -1;
+}
+void msdos_mouse_stop(void) {}
+int msdos_sound_error(void) {return 0;}
+const char *pcm_backend(void) {return "test";}
+const char *pcm_error(void) {return "test";}
 int iso9660_find_file(uint8_t d,const char *name,iso9660_dirent_t *e) {
     ++media_reads;
     if (d || strcmp(name,"D6221.IMG")) return 0;

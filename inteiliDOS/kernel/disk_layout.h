@@ -1,5 +1,5 @@
 /*
- * Installed native partition layout, version 1. All offsets are relative to
+ * Installed native partition layouts. All offsets are relative to
  * the MBR type-0x99 partition, not to the physical disk. Existing installations
  * without this descriptor must NOT be initialized by filesystem callers.
  */
@@ -9,7 +9,8 @@
 
 #define NATIVE_PART_TYPE       0x99u
 #define NATIVE_PART_START      2048u
-#define NATIVE_KERNEL_SECTORS  1024u
+#define NATIVE_LEGACY_KERNEL_SECTORS 1024u
+#define NATIVE_KERNEL_SECTORS  8192u /* 4 MiB; matches the 1..5 MiB RAM window */
 #define NATIVE_CONFIG_OFFSET   (1u + NATIVE_KERNEL_SECTORS)
 #define NATIVE_CONFIG_SECTORS  8u
 #define NATIVE_DIR_OFFSET      (NATIVE_CONFIG_OFFSET + NATIVE_CONFIG_SECTORS)
@@ -35,7 +36,7 @@ static inline uint32_t native_layout_checksum(const native_layout_t *l) {
 static inline void native_layout_init(native_layout_t *l, uint32_t start,
                                       uint32_t sectors) {
     l->magic = NATIVE_LAYOUT_MAGIC;
-    l->version = 1;
+    l->version = 2;
     l->part_start = start;
     l->part_sectors = sectors;
     l->kernel_sectors = NATIVE_KERNEL_SECTORS;
@@ -46,13 +47,26 @@ static inline void native_layout_init(native_layout_t *l, uint32_t start,
 
 static inline int native_layout_valid(const native_layout_t *l,
                                       uint32_t start, uint32_t sectors) {
-    return l->magic == NATIVE_LAYOUT_MAGIC && l->version == 1 &&
+    int supported = (l->version == 1 &&
+                     l->kernel_sectors == NATIVE_LEGACY_KERNEL_SECTORS) ||
+                    (l->version == 2 &&
+                     l->kernel_sectors == NATIVE_KERNEL_SECTORS);
+    return l->magic == NATIVE_LAYOUT_MAGIC && supported &&
            l->part_start == start && l->part_sectors == sectors &&
-           l->kernel_sectors == NATIVE_KERNEL_SECTORS &&
            l->config_sectors == NATIVE_CONFIG_SECTORS &&
-           l->dir_offset == NATIVE_DIR_OFFSET &&
+           l->dir_offset == 1u + l->kernel_sectors + l->config_sectors &&
            l->checksum == native_layout_checksum(l) &&
-           sectors > NATIVE_DATA_OFFSET;
+           sectors > l->dir_offset + 1u;
+}
+
+/* Select by the versioned VBR marker, never by probing old user-data sectors
+ * for a plausible descriptor. Unknown layouts remain blocked. */
+#define NATIVE_VBR_V2_MAGIC 0x324c4449u /* IDL2 at VBR offset 0x25 */
+static inline uint32_t native_config_offset(const uint8_t *vbr) {
+    uint32_t marker = (uint32_t)vbr[0x25] | ((uint32_t)vbr[0x26] << 8) |
+                      ((uint32_t)vbr[0x27] << 16) | ((uint32_t)vbr[0x28] << 24);
+    return 1u + (marker == NATIVE_VBR_V2_MAGIC ?
+                 NATIVE_KERNEL_SECTORS : NATIVE_LEGACY_KERNEL_SECTORS);
 }
 
 /* Validate ALL MBR extents, including foreign partitions, before using space.

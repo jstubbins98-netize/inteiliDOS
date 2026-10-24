@@ -7,10 +7,19 @@ even when a dual-boot partition begins somewhere other than physical LBA 2048.
 | Region | Relative sectors | Purpose |
 |---|---:|---|
 | Boot | 0 | Volume boot record |
-| Kernel | 1–1024 | Reserved kernel area, maximum 512 KiB |
-| Configuration | 1025–1032 | Reserved; versioned layout descriptor at 1025 |
-| Directory | 1033 | Existing 15-entry native directory format |
-| File data | 1034 through partition end | Files and private DOS HDD image |
+| Kernel | 1–8192 | Reserved kernel area, maximum 4 MiB |
+| Configuration | 8193–8200 | Reserved; versioned layout descriptor at 8193 |
+| Directory | 8201 | Existing 15-entry native directory format |
+| File data | 8202 through partition end | Files and private DOS HDD image |
+
+New installations use layout version 2. The BIOS HDD loader reads one 4 KiB
+chunk into a low-memory bounce buffer and copies it into high memory before
+reading the next chunk. It does not stage the whole kernel below 1 MiB.
+The native 1–5 MiB RAM window and LaunchPad staging boundary are unchanged.
+Version 1 installations retain their 512 KiB reservation and original file
+locations; runtime storage supports both layouts without moving files.
+Installing the larger kernel requires a separately confirmed new installation,
+not an automatic in-place conversion of an existing disk.
 
 Directory entries retain physical LBAs. The descriptor binds its version,
 partition start/size, kernel/configuration reservations and directory offset
@@ -91,11 +100,16 @@ python3 tests/build_test_kernel.py /tmp/native-layout-build
 python3 tests/run_fs_layout_tests.py /tmp/native-layout-build/inteilidOS.elf
 python3 tests/run_msdos622_test.py /tmp/native-layout-build/inteilidOS.elf ../MS-DOS_disks --installed
 python3 tests/run_hdd_cold_boot_test.py /tmp/native-layout-build/inteilidOS.elf ../MS-DOS_disks
+python3 tests/run_hdd_stream_test.py
 python3 tests/run_small_hdd_test.py /tmp/native-layout-build/inteilidOS.elf
 ```
 
 Host checks use the real filesystem and installer preflight against disposable
 ATA fixtures, with address/undefined-behavior checks for the filesystem.
+The streaming-loader test boots on an emulated i486 and verifies every loaded
+byte with 600 KiB, 1.2 MiB and 4 MiB fixtures. The DOS portion of the HDD cold-boot
+test also requires a usable BIOS physical-memory handoff; native installation
+and shell boot passing alone do not prove HDD-only DOS startup.
 Logical-volume fixtures cover all eight ATA indexes, selection priority,
 separate C:/D: volumes, unchanged physical APIs, failed discovery followed by
 setup, and no write redirection after corruption, I/O failure or full storage.

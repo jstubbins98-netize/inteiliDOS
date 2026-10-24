@@ -25,16 +25,17 @@
  *   LBA 1–2047     Reserved / post-MBR gap (not used by the filesystem)
  *   LBA 2048+      inteiliDOS partition  (type 0x99)
  *   LBA 2048       Volume Boot Record  (INT 13h AH=42h loader, A20 dual-method)
- *   Partition +1..+1024   Kernel reserve (up to 512 KB)
- *   Partition +1025..+1032 Configuration reserve; layout descriptor at +1025
- *   Partition +1033      Native directory
- *   Partition +1034..end Bounded file data (ordinary files and DOS image)
+ *   Partition +1..+8192   Kernel reserve (up to 4 MiB), layout version 2
+ *   Partition +8193..+8200 Configuration reserve; descriptor at +8193
+ *   Partition +8201      Native directory
+ *   Partition +8202..end Bounded file data (ordinary files and DOS image)
  *   See kernel/disk_layout.h; dual boot may place the partition after 2048.
  *
  * The MBR bootstrap searches for the active partition and uses INT 13h
  * Extended Read (AH=42h) to load the VBR, then jumps to 0x7C00.  The VBR
- * reads the kernel's rounded-up sector count from disk to physical 0x8000, switches to
- * 32-bit protected mode, and copies the image to 0x100000 before jumping
+ * reads each 4 KiB chunk through physical 0x8000, switches to protected
+ * mode to copy that chunk to high RAM, then returns to BIOS for the next.
+ * After loading the complete image at 0x100000 it jumps
  * to _start.  BIOS INT 13h is used throughout so the boot drive number
  * (DL) is preserved regardless of which IDE channel the HDD is on.
  */
@@ -1206,7 +1207,7 @@ static int sw_stage_install(void) {
     int rc;
     uint32_t part_lba;
     uint32_t part_sectors;
-    uint8_t  sw_vbr_iterations;   /* loop count patched into VBR at install time */
+    uint16_t sw_vbr_iterations;   /* 4 KiB chunks, streamed through low RAM */
 
     /* Pre-compute how many sectors need loading so the VBR can be patched
      * in Step 3 before it is written to disk.  Each INT 13h call in the VBR
@@ -1231,7 +1232,7 @@ static int sw_stage_install(void) {
             keyboard_getchar();
             return 0;
         }
-        sw_vbr_iterations = (uint8_t)(ws / 8u);
+        sw_vbr_iterations = (uint16_t)(ws / 8u);
         if (sw_vbr_iterations == 0) sw_vbr_iterations = 1;
     }
 
@@ -1315,17 +1316,18 @@ static int sw_stage_install(void) {
         sw_sector[0x23] = (uint8_t)((klba >> 16) & 0xFF);
         sw_sector[0x24] = (uint8_t)((klba >> 24) & 0xFF);
 
-        /* Patch the loop iteration counter at VBR offset 0x036.
+        /* Patch the 16-bit loop iteration counter at VBR offset 0x036.
          * Each INT 13h call loads 8 sectors; sw_vbr_iterations calls load
          * the entire kernel including the .data section no matter how large
          * the binary has grown.  Without this patch the VBR defaults to
          * 128 iterations (512 KB) which may still truncate a big kernel. */
-        sw_sector[0x36] = sw_vbr_iterations;
+        sw_sector[0x36] = (uint8_t)sw_vbr_iterations;
+        sw_sector[0x37] = (uint8_t)(sw_vbr_iterations >> 8);
 
-        /* Patch the NASM VBR copy_dwords field at offset 0x0DA.
+        /* Patch the NASM VBR copy_dwords metadata field at offset 0x0DA.
          * ECX = iterations × 8 sectors × 128 dwords/sector.
-         * This controls how many dwords Phase 2 copies from 0x8000 to 0x100000;
-         * it must match the number of sectors loaded in Phase 1. */
+         * Retained for boot repair validation; the streaming loader copies
+         * exactly 1024 dwords per chunk instead of one large low-RAM image. */
         uint32_t vbr_ecx = (uint32_t)sw_vbr_iterations * 1024u;
         sw_sector[0xDA] = (uint8_t)( vbr_ecx        & 0xFF);
         sw_sector[0xDB] = (uint8_t)((vbr_ecx >>  8) & 0xFF);
@@ -1611,16 +1613,21 @@ int setup_repair_boot(void) {
         !(boot_bytes_equal(backup,old_prefix,sizeof(old_prefix)) &&
           boot_bytes_equal(backup+0x59,old_message,sizeof(old_message)-1))) goto refuse;
     failure="Unsafe/unsupported native layout; no boot sectors changed.";
-    if (ata_read_sector(drive,part.start+NATIVE_CONFIG_OFFSET,check) ||
+    if (ata_read_sector(drive,part.start,backup+512)) goto refuse;
+    uint32_t config=native_config_offset(backup+512);
+    if (part.sectors<=config+NATIVE_CONFIG_SECTORS+1u ||
+        ata_read_sector(drive,part.start+config,check) ||
         !native_layout_valid((native_layout_t *)check,part.start,part.sectors) ||
-        ata_read_sector(drive,part.start,backup+512)) goto refuse;
+        ((native_layout_t *)check)->kernel_sectors+1u!=config) goto refuse;
+    uint32_t reserve=((native_layout_t *)check)->kernel_sectors;
     unsigned iterations=backup[512+0x36];
+    if (config==NATIVE_CONFIG_OFFSET) iterations|=(unsigned)backup[512+0x37]<<8;
     uint32_t kernel_lba=(uint32_t)backup[512+0x21] |
         ((uint32_t)backup[512+0x22]<<8) | ((uint32_t)backup[512+0x23]<<16) |
         ((uint32_t)backup[512+0x24]<<24);
     failure="Invalid kernel load metadata; backup/recovery is required.";
     if (backup[1022]!=0x55 || backup[1023]!=0xAA ||
-        !iterations || iterations>128 || kernel_lba!=part.start+1 ||
+        !iterations || iterations>reserve/8u || kernel_lba!=part.start+1 ||
         ata_read_sector(drive,kernel_lba,check)) goto refuse;
     int magic_ok=0;
     for (unsigned off=0;off+12<=512;off+=4) {
@@ -1661,8 +1668,12 @@ int setup_repair_boot(void) {
     kmemcpy(replacement,mbr_bootstrap,446);
     kmemcpy(replacement+446,backup+446,66); /* partition table + signature */
     kmemcpy(replacement+512,vbr_code,512);
+    /* Repair loader only, never convert a v1 filesystem to v2. */
+    if (config!=NATIVE_CONFIG_OFFSET)
+        kmemset(replacement+512+0x25,0,4);
     kmemcpy(replacement+512+0x21,backup+512+0x21,4);
     replacement[512+0x36]=(uint8_t)iterations;
+    replacement[512+0x37]=(uint8_t)(iterations>>8);
     uint32_t words=iterations*1024u;
     for (unsigned i=0;i<4;i++) replacement[512+0xDA+i]=(uint8_t)(words>>(i*8));
     failure="Boot write/verification failed. Keep the ISO inserted and preserve the backup.";
