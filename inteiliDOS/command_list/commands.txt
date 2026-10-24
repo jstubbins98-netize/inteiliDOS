@@ -175,6 +175,18 @@ Disc information and directory listings are read-only.
 IEDIT / EDIT
   Open the full-screen IEdit text editor.
 
+WRITER / INTEILIWRITER / DOCS
+  Open inteiliWriter, the built-in word processor. Left/right arrows move
+  through text; up/down move through wrapped screen rows.
+  F1 new document, F2 save TXT/Markdown, F3 load TXT/Markdown, F4 delete the
+  current logical line, F5 export USB TXT, F6 export USB Markdown, F7 export
+  USB PDF, F8 toggle bold, F9 toggle italic, F10 quit.
+  Bold/italic apply to subsequently typed text; both can be on together.
+  Markdown save/load and PDF export preserve formatting; TXT is plain text.
+  Modified documents require confirmation before discard.
+  Mount USB first with USB /MOUNT. Exports ask for a filename and mounted
+  USB drive; explicit USB0:\DOC.TXT paths are also accepted.
+
 SHEETS / ISHEETS
   Open InteiliSheets, including its SUM and AVG formula support.
 

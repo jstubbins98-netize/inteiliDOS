@@ -6,6 +6,7 @@
 #include "commands.h"
 #include "shell.h"
 #include "iedit.h"
+#include "writer.h"
 #include "tour.h"
 #include "../tetris/tetris.h"
 #include "basic.h"
@@ -176,6 +177,7 @@ static int cmd_help(int argc, const char *argv[]) {
     println("\n  -- Applications ---------------");
     vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     println("  IEDIT    - IEdit full-screen text editor");
+    println("  WRITER / DOCS - inteiliWriter; TXT/Markdown/PDF USB exports");
     println("  BASIC    - InteiliBASIC interpreter");
     println("  SHEETS   - InteiliSheets spreadsheet (=SUM / =AVG formulas)");
     println("  TALK <text>    - Speak text via PC speaker (SAM TTS)");
@@ -1394,6 +1396,11 @@ int command_dispatch(const char *cmd, int argc, const char *argv[]) {
     if (kstrcmp(cmd, "TETRIS")   == 0) return cmd_tetris(argc, argv);
     if (kstrcmp(cmd, "IEDIT")    == 0 || kstrcmp(cmd, "EDIT") == 0)
                                         return cmd_iedit(argc, argv);
+    if (kstrcmp(cmd, "WRITER") == 0 || kstrcmp(cmd, "INTEILIWRITER") == 0 ||
+            kstrcmp(cmd, "DOCS") == 0) {
+        writer_run();
+        return 0;
+    }
     if (kstrcmp(cmd, "BASIC")    == 0 || kstrcmp(cmd, "IBASIC") == 0)
                                         return cmd_basic(argc, argv);
     if (kstrcmp(cmd, "QUIT")     == 0 || kstrcmp(cmd, "EXIT") == 0)

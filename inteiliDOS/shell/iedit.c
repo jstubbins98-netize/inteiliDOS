@@ -54,7 +54,9 @@ static int  nlines;             /* total lines in buffer                   */
 
 /* Serialisation buffer for disk writes: 200 lines × 76 bytes max + NUL   */
 #define IEDIT_SAVE_BUF  16384
-static uint8_t iedit_save_buf[IEDIT_SAVE_BUF];
+/* Scratch I/O storage is only needed while this app is open. Keeping it in
+ * the shared heap leaves room below the fixed LaunchPad staging boundary. */
+static uint8_t *iedit_save_buf;
 
 /* ---- Editor state ---- */
 static int  cur_row;            /* cursor line in buffer (0-based)         */
@@ -527,6 +529,12 @@ static void op_open_file(void) {
 
 /* ---- Entry point ---- */
 void iedit_run(const char *name) {
+    iedit_save_buf = kmalloc(IEDIT_SAVE_BUF);
+    if (!iedit_save_buf) {
+        vga_puts("iEdit: not enough memory. Press any key.\n");
+        keyboard_getchar();
+        return;
+    }
     /* Initialise buffer */
     for (int i = 0; i < MAX_LINES; i++) { text[i][0] = '\0'; tlen[i] = 0; }
     nlines = 1;
@@ -659,4 +667,6 @@ void iedit_run(const char *name) {
     /* Return to shell: clear screen so the shell prompt redraws cleanly */
     vga_clear();
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    kfree(iedit_save_buf);
+    iedit_save_buf = 0;
 }

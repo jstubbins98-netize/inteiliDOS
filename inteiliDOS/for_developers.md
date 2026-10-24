@@ -410,6 +410,45 @@ static int cmd_example(int argc, const char *argv[]) {
 }
 ```
 
+## inteiliWriter
+
+The built-in `WRITER`/`INTEILIWRITER`/`DOCS` app separates keyboard/storage/VGA
+integration in `shell/writer.c` from bounded text editing and PDF generation
+in `shell/writer_document.c`. It uses the existing logical-volume and USB
+APIs and shared storage dialogs. F8/F9 independently toggle the style of new
+characters; per-character style bytes follow insertion, deletion and wrapping.
+Workspace is allocated only while the app
+is open and released on exit. iEdit's scratch I/O buffer also uses on-demand
+allocation to preserve the fixed kernel/LaunchPad staging boundary.
+
+`shell/writer_fonts.c` snapshots VGA font-plane data and builds bold, italic
+and bold-italic glyphs in two text font banks. It restores the original plane,
+font-map selection and changed palette entry on exit. The QEMU test compares
+actual glyph pixels and shell rendering before/after, not just text VRAM.
+
+Markdown is the styled editable interchange format: emphasis is nested,
+literal stars/backslashes are escaped, and loads validate decoded capacity
+before replacing the open document. TXT deliberately strips formatting and
+editable TXT saves warn before doing so.
+
+The PDF serializer emits uncompressed PDF 1.4 with exact stream lengths,
+escaped literal strings, page objects and byte-offset cross references.
+It switches among Courier's four base fonts for character style runs.
+It uses no host renderer or external runtime. TXT/Markdown are reloadable;
+PDF is export-only. All output must fit before a storage write is attempted.
+
+Validation:
+
+```sh
+python3 inteiliDOS/tests/test_writer.py
+python3 inteiliDOS/tests/run_writer_test.py
+```
+
+The host suite tests cursor movement, transactional loads, buffer limits,
+key-driven save/load/delete, error paths and independent PDF parsing.
+The QEMU test boots the complete kernel, writes disposable FAT USB and
+native files, compares their bytes, parses the PDF and checks iEdit.
+
 ## MS-DOS 6.22 emulator
 
 `MS-DOS /CDROM` adds an opt-in, read-only D: for game files on an ISO 9660

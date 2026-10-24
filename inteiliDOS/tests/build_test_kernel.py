@@ -83,7 +83,9 @@ def build(folder, modern=False, dos_sound=False, dos_sound_model=2):
             if source.endswith(".asm"):
                 run("nasm", "-f", "elf32", ROOT/source, "-o", obj)
             else:
-                run(cc, "-m32", "-march=i386", "-mtune=i386", "-O1", "-msoft-float",
+                optimization = "-Os" if source in (
+                    "shell/writer.c", "shell/writer_document.c", "shell/writer_fonts.c") else "-O1"
+                run(cc, "-m32", "-march=i386", "-mtune=i386", optimization, "-msoft-float",
                     "-mno-mmx", "-mno-sse", "-mno-sse2", "-nostdlib", "-ffreestanding",
                     "-fno-builtin", "-fno-stack-protector", "-fno-pic", "-fno-pie",
                     "-std=gnu11", "-Wall", "-Wextra", "-include", config,

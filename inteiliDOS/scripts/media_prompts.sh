@@ -22,7 +22,7 @@ offer_media_writing() {
                 willburd "Burn the ISO to a blank CD/DVD? [y/N]"
                 if ! read -r answer; then return; fi
                 case "$answer" in y|Y|yes|YES)
-                    if ! python3 "${SCRIPT_DIR}/scripts/write_media.py" --kind optical --image "$image"; then
+                    if ! python3 "${SCRIPT_DIR}/../scripts/Media-Creator/write_media.py" --kind optical --image "$image"; then
                         warn "Optical writing did not complete. The compiled image is unchanged."
                     fi ;;
                 esac
@@ -44,7 +44,7 @@ offer_media_writing() {
             *) warn "Choose I, F or N.";continue ;;
         esac
         case "$answer" in y|Y|yes|YES)
-            if ! python3 "${SCRIPT_DIR}/scripts/write_media.py" --kind "$kind" --image "$image"; then
+            if ! python3 "${SCRIPT_DIR}/../scripts/Media-Creator/write_media.py" --kind "$kind" --image "$image"; then
                 warn "Media writing did not complete. Compilation still succeeded."
             fi ;;
         esac

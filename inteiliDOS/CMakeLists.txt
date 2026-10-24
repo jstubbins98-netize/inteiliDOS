@@ -160,6 +160,9 @@ set(SHELL_C_SOURCES
     shell/usb_file_picker.c
     shell/storage_dialog.c
     shell/iedit.c
+    shell/writer.c
+    shell/writer_document.c
+    shell/writer_fonts.c
     shell/tour.c
     tetris/tetris.c
     shell/basic.c
@@ -276,6 +279,10 @@ add_custom_command(
 )
 add_custom_target(hdd_boot_header DEPENDS ${HDD_BOOT_HEADER})
 add_dependencies(kernel_c mbr_header hdd_boot_header)
+
+# Keep the built-in word processor within the fixed native kernel footprint.
+set_source_files_properties(shell/writer.c shell/writer_document.c shell/writer_fonts.c
+    PROPERTIES COMPILE_OPTIONS "-Os")
 
 target_compile_options(kernel_c PRIVATE
     ${KERNEL_CFLAGS}

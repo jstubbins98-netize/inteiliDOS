@@ -14,7 +14,7 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
-spec=importlib.util.spec_from_file_location("writer",ROOT/"scripts/write_media.py")
+spec=importlib.util.spec_from_file_location("writer",ROOT.parent/"scripts/Media-Creator/write_media.py")
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w)
 DRIVE=dict(path="/dev/sdz",size=8000000,model="USB test",serial="test serial",mounts=[])
 
@@ -232,7 +232,7 @@ class WriterTests(unittest.TestCase):
              patch.object(w,"output",return_value=b"Vendor Product Rev Bus\n1: TEST CD-R 1.0 USB Supported\n2: TEST DVD-R 1.0 USB Supported\n"), \
              patch.object(w,"run") as run:
             self.assertTrue(w.burn(Path("/tmp/test.iso"),lambda _:next(replies)))
-            run.assert_called_once_with(["drutil","-drive","2","burn","-image","/tmp/test.iso"])
+            run.assert_called_once_with(["drutil","-drive","2","burn","-verify","-noerase","/tmp/test.iso"])
 
     def test_prompt_iso_optical_usb_and_floppy(self):
         master,slave=pty.openpty()
