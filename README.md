@@ -12,6 +12,8 @@ PCs from the 1990s, 2000s and early 2010s. It is **NOT** built on Linux or MS-DO
 - **Note: all commands in inteiliShell are case-insensitive meaning you can type them in lowercase and they will be interpreted as uppercase.** 
 - Built-in applications: iEdit text editor, InteiliBASIC interpreter,
   InteiliSheets spreadsheet, InteiliFile Manager and InteiliTalk speech.
+  inteiliWriter (`WRITER` or `DOCS`) adds word processing and USB TXT/Markdown/PDF
+  export. F8 toggles bold and F9 toggles italic; Markdown/PDF preserve styles.
   iEdit and InteiliSheets use F2 to save, F3 to load and F10 to quit.
   In iEdit, F4 deletes the current line.
 - LaunchPad: runs native programs from CD-ROM, floppy disk or USB.
