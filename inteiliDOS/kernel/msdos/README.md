@@ -1,9 +1,21 @@
 # Native MS-DOS 6.22 emulator
 
 Enter with `MS-DOS` in inteiliShell. The real MS-DOS system files from the
-user's supplied Disk 1 run on a software real-mode 80286-compatible PC, not the previous
+user's supplied Disk 1 run on a software 486-compatible PC, not the previous
 partial native INT 21h compatibility layer. Native IPGM and ELF programs
 still launch through LaunchPad.
+
+The generation-4 tiny386 core supports 32-bit protected mode, virtual-8086
+mode, paging and 486 instructions. The default 486DX-style build adds an
+integer-only software x87; `-DMSDOS_X87=OFF` retains the 486SX-style CPU.
+Guest RAM is 16 MiB;
+the host needs at least 32 MiB (64 MiB recommended), with 16 MiB contiguous
+free RAM above physical 16 MiB. A game's DOS extender/DPMI host is separate
+guest software, not a built-in DOS service. See `tiny386/README.md`.
+
+**Experimental:** protected-mode/paging fixtures pass, but the supplied
+D386MYH/CWSDPR0 game does not yet reach VGA. DOS-extender game compatibility
+is unfinished; see `../../DOS_COMPATIBILITY.md` for the scope and limitations.
 
 ## Build and media
 
@@ -96,28 +108,29 @@ registers and flags and prevents nested callbacks. Native reporting is stopped
 on every return to inteiliShell. See `DOS_COMPATIBILITY.md` for the supported
 INT 33h subset and input restrictions.
 
-This is a real-mode 80286-compatible PC with 640 KB conventional memory. It is **not**
-a complete 386/Sound Blaster machine: protected-mode DOS extenders,
-DPMI, EMS/XMS managers, x87, VESA/SVGA modes, ATAPI/MSCDEX CD drivers,
-network cards and sound-card drivers are not implemented. Mount CD-hosted
-floppy images rather than expecting DOS to read the native ISO filesystem.
-Unsupported CPU instructions stop the emulator with an explicit error.
+This is a 486SX-compatible CPU with 16 MiB guest RAM and 640 KiB conventional
+memory. Protected-mode extenders can use private guest descriptor tables,
+paging and extended RAM. A DPMI host or memory manager is separate software;
+there is no VESA/SVGA, FM/MIDI or emulated network card. Compatibility
+depends on the game's devices and extender, not only its CPU requirement.
 
-### Real-mode 286 CPU
+### 486SX CPU
 
-`real286.c` supplies 286 real-mode FLAGS filtering, five-bit shift/rotate counts,
-MSW and descriptor-table instructions. `tiny.c` adds BOUND, restartable faults,
-IDTR-based interrupt dispatch and REP INS/OUTS with byte/word virtual I/O.
-PUSH SP captures the original SP, as on 186/286 rather than 8086.
-Guest I/O never programs native devices directly, and long REP port operations
-poll for F8 independently of the guest IF flag.
+`tiny386/i386.c` is the BSD-licensed generation-4 CPU interpreter.
+`core486.c` connects it to the existing guest devices, A20 controls and
+INT 15h memory BIOS. It tracks protected-mode PIC remapping independently
+of whether sound is enabled. Guest I/O never programs native devices directly;
+REP processing yields independently of guest IF so F8 remains responsive.
+Pending lines are resolved at acknowledgement after any CLI/mode/PIC changes;
+a newly masked line is not injected as vector FFh. When an extender chains
+IRQ0 to the original BIOS's INT 08h entry, the adapter completes the guest
+tick and virtual EOI before the ROM invokes INT 1Ch. The private polling ROM
+path does not receive a duplicate tick.
 
 Only exact original firmware sites retain the ROM's private `0F 00`–`0F 03`
-host calls. Application code uses the 286 opcode namespace instead; the ROM and
-its decoder tables stay unchanged. `LMSW` with PE set is refused before any
-mode change. Protected-mode-only instructions fault in real mode; unhandled
-faults and invalid interrupt tables return explicit errors. No protected mode,
-LOADALL, 386 operand/address sizes, DPMI, extended-memory manager or x87 is added.
+host calls. Application code uses the architectural opcode namespace instead.
+The checked original BIOS remains unchanged. See `tiny386/README.md` for
+provenance, port changes, test commands and remaining core limitations.
 
 ### EGA/VGA implementation
 

@@ -15,3 +15,10 @@ static u64 divide(u64 n,u64 d,u64 *remainder) {
 u64 __udivdi3(u64 n,u64 d){return divide(n,d,0);}
 u64 __umoddi3(u64 n,u64 d){u64 r;divide(n,d,&r);return r;}
 u64 __udivmoddi4(u64 n,u64 d,u64 *r){return divide(n,d,r);}
+typedef long long s64;
+s64 __divmoddi4(s64 n,s64 d,s64 *remainder) {
+    u64 un=n<0?0-(u64)n:(u64)n,ud=d<0?0-(u64)d:(u64)d,r;
+    u64 q=divide(un,ud,&r);
+    if (remainder) *remainder=(s64)(n<0?0-r:r);
+    return (s64)((n<0)!=(d<0)?0-q:q);
+}

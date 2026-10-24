@@ -1,4 +1,4 @@
-/* Native platform adapter for the software-only 8086 PC.
+/* Native platform adapter for the software-only 486-compatible PC.
  * No guest port accesses reach host hardware. Only bounded speaker tones,
  * text output, keyboard events and private-file disk sectors are exported. */
 #include "msdos.h"
@@ -870,7 +870,11 @@ int msdos_run(int argc, const char *argv[]) {
     if (mouse) vga_puts(mouse_ready?
         "DOS mouse: driver enabled; pointer hidden, F12 toggles visibility.\n":
         "DOS mouse unavailable: no supported USB boot mouse or responding PS/2 mouse/touchpad.\n");
-    vga_puts("DOS CPU: Intel 80286 real-mode compatibility.\n");
+#ifdef I386_ENABLE_FPU
+    vga_puts("DOS CPU: Intel 486DX compatibility, 16 MiB guest RAM; software x87 FPU.\n");
+#else
+    vga_puts("DOS CPU: Intel 486SX compatibility, 16 MiB guest RAM; no x87 FPU.\n");
+#endif
     int sr,sc;
     vga_get_cursor(&sr,&sc);
     for (int i=0;i<2000;i++) saved[i]=SCREEN[i];
@@ -890,10 +894,10 @@ int msdos_run(int argc, const char *argv[]) {
     if (audio_backend) {vga_puts("DOS audio output stopped: ");vga_puts(audio_backend);vga_puts(".\n");}
     else if (model) {vga_puts("DOS audio was silent: ");vga_puts(pcm_error());vga_puts(".\n");}
     vga_puts(io_failed?"MS-DOS stopped: disk I/O failed.\n":
-             rc==-3?"MS-DOS stopped: protected mode is not supported (real-mode 80286 guest).\n":
+             rc==-3?"MS-DOS stopped: unsupported CPU operation.\n":
              rc==-4?"MS-DOS stopped: invalid guest interrupt table.\n":
-             rc==-2?"MS-DOS stopped: unsupported CPU instruction or unhandled fault (386/x87).\n":
-             rc?"MS-DOS: not enough memory for the emulator.\n":
+             rc==-2?"MS-DOS stopped: CPU fault or unsupported operation (486 compatibility).\n":
+             rc?"MS-DOS: insufficient memory; 16 MiB of free RAM above 16 MiB is required.\n":
                 "Returned from MS-DOS. Completed disk writes are saved.\n");
     return rc || io_failed;
 }

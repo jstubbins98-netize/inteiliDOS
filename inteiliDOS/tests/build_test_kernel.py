@@ -17,7 +17,7 @@ def run(*args):
     subprocess.run([str(a) for a in args], check=True)
 
 
-def build(folder, modern=False, dos_sound=False, dos_sound_model=2):
+def build(folder, modern=False, dos_sound=False, dos_sound_model=2, x87=True):
     tmp = Path(folder).resolve()
     tmp.mkdir(parents=True, exist_ok=True)
     cc = shutil.which("i686-elf-gcc") or shutil.which("gcc")
@@ -74,18 +74,28 @@ def build(folder, modern=False, dos_sound=False, dos_sound_model=2):
         config.write_text(profile)
     cmake = (ROOT/"CMakeLists.txt").read_text()
     objects = []
+    x87_sources = [ROOT/"kernel/msdos/tiny386/fpu.c"] + sorted(
+        (ROOT/"kernel/msdos/softfloat").glob("*.c")) + sorted(
+        (ROOT/"kernel/msdos/softfloat/8086").glob("*.c"))
     # Match CMake's link order: boot.asm embeds Multiboot in .text, so its
     # object must precede C code to keep the header in the first 8 KB.
-    for name in ("BOOT_ASM_SOURCES", "KERNEL_C_SOURCES", "SHELL_C_SOURCES"):
-        sources = re.search(r"set\("+name+r"\s+(.*?)\)", cmake, re.S).group(1).split()
+    for name in ("BOOT_ASM_SOURCES", "KERNEL_C_SOURCES", "SHELL_C_SOURCES", "X87"):
+        sources = ([str(p.relative_to(ROOT)) for p in x87_sources] if x87 else []) if name=="X87" else \
+            re.search(r"set\("+name+r"\s+(.*?)\)", cmake, re.S).group(1).split()
         for number, source in enumerate(sources):
             obj = tmp/(name+str(number)+".o")
             if source.endswith(".asm"):
                 run("nasm", "-f", "elf32", ROOT/source, "-o", obj)
             else:
                 optimization = "-Os" if source in (
-                    "shell/writer.c", "shell/writer_document.c", "shell/writer_fonts.c") else "-O1"
-                run(cc, "-m32", "-march=i386", "-mtune=i386", optimization, "-msoft-float",
+                    "shell/writer.c", "shell/writer_document.c", "shell/writer_fonts.c",
+                    "kernel/msdos/tiny.c", "kernel/msdos/core486.c",
+                    "kernel/msdos/tiny386/i386.c") or name=="X87" else "-O1"
+                extra = ["-fno-strict-aliasing", "-fwrapv"] if source=="kernel/msdos/tiny386/i386.c" else []
+                if x87:
+                    extra += ["-DI386_ENABLE_FPU=1"] + [
+                        "-I"+str(ROOT/"kernel/msdos/softfloat"/p) for p in ("","include","8086")]
+                run(cc, "-m32", "-march=i386", "-mtune=i386", optimization, *extra, "-msoft-float",
                     "-mno-mmx", "-mno-sse", "-mno-sse2", "-nostdlib", "-ffreestanding",
                     "-fno-builtin", "-fno-stack-protector", "-fno-pic", "-fno-pie",
                     "-std=gnu11", "-Wall", "-Wextra", "-include", config,

@@ -22,6 +22,10 @@ typedef struct {
 } memory_heap_stats_t;
 /* Read-only, bounds-checked heap inspection; -1 means invalid metadata. */
 int memory_heap_snapshot(memory_heap_stats_t *out);
+/* Contiguous, identity-mapped RAM above the native loader's scratch areas.
+ * Exact page count must be retained by the owner until release. */
+void *memory_alloc_pages(uint32_t pages);
+void memory_free_pages(void *base, uint32_t pages);
 
 /* Simple string helpers used by the kernel before libc */
 size_t kstrlen(const char *s);

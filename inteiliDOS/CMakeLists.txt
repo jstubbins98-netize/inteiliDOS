@@ -28,6 +28,7 @@ if(NOT BUILD_TARGET STREQUAL "universal")
 endif()
 
 message(STATUS "Build target: ${BUILD_TARGET}")
+option(MSDOS_X87 "Emulate a 486DX x87 using integer-only SoftFloat (OFF: 486SX)" ON)
 
 # Generated hardware profile. build.sh creates this before configuring CMake.
 set(INTEILIDOS_CONFIG_HEADER
@@ -142,6 +143,8 @@ set(KERNEL_C_SOURCES
     kernel/dos_services.c
     kernel/dos_hardware.c
     kernel/msdos/tiny.c
+    kernel/msdos/core486.c
+    kernel/msdos/tiny386/i386.c
     kernel/msdos/platform.c
     kernel/msdos/cdrom.c
     kernel/msdos/startup.c
@@ -282,7 +285,22 @@ add_dependencies(kernel_c mbr_header hdd_boot_header)
 
 # Keep the built-in word processor within the fixed native kernel footprint.
 set_source_files_properties(shell/writer.c shell/writer_document.c shell/writer_fonts.c
+    kernel/msdos/tiny.c kernel/msdos/core486.c kernel/msdos/tiny386/i386.c
     PROPERTIES COMPILE_OPTIONS "-Os")
+set_property(SOURCE kernel/msdos/tiny386/i386.c APPEND PROPERTY
+    COMPILE_OPTIONS "-fno-strict-aliasing;-fwrapv")
+
+if(MSDOS_X87)
+    # Vendored, reviewed non-FAST_INT64 memory API subset, not host libm.
+    file(GLOB MSDOS_SOFTFLOAT_SOURCES CONFIGURE_DEPENDS
+        kernel/msdos/softfloat/*.c kernel/msdos/softfloat/8086/*.c)
+    target_sources(kernel_c PRIVATE kernel/msdos/tiny386/fpu.c ${MSDOS_SOFTFLOAT_SOURCES})
+    set_source_files_properties(kernel/msdos/tiny386/fpu.c ${MSDOS_SOFTFLOAT_SOURCES}
+        PROPERTIES COMPILE_OPTIONS "-Os")
+    target_include_directories(kernel_c PRIVATE
+        kernel/msdos/softfloat kernel/msdos/softfloat/include kernel/msdos/softfloat/8086)
+    target_compile_definitions(kernel_c PRIVATE I386_ENABLE_FPU=1)
+endif()
 
 target_compile_options(kernel_c PRIVATE
     ${KERNEL_CFLAGS}

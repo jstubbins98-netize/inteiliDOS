@@ -34,8 +34,8 @@ accessible: restricting the view to executable extensions would break games.
 This is a synthesized, read-only FAT16 file-access drive backed by the native
 optical driver. It does not require a guest CONFIG.SYS CD driver or MSCDEX.
 It is **not MSCDEX emulation**: MSCDEX detection/raw CD APIs, CD-audio tracks,
-and disc copy protection are not implemented. Real-mode 286 CPU limitations
-still apply; this does not make 386/DOS-extender games compatible.
+and disc copy protection are not implemented. The 486 CPU supports protected
+mode and DOS extenders; individual games still need compatible devices and memory.
 
 Limits: ISO 9660 with 2048-byte sectors (not UDF-only DVDs), 4096 total
 directory/file records including the root, 511 root entries, 32 directory
@@ -53,7 +53,7 @@ FAT chains, aliases and failure handling. `tests/run_msdos_cdrom_test.py`
 checks actual DOS game execution, nested assets, seeks, C: saves, write
 refusal and F8/re-entry with the optical drive and native HDD sharing AHCI.
 
-The `MS-DOS` command opens a software-emulated, real-mode 80286-compatible PC running the real
+The `MS-DOS` command opens a software-emulated 486-compatible PC running the real
 MS-DOS 6.22 system files supplied on the installation disks. DOS has its own
 memory, BIOS, command prompt, and persistent virtual hard drive. F8 stops the
 emulator and returns to inteiliShell without rebooting inteiliDOS.
@@ -397,7 +397,10 @@ outside that private extent.
 
 ## Compatibility and host safety
 
-- The guest provides real-mode Intel 80286 compatibility with 640 KB conventional memory.
+- The guest provides Intel 486 compatibility: 16/32-bit instructions,
+  protected mode, virtual-8086 mode and 4 KiB paging, with 16 MiB guest RAM
+  including 640 KiB conventional memory. The default build adds a software
+  x87 (486DX-style); `-DMSDOS_X87=OFF` retains the no-FPU 486SX-style build.
   The host remains a native protected-mode inteiliDOS machine; this is a
   software interpreter, not hardware VM86 execution or a host DOS reboot.
 - Text output, CGA/Hercules, EGA/VGA graphics, and PC-speaker tones are supported.
@@ -416,8 +419,9 @@ outside that private extent.
   calibration can depend on execution speed; selecting a QEMU 486 CPU is not
   by itself a guarantee of historical CPU timing.
 
-Not implemented: 286/386 protected-mode software, DOS extenders, DPMI,
-EMS/XMS managers, x87, VESA/SVGA graphics, full SB16/FM/MIDI and other sound
+Not bundled: a DPMI host or EMS/XMS manager. Supply a game's DOS extender
+or compatible memory manager separately; CPU support does not install one.
+Not implemented: VESA/SVGA graphics, full SB16/FM/MIDI and other sound
 cards, DOS networking, and native CD-ROM drivers. Optional 8-bit digital
 playback is described below. Windows NE/LE/LX/PE
 executables are not supported. Unsupported CPU instructions stop the emulator
@@ -455,41 +459,116 @@ BIOS extensions are not implemented.
 
 No new shell option is necessary: launch games from the DOS prompt as before.
 F6/F7 media controls and F8 exit still work while graphics are active.
-Adding graphics does **not** add 386 instructions or DOS extenders. Optional
-digital sound is a separate setting. The original 386 DOS DOOM remains incompatible.
+Graphics, the 486 CPU core and optional digital sound are separate services.
+Protected-mode games need their own DOS extender and compatible devices;
+do not assume every game works simply because its CPU instructions are available.
 Individual games, including specific Mario Teaches Typing releases, still
 need application-level testing; graphics support alone is not a compatibility
 guarantee.
 
-### Real-mode 80286 compatibility
+### Intel 486 compatibility
 
-The CPU now follows 286 real-mode FLAGS and PUSH SP behavior, including the
-classic FLAGS-based CPU detection used by DOS games. Shift and rotate counts
-are masked to five bits. The inherited 80186 instructions remain available,
-and BOUND and byte/word string port I/O (`INS`, `OUTS`, including REP and segment
-overrides) are supported.
+**Experimental compatibility:** the CPU/protected-mode/paging fixtures and the
+separately supplied Doom8088 `D386MYH.EXE` with `CWSDPR0.EXE` pass in QEMU.
+The game check verifies changing rendered VGA frames, the game's F10 quit key,
+restart, F8/text-font restoration, persistent C: files and native-file
+preservation. It installs the game onto disposable writable C: storage; neither
+DOS nor game binaries are bundled. This does not certify other DOS extenders,
+86Box or physical PCs, or guarantee that arbitrary protected-mode games work.
 
-Guest memory uses DOS-era closed-A20 addressing: addresses past 1 MiB wrap
-to low memory. CPU reads/writes, instruction fetches and BIOS disk transfers
-share that behavior, including words and instructions crossing the boundary.
-This lets EXEPACK-packed executables such as Mario Teaches Typing's `SETUP.EXE`
-unpack normally instead of falsely reporting **"Packed file is corrupt"**.
-This does not add HMA or XMS support.
+The BSD-licensed tiny386 CPU core runs in its generation-4 configuration,
+replacing the real-mode-only instruction interpreter. It implements 16/32-bit
+registers, operand/address-size overrides, FS/GS, descriptor tables, protected
+mode, virtual-8086 mode, control registers, page tables and page faults.
+486 instructions include BSWAP, XADD, CMPXCHG, INVLPG and cache invalidation
+without exposing the native CPU's caches. This is compatibility emulation,
+not a cycle-accurate reproduction of a particular 486 stepping.
 
-Real-mode `SGDT`, `SIDT`, `LGDT`, `LIDT`, `SMSW`, `LMSW` and `CLTS` operate on
-private guest state. Interrupts use the guest IDTR, never the host's IDT.
-Handled #BR, #UD and divide faults return to the faulting instruction, including
-its prefixes. A missing fault handler or invalid interrupt table stops safely.
-String port I/O uses the same virtual devices as ordinary IN/OUT, and F8 remains
-responsive during a long REP instruction even with guest interrupts disabled.
+The default CPU is a **486DX-style guest with an integer-only software x87**.
+The optional `-DMSDOS_X87=OFF` CMake setting retains the original 486SX-style
+guest without an FPU. Programs requiring hardware task switching or unimplemented
+hardware are not guaranteed to work. Protected-mode permission checks are not exhaustive.
+Supply any DPMI host required by a game; none is installed automatically.
 
-This is **real-mode compatibility for DOS games**, not a complete 80286
-protected-mode emulator. An LMSW request to enable PE stops with an explicit
-protected-mode error and restores inteiliShell. Protected-mode-only ARPL,
-SLDT/STR, LAR/LSL and related instructions are invalid in real mode. Undocumented
-LOADALL, protected-mode DOS extenders, 386 instructions, DPMI, EMS/XMS and an
-80287 coprocessor are not provided. Guest RAM remains 640 KB conventional
-memory; this upgrade does not add extended-memory managers or AT hardware.
+The optional no-FPU CPU allows runtime coprocessor detection without pre-enabling
+software emulation in CR0. Guest software can still enable EM and receive
+device-not-available faults. Timer interrupts use the guest PIC's remapped
+vectors; chaining back to the original BIOS timer finishes the guest tick and
+acknowledges its virtual PIC, without changing the native PIC.
+
+#### Optional software x87 (486DX-style)
+
+`MSDOS_X87` is a CMake build option, **ON by default**. For a smaller no-FPU
+build, pass `-DMSDOS_X87=OFF` when configuring the existing build directory.
+It does not require a native FPU, SSE, a newer native CPU, libm or a host
+operating system. The kernel retains `-march=i386 -msoft-float`, the existing
+16 MiB bounded guest allocation, native device bridges, and the linker-enforced
+`0x500000` LaunchPad staging boundary. FPU allocation failure stops startup;
+it never silently advertises a coprocessor that is absent.
+
+- Eight 80-bit extended registers, TOP, physical tag word, stack overflow/
+  underflow, signed zero, infinities, NaNs and integer/real/packed-BCD transfers.
+- Add/subtract/multiply/divide, compare/unordered compare, square root,
+  remainder, precision control (24/53/64 significand bits), all four rounding
+  modes, and software transcendental operations (logarithm, exponential,
+  trigonometric, extract/scale).
+- Sticky invalid/denormal/divide-by-zero/overflow/underflow/precision status,
+  masks and stack-fault reporting. CR0.EM/TS produce #NM; MP/TS govern WAIT.
+  Unmasked faults are deferred to the next waiting instruction; no-wait
+  status/control/clear/save operations remain usable. CR0.NE selects #MF
+  (vector 16) or isolated guest FERR#/IRQ13 through the virtual slave PIC.
+  Guest PIC remapping, cascade/slave masks, EOIs and F0h/F1h acknowledgement
+  never access the native PIC or FPU.
+- FLDCW/FNSTCW, FLDENV/FNSTENV and FRSTOR/FNSAVE support both operand sizes
+  (14/28-byte environments, 94/108-byte states), real-mode packed pointers
+  and protected-mode selectors/offsets. CPU reset resets the FPU too.
+  Faulted loads/stores do not pop or corrupt the x87 stack.
+- CPUID reports generation 4, signature `00000400h`, with **only** EDX bit 0
+  added when an FPU is actually enabled. BIOS INT 11h/BDA equipment bit 1
+  agrees with this choice. TSC/CMPXCHG8B/MMX/SSE/FXSAVE/CMOV and newer
+  floating-point instructions are not advertised.
+
+Arithmetic uses the BSD-3-Clause Berkeley SoftFloat **3e** memory-form API,
+not tiny386's upstream host-double/libm FPU. See
+`kernel/msdos/softfloat/README.md` and `LICENSE` for provenance and licensing.
+The x87 state/decoder and software transcendental adapter are MPL-2.0.
+Transcendentals are bounded software approximations, **not bit-exact Intel
+microcode**, especially near large trigonometric arguments. This is
+compatibility functionality, not a guarantee for all FPU-dependent games.
+This work does not change or certify any outstanding CWSDPR0 startup issue.
+
+Reproducible tests (from the repository root):
+
+```sh
+python3 inteiliDOS/tests/run_msdos_x87_cpu_test.py --sanitize
+python3 inteiliDOS/tests/run_msdos_x87_test.py --media MS-DOS_disks
+# Or use an already built legacy/PS2 kernel:
+python3 inteiliDOS/tests/run_msdos_x87_test.py path/to/inteilidOS.elf --media MS-DOS_disks
+nasm -f bin -DDOS=1 inteiliDOS/tests/msdos_x87.asm -o /tmp/X87TEST.COM
+```
+
+The original `X87TEST.COM` solves a quadratic (roots 3 and 2), then checks
+precision, rounding, formats, tags, faults, comparisons and saved state under
+actual DOS. The native test boots with QEMU `-cpu 486,-fpu`, runs this DOS
+program twice across F8/re-entry, verifies installed C: persistence, native
+file preservation and text-font restoration, and uses disposable disks only.
+The host CPU tests additionally check protected-mode decoding, paging-fault
+rollback, #NM/FERR# behavior and disassemble freestanding objects to reject
+native x87/MMX/SSE instructions. Separately supplied DOS media is still required.
+
+The guest has 16 MiB RAM. INT 15h reports extended memory (88h/E801h/E820h),
+provides block moves (87h), and controls A20 (24xxh). Virtual ports 92h and
+the keyboard-controller output-port commands also control guest A20.
+A20 starts closed for DOS/EXEPACK compatibility and may be enabled by an extender.
+These operations affect private guest RAM only.
+
+**Host memory:** at least 32 MiB total, including a contiguous free 16 MiB
+region above physical 16 MiB; 64 MiB or more is recommended. The emulator
+fails explicitly when this region or its heap workspace cannot be allocated.
+Guest RAM is cleared on entry and released on exit; saved DOS HDD files persist.
+F8 is polled between instruction batches and during long REP operations,
+including when guest interrupts are disabled. Existing media, VGA, sound and
+mouse switches remain available.
 
 No new command-line switch is required. Rebuild the OS, then use `MS-DOS`
 and the existing floppy/CD/USB media options normally.

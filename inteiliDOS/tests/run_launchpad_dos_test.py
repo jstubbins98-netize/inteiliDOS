@@ -23,7 +23,7 @@ class Guest:
         qmp = folder/"qmp.sock"
         qmp.unlink(missing_ok=True)
         cmd = [qemu_binary, "-nodefaults", "-device", "VGA",
-               "-machine", "pc", "-cpu", "486", "-m", "16",
+               "-machine", "pc", "-cpu", "486", "-m", "64",
                "-display", "none", "-no-reboot",
                "-qmp", "unix:"+str(qmp)+",server=on,wait=off"]
         # None deliberately exercises BIOS -> installed MBR/VBR, without the

@@ -16,7 +16,9 @@ extern uint32_t _kernel_end;
 #define PAGE_SIZE   4096u
 #define BITMAP_SIZE (1024u * 1024u / 8u)   /* covers 4 GB if each bit = 4 KB page */
 
-static uint8_t  phys_bitmap[BITMAP_SIZE];
+/* Allocate bookkeeping from the existing heap instead of permanently
+ * extending the kernel image into LaunchPad's fixed staging area. */
+static uint8_t *phys_bitmap;
 static uint32_t total_mem_kb  = 0;
 static uint32_t free_pages    = 0;
 static uint32_t total_pages   = 0;
@@ -111,7 +113,12 @@ void kfree(void *ptr) {
 /* ---- Memory init (Multiboot1) ---- */
 void memory_init(uint32_t mb_info_phys) {
     /* Mark everything used by default */
-    kmemset(phys_bitmap, 0xFF, sizeof(phys_bitmap));
+    if (!phys_bitmap) phys_bitmap=kmalloc(BITMAP_SIZE);
+    if (!phys_bitmap) {
+        vga_puts("Memory manager: cannot allocate physical page bitmap.\n");
+        return;
+    }
+    kmemset(phys_bitmap, 0xFF, BITMAP_SIZE);
     total_mem_kb = 0;
     free_pages = 0;
     total_pages = 0;
@@ -187,6 +194,35 @@ void memory_init(uint32_t mb_info_phys) {
 
 size_t memory_total_kb(void) { return total_mem_kb; }
 size_t memory_free_kb(void)  { return (size_t)free_pages * PAGE_SIZE / 1024u; }
+void *memory_alloc_pages(uint32_t pages) {
+    if (!phys_bitmap || !pages || pages > free_pages) return NULL;
+    /* Keep the kernel, heap, native ELF staging/load regions, BIOS trampolines
+     * and legacy driver scratch buffers below 16 MiB out of this allocator. */
+    uint32_t run=0;
+    for (uint32_t p=0x1000000u/PAGE_SIZE;p<BITMAP_SIZE*8u;p++) {
+        run=bitmap_test(p)?0:run+1;
+        if (run==pages) {
+            uint32_t first=p+1-pages;
+            for (uint32_t i=0;i<pages;i++) bitmap_set(first+i);
+            free_pages-=pages;
+            void *result=(void *)(uintptr_t)(first*PAGE_SIZE);
+            kmemset(result,0,(size_t)pages*PAGE_SIZE);
+            return result;
+        }
+    }
+    return NULL;
+}
+void memory_free_pages(void *base,uint32_t pages) {
+    uintptr_t addr=(uintptr_t)base;
+    uint32_t first=addr/PAGE_SIZE;
+    if (!phys_bitmap || addr<0x1000000u || (addr&(PAGE_SIZE-1)) ||
+        !pages || pages>BITMAP_SIZE*8u-first) return;
+    for (uint32_t i=0;i<pages;i++) {
+        if (bitmap_test(first+i)) {
+            bitmap_clear(first+i);free_pages++;
+        }
+    }
+}
 int memory_heap_snapshot(memory_heap_stats_t *out) {
     if (!out) return -1;
     *out = (memory_heap_stats_t){.total_bytes = HEAP_SIZE};

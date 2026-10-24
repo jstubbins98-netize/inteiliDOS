@@ -172,7 +172,7 @@ configurations/config.h
 | `kernel/fat12.c` | FAT12 floppy reader |
 | `kernel/iso9660.c` | ISO 9660 reader |
 | `kernel/loader.c` | IPGM and ELF32 application loading |
-| `kernel/msdos/` | Real-mode 80286-compatible PC and MS-DOS 6.22 platform adapter |
+| `kernel/msdos/` | 486SX-compatible PC and MS-DOS 6.22 platform adapter |
 | `kernel/pci.c` | Optional PCI configuration-space scanner |
 | `kernel/usb.c`, `kernel/usb_xhci.c` | Optional UHCI/xHCI boot keyboards; enabled in newer profiles |
 | `kernel/ac97.c` | Optional PCI audio support |
@@ -464,7 +464,7 @@ Run `python3 tests/test_msdos_cdrom.py` for host filesystem regressions and
 `python3 tests/run_msdos_cdrom_test.py` for real DOS game/resource access,
 read-only refusal, private C: saves and optical/HDD coexistence on AHCI.
 
-`MS-DOS` in inteiliShell enters a software-interpreted real-mode 80286-compatible PC running
+`MS-DOS` in inteiliShell enters a software-interpreted 486SX-compatible PC running
 the user's supplied DOS 6.22 system. F8 returns to the native shell without
 rebooting the host. DOS COM/MZ programs now run inside that environment;
 LaunchPad detects DOS files and directs users to the command instead of
@@ -506,10 +506,11 @@ the kernel or downloaded by the OS build.
 ### Guest execution and BIOS interface
 
 The native kernel stays in protected mode and retains its IRQ handlers.
-`msdos_cpu_run` allocates and zeroes roughly 1.1 MB of private guest RAM,
+`msdos_cpu_run` allocates and zeroes 16 MiB of private guest RAM,
 initializes the guest registers/port array, and enters the companion BIOS at
-F000:0100 with DL=80h for hard-disk boot. The guest sees 640 KB conventional
-memory. Guest RAM is discarded on exit; installed files persist on disk.
+F000:0100 with DL=80h for hard-disk boot. The guest sees 640 KiB conventional
+memory and extended RAM within its 16 MiB address space. Guest RAM is discarded
+on exit; installed files persist on disk.
 
 Instructions are interpreted, not executed in host VM86 mode. The companion
 ROM provides instruction decode tables and BIOS services; its private
@@ -646,8 +647,12 @@ QEMU results do not certify 86Box, real hardware, arbitrary DOS software,
 or audible sound quality. Extend the current regression fixture when changing
 instruction decoding, BIOS hooks, media change handling or native restoration.
 
-The guest targets real-mode 80286 compatibility: no protected-mode DOS extenders,
-DPMI, EMS/XMS, x87, VESA/SVGA, full SB16/FM/MIDI, network stack or DOS CD-ROM drivers.
+The guest targets 486SX compatibility, including protected mode, virtual-8086
+mode and paging. DOS extenders/DPMI hosts and EMS/XMS managers are user-supplied
+guest software, not built-in services. No x87, VESA/SVGA, FM/MIDI or network
+stack is supplied by the CPU upgrade.
+Protected-mode game compatibility remains experimental: the CPU fixture
+passes, but the optional D386MYH/CWSDPR0 end-to-end game test does not reach VGA.
 EGA/VGA graphics are emulated, but cycle-accurate retrace, arbitrary adapter BIOS
 extensions and VGA state-save/restore are not. Test specific games rather than
 assuming they work because their display mode is implemented.
@@ -668,19 +673,27 @@ Keep AC'97/HDA DMA bounded to static native buffers, invalidate capture state
 before reusing its controller, and stop output on every exit. Native output
 support and codec topology must be verified separately from DSP/IRQ unit tests.
 
-The 286 additions are deliberately real-mode-only. Keep IOPL/NT and reserved
-high FLAGS bits clear, preserve pre-decrement SP for PUSH SP, and mask all shift
-counts (including immediates with displacements) to five bits. Exceptions must
-save the instruction's starting IP, including prefixes. `LIDT` affects guest
-interrupt dispatch only. `LMSW` must refuse PE before changing modes. Private
-ROM `0F` host calls are recognized only at original checked firmware sites;
-arbitrary DOS code must not invoke them by using a 286 opcode. REP string I/O
-must share virtual port devices and poll F8 under CLI. The upgrade does not add
-protected-mode segmentation, LOADALL, 386 prefixes, AT peripherals or XMS.
+`tiny386/i386.c` supplies the generation-4 CPU. `core486.c` adapts it to the
+existing devices and checked BIOS hooks in `tiny.c`. No guest instruction or
+port access executes on native hardware. Page-table walks, cross-boundary RAM
+accesses and VGA accesses must remain bounded to guest memory.
+Unrecoverable CPU-core errors return to the command; they must not abort the OS.
+Private ROM `0F` calls are recognized only at original checked firmware sites.
+Long REP operations must remain restartable and yield to native F8/audio polling.
+The CPU does not include an x87 FPU, exhaustive protection checks or hardware
+task switching; test individual extenders rather than claiming universal compatibility.
+
+The 16 MiB RAM region comes from tracked physical pages above 16 MiB, not the
+2 MiB heap. Free it on every exit. CPU/TLB/port workspaces use the heap.
+The page bitmap also uses the existing heap so the new core does not exceed
+LaunchPad's unchanged kernel/staging boundary. See the CPU host and QEMU
+fixtures in `tests/msdos_486*` and `tests/run_msdos_486_test.py`.
 
 Retain the MIT license for Adrian Cable's adapted 8086tiny interpreter and
 companion ROM in `kernel/msdos/LICENSE.txt`. Microsoft's supplied DOS system
 files retain their original license; the emulator license does not license DOS.
+Retain Chunhui He's BSD-3-Clause notice in `kernel/msdos/tiny386/LICENSE`.
+See `kernel/msdos/tiny386/README.md` for the pinned source and port changes.
 See `kernel/msdos/README.md` for upstream provenance.
 
 ## Validation

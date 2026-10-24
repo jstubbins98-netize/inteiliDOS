@@ -12,6 +12,7 @@
 #include "keyboard_input.h"
 #include "video.h"
 #include "real286.h"
+#include "core486.h"
 #include "sound.h"
 #include "mouse.h"
 #include "config.h"
@@ -182,7 +183,7 @@
 #endif
 
 // Global variable definitions
-static unsigned char *mem, io_ports[IO_PORT_COUNT + 2], *opcode_stream, *regs8, i_rm, i_w, i_reg, i_mod, i_mod_size, i_d, i_reg4bit, raw_opcode_id, xlat_opcode_id, extra, rep_mode, seg_override_en, rep_override_en, trap_flag, int8_asap, scratch_uchar, io_hi_lo, *vid_mem_base, spkr_en, bios_table_lookup[20][256];
+static unsigned char *mem, *io_ports, *opcode_stream, *regs8, i_rm, i_w, i_reg, i_mod, i_mod_size, i_d, i_reg4bit, raw_opcode_id, xlat_opcode_id, extra, rep_mode, seg_override_en, rep_override_en, trap_flag, int8_asap, scratch_uchar, io_hi_lo, *vid_mem_base, spkr_en, bios_table_lookup[20][256];
 unsigned short *regs16, reg_ip, seg_override, file_index, wave_counter;
 unsigned int op_source, op_dest, rm_addr, op_to_addr, op_from_addr, i_data0, i_data1, i_data2, scratch_uint, scratch2_uint, inst_counter, set_flags_type, GRAPHICS_X, GRAPHICS_Y, pixel_colors[16], vmem_ctr;
 int op_result, disk[3], scratch_int;
@@ -475,6 +476,43 @@ for (unsigned b=0;b<(wide?2u:1u);b++) {
 }
 }
 
+unsigned msdos_486_in(unsigned port,int wide) { return guest_in(port,wide); }
+void msdos_486_out(unsigned port,unsigned value,int wide) { guest_out(port,value,wide); }
+
+/* Preserve the validated ROM, its private services, and the existing DOS
+ * device overlays while a separate 32-bit CPU executes the instructions. */
+int msdos_486_bios(uint16_t r[12],uint16_t *ip,uint16_t *flags)
+{
+kmemcpy(regs16,r,24);reg_ip=*ip;set_flags(*flags);
+unsigned addr=((unsigned)r[REG_CS]*16+*ip)&ADDRESS_MASK;
+if (mem[addr]==0xcd && mem[(addr+1)&ADDRESS_MASK]==0x21 &&
+    regs8[REG_AH]==0x4b) msdos_mouse_install(mem);
+if (r[REG_CS]!=0xf000) return 0;
+int handled=0,carry_only=0;
+if (*ip==MSDOS_MOUSE_ENTRY && msdos_mouse_enabled()) {
+    msdos_mouse_poll(mem[0x449]);msdos_mouse_bios(regs16,mem);handled=1;
+} else if (*ip==0x742) handled=msdos_video_bios(regs16);
+else if (*ip==0xcaf) {handled=floppy_bios_service();carry_only=1;}
+if (handled) {
+    unsigned carry=regs8[FLAG_CF];
+    R_M_POP(reg_ip);R_M_POP(regs16[REG_CS]);R_M_POP(scratch_uint);
+    *flags=carry_only?(scratch_uint&~1u)|carry:scratch_uint;
+    *ip=reg_ip;kmemcpy(r,regs16,24);return 1;
+}
+/* Only exact, original ROM call sites may invoke these private hypercalls. */
+if (*ip>=0x100 && *ip+1<0x100+msdos_bios_size &&
+    msdos_bios[*ip-0x100]==0x0f && msdos_bios[*ip-0x100+1]<4) {
+    unsigned op=msdos_bios[*ip-0x100+1],dest=SEGREG(REG_ES,REG_BX,);
+    if (op==0) msdos_pc_putchar(regs8[REG_AL]);
+    else if (op==1) {
+        if (dest<=RAM_SIZE-38) msdos_pc_rtc(mem+dest);
+    } else regs8[REG_AL]=bus_disk(regs8[REG_DL],
+               CAST(unsigned)regs16[REG_BP]<<9,dest,regs16[REG_AX],op==3);
+    *ip+=2;kmemcpy(r,regs16,24);return 1;
+}
+return 0;
+}
+
 // AAA and AAS instructions - which_operation is +1 for AAA, and -1 for AAS
 int AAA_AAS(char which_operation)
 {
@@ -496,11 +534,13 @@ int msdos_cpu_run(uint32_t sectors)
 {
 unsigned short mouse_saved[12],mouse_return_ip=0,mouse_return_flags=0;
 int mouse_callback=0;
-mem = kcalloc(1, RAM_SIZE + 32);
+mem = memory_alloc_pages(MSDOS_486_RAM/4096);
 if (!mem) return -1;
-kmemset(io_ports, 0, sizeof(io_ports));
-if (msdos_video_reset(mem)) {kfree(mem);mem=0;return -1;}
-msdos_sound_reset(msdos_sound_model(),mem,RAM_SIZE);
+io_ports=kcalloc(1,IO_PORT_COUNT+2);
+if (!io_ports || msdos_video_reset(mem)) {
+    kfree(io_ports);memory_free_pages(mem,MSDOS_486_RAM/4096);mem=0;return -1;
+}
+msdos_sound_reset(msdos_sound_model(),mem,MSDOS_486_RAM);
 msdos_devices_init();
 seg_override_en = rep_override_en = trap_flag = int8_asap = io_hi_lo = 0;
 inst_counter = 0;
@@ -557,7 +597,7 @@ keyboard_rom_ok &= regs8[0x742+i] == int10_original[i];
 if (!keyboard_rom_ok) {
 static const char error[] = "MS-DOS: incompatible keyboard/disk/video BIOS.\r\n";
 for (unsigned i=0; error[i]; ++i) msdos_pc_putchar(error[i]);
-msdos_video_release();kfree(mem);
+msdos_video_release();kfree(io_ports);memory_free_pages(mem,MSDOS_486_RAM/4096);
 return -1;
 }
 for (unsigned i=0; i<msdos_bios_keyboard_size;) {
@@ -572,6 +612,12 @@ i += length;
 	for (int i = 0; i < 20; i++)
 		for (int j = 0; j < 256; j++)
 			bios_table_lookup[i][j] = regs8[regs16[0x81 + i] + j];
+
+int result=msdos_486_execute(mem,io_ports);
+msdos_video_release();kfree(io_ports);
+memory_free_pages(mem,MSDOS_486_RAM/4096);
+mem=io_ports=0;
+return result;
 
 	// Instruction execution loop. Terminates if CS:IP = 0:0
 unsigned char wrapped_opcode[16];

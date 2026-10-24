@@ -107,11 +107,11 @@ Host CPU
   No VM86 hardware execution or hardware virtualization is required.
 
 Host RAM
-  Meet the native full-build requirements and leave about 1.1 MiB of the
-  kernel heap available for private guest RAM, plus emulator working space.
-  Practical recommended configuration: 16 MiB or more.
-  32 MiB is a comfortable starting point for an emulator PC profile.
-  Extra physical RAM does not provide the DOS guest with EMS or XMS.
+  Minimum: 32 MiB, with 16 MiB contiguous free RAM above physical 16 MiB.
+  Recommended: 64 MiB or more, plus free kernel heap for device/CPU workspaces.
+  The emulated 486SX has 16 MiB guest RAM, including 640 KiB conventional RAM.
+  Extended memory is reported through the guest BIOS; any XMS/EMS or DPMI
+  manager required by a program must be supplied separately.
 
 Host HDD space
   The persistent virtual DOS HDD requires exactly 32,760 sectors of 512 bytes:
@@ -152,8 +152,11 @@ DOS installation media
   MS-DOS 4.0 source is not a substitute for these MS-DOS 6.22 system files.
 
 Requirements for DOS programs
-  Programs must be compatible with a real-mode 80286-compatible DOS guest and its
-  640 KiB conventional memory.
+  Programs must be compatible with a 486SX-style DOS guest without an x87 FPU.
+  Real mode, 16/32-bit protected mode, virtual-8086 mode and paging are supported.
+  Supply the game's DOS extender or DPMI host when required.
+  Protected-mode game compatibility is experimental and unfinished. The
+  supplied Doom8088 386/CWSDPR0 game has not reached VGA in the end-to-end test.
   Supported output includes text, CGA/Hercules, EGA/VGA graphics (modes
   0Dh-13h, including unchained Mode X), and PC-speaker sound.
   A host PC speaker is needed for audible guest speaker output.
@@ -161,8 +164,8 @@ Requirements for DOS programs
   higher-resolution EGA/VGA modes are downsampled.
 
   Currently unsupported:
-    - 286/386 protected-mode programs, DOS extenders, and DPMI.
-    - EMS/XMS memory managers and x87 floating-point instructions.
+    - x87 floating-point instructions and hardware task switching.
+    - No DPMI host or EMS/XMS memory manager is bundled.
     - VESA/SVGA modes, FM/MIDI, full SB16 and other sound-card audio.
       Optional CONFIG_MSDOS_SOUND enables Sound Blaster-compatible 8-bit
       digital playback only (220h, IRQ 5, DMA 1). Native output requires
@@ -204,7 +207,7 @@ inteiliDOS plus MS-DOS
   486/Pentium-class machine, 32 MiB RAM, VGA, compatible keyboard,
   PC speaker enabled, and a 32 MiB or larger IDE HDD (64 MiB recommended).
   IDE/ATAPI CD-ROM containing the rebuilt ISO and DOS installation images.
-  Remember that the software guest offers real-mode 80286 compatibility only.
+  The software guest offers 486SX compatibility, not a cycle-accurate 486DX/FPU.
 
 Match Willburd's build-time hardware profile to the selected emulator machine.
 Select an IDE/ATAPI CD-ROM, not a SCSI or proprietary CD-ROM interface.
