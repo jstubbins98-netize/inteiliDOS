@@ -22,13 +22,15 @@ static uint32_t corb[256] __attribute__((aligned(128)));
 static volatile struct {uint32_t data,extra;} rirb[256] __attribute__((aligned(128)));
 static pci_device_t device;
 static uint16_t saved_command,nam,bm;
+static uint16_t saved_devctl;
+static unsigned devctl_changed;
 static uint32_t mmio,stream;
 static unsigned backend,cursor,tail,partial;
 static const char *failure="no supported output controller";
 static uint8_t wp,rp,codec,pin,dac,audio_group;
 static struct {
     uint32_t codec_id, position, advances, frames, peak, timeouts, polls;
-    unsigned output, pin, dac, errors;
+    unsigned output, pin, dac, errors, snoop;
 } report;
 static void (*produce)(int16_t *,unsigned);
 static uint8_t in8(uint16_t p) {uint8_t v;__asm__ volatile("inb %1,%0":"=a"(v):"Nd"(p));return v;}
@@ -63,11 +65,39 @@ static void render(unsigned index,unsigned offset,unsigned frames) {
 }
 static void fill(unsigned index) {render(index,0,FRAMES);}
 static void claim(const pci_device_t *d) {
+    devctl_changed=0;
     device=*d;saved_command=pci_read16(d->bus,d->device,d->function,4);
     pci_write16(d->bus,d->device,d->function,4,saved_command|7);
 }
 static void release(void) {
+    if (devctl_changed) {
+        pci_write16(device.bus,device.device,device.function,0x78,saved_devctl);
+        devctl_changed=0;
+    }
     pci_write16(device.bus,device.device,device.function,4,saved_command);
+}
+static int hda_coherent_dma(void) {
+    report.snoop=0;
+    if (device.vendor_id!=0x8086) return 1;
+    /* Intel 5/6/7/8/9-series PCH and C600/Wellsburg HDA DEVC.NoSnoop.
+     * This is a chipset-specific register, NOT a generic class-04 offset.
+     * See Linux sound/pci/hda/hda_intel.c: INTEL_SCH_HDA_DEVC and
+     * azx_init_pci's SCH/PCH snoop setup. Do not apply to ICH or other vendors. */
+    switch (device.device_id) {
+    case 0x3b56:case 0x3b57:case 0x1c20:case 0x1d20:case 0x1e20:
+    case 0x8c20:case 0x8ca0:case 0x8d20:case 0x8d21:break;
+    default:return 1;
+    }
+    failure="Intel PCH HDA DMA cache snooping unavailable";
+    uint16_t control=pci_read16(device.bus,device.device,device.function,0x78);
+    if (control==0xffff) {report.snoop=2;return 0;}
+    if (control&0x800) {
+        saved_devctl=control;devctl_changed=1;
+        pci_write16(device.bus,device.device,device.function,0x78,control&~0x800);
+    }
+    uint16_t verified=pci_read16(device.bus,device.device,device.function,0x78);
+    if (verified==0xffff || (verified&0x800)) {report.snoop=2;return 0;}
+    report.snoop=1;return 1;
 }
 static int intel_ac97(uint16_t id) {
     switch (id) {
@@ -229,7 +259,17 @@ static int find_output(void) {
     return 0;
 }
 static void stop_hda(void) {
-    if (stream) {w8(stream,0);w8(stream+3,0x1c);}
+    if (stream) {
+        w8(stream,0);
+        if (!waitbit(stream,2,0)) {
+            /* Do not restore bus mastering on a controller still fetching
+             * audio after the stop request, even if firmware had enabled it. */
+            report.errors|=0x10;
+            failure="HDA playback stream did not stop";
+            saved_command&=~4u;
+        }
+        w8(stream+3,0x1c);
+    }
     w8(0x4c,0);w8(0x5c,0);
 }
 static int start_hda(void) {
@@ -237,6 +277,7 @@ static int start_hda(void) {
     while (!found) {
         if (!(d.bar[0]&1) && (d.bar[0]&~15u) && (!(d.bar[0]&4) || !d.bar[1])) {
             hda_stop_capture();claim(&d);mmio=d.bar[0]&~15u;stream=0;
+            if (!hda_coherent_dma()) goto next;
             wr(8,0);
             failure="HDA controller reset failed";
             if (!waitbit(8,1,0)) goto next;
@@ -360,6 +401,13 @@ void pcm_stop(void) {
     }
     if (backend) release();
     backend=0;produce=0;
+    /* Do not retain the preceding game's PCM in reusable native DMA buffers.
+     * Stop the engine before clearing memory; configure snooping again before
+     * any subsequent session publishes these buffers to the controller. */
+    for (unsigned i=0;i<QUEUE;i++)
+        for (unsigned j=0;j<FRAMES*2;j++) samples[i][j]=0;
+    cursor=tail=partial=0;
+    __asm__ volatile("":::"memory");
 }
 const char *pcm_backend(void) {
     return backend==1?"Intel AC'97":backend==2?"Intel HDA analog":0;
@@ -372,6 +420,8 @@ void pcm_report(void) {
     if (report.output==2)
         vga_printf("HDA codec %08x; pin %02x; DAC %02x; status %02x; timeouts %u.\n",
                    report.codec_id,report.pin,report.dac,report.errors,report.timeouts);
+    if (report.snoop==1)
+        vga_puts("HDA DMA coherency: Intel PCH cache snooping enabled.\n");
     if (!report.peak)
         vga_puts("DOS audio: no non-silent samples received from the game.\n");
     if (!report.polls)

@@ -19,6 +19,8 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("kernel", type=Path)
 parser.add_argument("installed_disk", type=Path)
 parser.add_argument("--sound16", action="store_true")
+parser.add_argument("--usb-keyboard", action="store_true",
+                    help="Use USB input for modern kernels without PS/2 input")
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[2]
 out = root/"generated-artifacts/mario-fm-test"
@@ -32,7 +34,9 @@ with tempfile.TemporaryDirectory(prefix="mario-fm-") as folder:
     tmp = Path(folder)
     disk = tmp/"native.img"
     shutil.copyfile(args.installed_disk, disk)
-    g = Guest(args.kernel.resolve(), None, False, tmp, (
+    input_devices=("-device","qemu-xhci,id=usb",
+                   "-device","usb-kbd,bus=usb.0,port=2") if args.usb_keyboard else ()
+    g = Guest(args.kernel.resolve(), None, False, tmp, ("-m","256",*input_devices,
         "-drive", f"file={disk},if=ide,index=1,format=raw",
         "-audiodev", f"wav,id=audio,path={wav},out.frequency=48000",
         "-device", "ich9-intel-hda", "-device", "hda-duplex,audiodev=audio"))
@@ -100,7 +104,12 @@ with tempfile.TemporaryDirectory(prefix="mario-fm-") as folder:
                 next_key+=7
             time.sleep(.05)
         g.command("screendump", {"filename": str(out/(tag+".ppm"))})
-        assert active, "Mario did not play digital voice"
+        if not (active and music):
+            print("Mario speech verification incomplete:",
+                  "digital_voice=",active,"FM=",music,flush=True)
+            print("Last DSP state:",read("s",68).hex(),flush=True)
+            print(g.screen(),flush=True)
+        assert active, "Mario did not play digital voice; inspect saved screen and DSP state"
         assert music, "Mario did not program FM music"
         g.key("f8");g.wait("Returned from MS-DOS")
         assert read("s", 68)[8:12] == b"\0"*4, "Sound device survived F8"

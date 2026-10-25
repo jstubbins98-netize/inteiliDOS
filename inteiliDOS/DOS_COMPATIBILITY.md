@@ -654,6 +654,17 @@ Supported playback is **PCM plus AdLib/OPL FM**, not every function of the cards
   filename and displays a misleading “Insert Disk #5” prompt, also seen in
   DOSBox with the same installed files.
   Native laptop analog routing is not certified by QEMU recordings.
+  On supported Intel 5–9-series PCH/C600/Wellsburg HDA controllers, playback
+  explicitly clears and verifies the chipset's PCI DEVC NoSnoop bit before
+  publishing DMA buffers. This prevents non-coherent DMA from reading old
+  cached PCM on those controllers. The original PCI setting is restored only
+  after stopping playback. Audio buffers and refill positions are cleared on
+  exit; a new DOS session must not replay the preceding game's samples.
+  The exit diagnostic reports `Intel PCH cache snooping enabled` when this
+  chipset-specific configuration was verified. Unsupported PCI layouts are
+  not modified, and failed snooping initialization is reported rather than
+  claiming working output. Virtual HDA tests do not certify this physical
+  chipset behavior.
   This does not install a driver or guarantee an application's compatibility.
 - No MPU-401/MIDI interface, recording, DSP/ASP effects or full mixer register
   emulation. FM synthesis does not imply support for a MIDI device or a

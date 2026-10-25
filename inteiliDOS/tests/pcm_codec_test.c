@@ -12,6 +12,21 @@ static int verb(unsigned nid,unsigned code,unsigned value,uint32_t *response);
 static unsigned requested[4], delays, stuck, fail_verb, sleeps;
 static unsigned pin_control, eapd, amps, bad_order;
 static char messages[2048];
+static uint16_t pci_command,pci_devctl;
+static unsigned devctl_reads,devctl_writes,devctl_stuck,devctl_missing,require_stopped;
+uint16_t pci_read16(uint8_t bus,uint8_t dev,uint8_t fn,uint8_t reg) {
+    (void)bus;(void)dev;(void)fn;
+    if (reg==4) return pci_command;
+    assert(reg==0x78);devctl_reads++;
+    return devctl_missing?0xffff:pci_devctl;
+}
+void pci_write16(uint8_t bus,uint8_t dev,uint8_t fn,uint8_t reg,uint16_t value) {
+    (void)bus;(void)dev;(void)fn;
+    if (require_stopped) assert(!(r8(stream)&2));
+    if (reg==4) {pci_command=value;return;}
+    assert(reg==0x78);devctl_writes++;
+    if (!devctl_stuck) pci_devctl=value;
+}
 void timer_sleep(uint32_t ms) {sleeps+=ms;}
 void vga_puts(const char *text) {strcat(messages,text);}
 void vga_printf(const char *format,...) {
@@ -107,6 +122,45 @@ static void test_partial_periods(void) {
     assert(cursor==0 && partial==3 && tail==3 && report.frames==8);
     backend=0;
 }
+static void test_session_coherency(void) {
+    pci_device_t pch={.vendor_id=0x8086,.device_id=0x1e20};
+    pci_devctl=0xa85b;pci_command=0x105;
+    devctl_reads=devctl_writes=devctl_stuck=devctl_missing=0;
+    for (unsigned session=0;session<2;session++) {
+        claim(&pch);
+        assert(pci_command==0x107);
+        assert(hda_coherent_dma() && report.snoop==1);
+        assert(pci_devctl==0xa05b); /* Only NoSnoop changed. */
+        release();
+        assert(pci_devctl==0xa85b && pci_command==0x105 && !devctl_changed);
+    }
+    assert(devctl_writes==4);
+    devctl_stuck=1;claim(&pch);
+    assert(!hda_coherent_dma() && report.snoop==2);
+    assert(strstr(failure,"snooping unavailable"));
+    release();assert(!devctl_changed);
+    devctl_stuck=0;devctl_missing=1;unsigned writes=devctl_writes;
+    claim(&pch);assert(!hda_coherent_dma());release();
+    assert(devctl_writes==writes); /* Never restore an invalid FFFF value. */
+    devctl_missing=0;pci_devctl=0xa05b;
+    claim(&pch);assert(hda_coherent_dma() && !devctl_changed);release();
+    assert(pci_devctl==0xa05b && devctl_writes==writes);
+    /* This offset is not a universal PCIe/ICH HDA control register. */
+    devctl_reads=devctl_writes=0;
+    pch.device_id=0x293e;claim(&pch);assert(hda_coherent_dma());release();
+    pch.vendor_id=0x10de;pch.device_id=0x1e20;
+    claim(&pch);assert(hda_coherent_dma());release();
+    assert(!devctl_reads && !devctl_writes);
+    pch.vendor_id=0x8086;pch.device_id=0x1e20;pci_devctl=0xa85b;
+    claim(&pch);assert(hda_coherent_dma());
+    memset(samples,0x7f,sizeof(samples));cursor=123;partial=15;tail=31;
+    produce=signal;backend=2;pin=3;dac=2;w8(stream,2);
+    require_stopped=1;pcm_stop();require_stopped=0;
+    assert(!(r8(stream)&2) && pci_devctl==0xa85b && !devctl_changed);
+    for (unsigned i=0;i<QUEUE;i++)
+        for (unsigned j=0;j<FRAMES*2;j++) assert(!samples[i][j]);
+    assert(!produce && !cursor && !partial && !tail);
+}
 int main(void) {
     reset();delays=3;
     assert(find_output() && pin==2 && dac==3);
@@ -127,6 +181,7 @@ int main(void) {
     messages[0]=0;report.errors=0;report.polls=report.advances=0;pcm_report();
     assert(strstr(messages,"output not exercised") && !strstr(messages,"stalled"));
     test_partial_periods();
+    test_session_coherency();
     puts("PASS: delayed power, failed verbs, analog routing, EAPD preservation, "
-         "silent/non-silent diagnostics, sub-period SB DMA probes and ring wraps");
+         "sub-period SB DMA, ring wraps, PCH coherency and clean session buffers");
 }
