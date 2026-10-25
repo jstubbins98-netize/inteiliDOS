@@ -1,6 +1,7 @@
-/* Isolated Sound Blaster 2 / SB16 digital playback. MPL-2.0.
+/* Isolated Sound Blaster 2 / SB16 PCM + OPL playback. MPL-2.0.
  * No guest DMA, PIC or DSP accesses are forwarded to native hardware. */
 #include "sound.h"
+#include "fm.h"
 struct dma {
     uint16_t address,base_address,count,base_count;
     uint8_t page,mode,masked,flip,tc;
@@ -21,6 +22,7 @@ void msdos_sound_select(unsigned model) {selected=model;}
 unsigned msdos_sound_model(void) {return selected;}
 static void mixer_reset(void) {
     s.mixer[0x30]=s.mixer[0x31]=s.mixer[0x32]=s.mixer[0x33]=0xf8;
+    s.mixer[0x34]=s.mixer[0x35]=0xf8;
 }
 static void reply(uint8_t value) {
     if ((uint8_t)(s.wp-s.rp)<64) s.reply[s.wp++&63]=value;
@@ -41,6 +43,11 @@ void msdos_sound_reset(unsigned model,uint8_t *ram,unsigned size) {
     s.pic_mask=255;s.pic_base=8;
     s.identify_value=0xaa;s.identify_xor=0x96;
     mixer_reset();
+    msdos_fm_reset(model);
+}
+void msdos_sound_stop(void) {
+    s=(typeof(s)){0};
+    msdos_fm_reset(MSDOS_SOUND_OFF);
 }
 static void dma_advance(struct dma *d) {
     d->address+=(d->mode&0x20)?-1:1;
@@ -171,18 +178,20 @@ static uint8_t mixer_read(void) {
     case 0x82:return s.irq;
     case 0x22:return (s.mixer[0x30]&0xf0)|(s.mixer[0x31]>>4);
     case 4:return (s.mixer[0x32]&0xf0)|(s.mixer[0x33]>>4);
+    case 0x26:return (s.mixer[0x34]&0xf0)|(s.mixer[0x35]>>4);
     default:return s.mixer[s.mixer_index];
     }
 }
 int msdos_sound_out(unsigned p,uint8_t v) {
+    if (msdos_fm_out(p,v)) return 1;
     if (p>=0x220 && p<=0x22f) {
         if (!s.model) return 1;
         if (p==0x224 && s.model==MSDOS_SOUND_SB16) s.mixer_index=v;
         else if (p==0x225 && s.model==MSDOS_SOUND_SB16) {
             unsigned r=s.mixer_index;
             if (!r) mixer_reset();
-            else if (r==0x22 || r==4) {
-                unsigned first=r==4?0x32:0x30;
+            else if (r==0x22 || r==4 || r==0x26) {
+                unsigned first=r==4?0x32:r==0x26?0x34:0x30;
                 s.mixer[first]=((v>>4)*31/15)<<3;
                 s.mixer[first+1]=((v&15)*31/15)<<3;
             } else if (r<0x80) s.mixer[r]=v;
@@ -221,6 +230,7 @@ int msdos_sound_out(unsigned p,uint8_t v) {
     return 1;
 }
 int msdos_sound_in(unsigned p,uint8_t *v) {
+    if (msdos_fm_in(p,v)) return 1;
     if (p>=0x220 && p<=0x22f) {
         *v=255;
         if (!s.model) return 1;
@@ -275,16 +285,24 @@ static void sample(void) {
 }
 void msdos_sound_render(int16_t *output,unsigned frames) {
     for (unsigned i=0;i<frames;i++) {
+        int16_t fm[2];
+        msdos_fm_sample(fm);
         if (s.model) {
             s.phase+=s.rate;
             if (s.phase>=48000) {s.phase-=48000;sample();}
         }
         for (unsigned channel=0;channel<2;channel++) {
             int value=s.model && s.speaker?s.output[channel]:0;
+            int music=fm[channel];
             if (s.model==MSDOS_SOUND_SB16) {
-                value=value*(s.mixer[0x30+channel]>>3)/31;
                 value=value*(s.mixer[0x32+channel]>>3)/31;
+                music=music*(s.mixer[0x34+channel]>>3)/31;
             }
+            value+=music;
+            if (s.model==MSDOS_SOUND_SB16)
+                value=value*(s.mixer[0x30+channel]>>3)/31;
+            if (value>32767) value=32767;
+            if (value<-32768) value=-32768;
             output[i*2+channel]=value;
         }
     }

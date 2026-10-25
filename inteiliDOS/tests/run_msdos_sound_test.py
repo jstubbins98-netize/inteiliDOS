@@ -3,8 +3,10 @@
 from pathlib import Path
 import argparse
 import array
+import math
 import subprocess
 import tempfile
+import time
 import wave
 from build_test_kernel import ROOT, run
 from run_launchpad_dos_test import Guest, fat12_image
@@ -17,9 +19,15 @@ def main():
     parser.add_argument("kernel",type=Path)
     parser.add_argument("backend",nargs="?",choices=("ac97","hda","none"),default="ac97")
     parser.add_argument("--disabled",action="store_true")
+    parser.add_argument("--fm",action="store_true",
+                        help="Detect/play FM alone, then mix it with digital DMA")
     parser.add_argument("--sound16",action="store_true")
     parser.add_argument("--sound2",action="store_true")
     parser.add_argument("--default16",action="store_true")
+    parser.add_argument("--usb-keyboard",action="store_true",
+                        help="Use USB input for kernels without a PS/2 driver")
+    parser.add_argument("--mouse",action="store_true",
+                        help="Exercise sound together with the resident mouse driver")
     parser.add_argument("--hda-controller",choices=("intel-hda","ich9-intel-hda"),
                         default="ich9-intel-hda")
     parser.add_argument("--hda-codec",choices=("hda-output","hda-duplex","hda-micro"),
@@ -29,6 +37,7 @@ def main():
     backend,disabled=options.backend,options.disabled
     if options.sound16 and options.sound2:parser.error("choose one sound model")
     switch=" /SOUND16" if options.sound16 else " /SOUND2" if options.sound2 else ""
+    if options.mouse: switch+=" /MOUSE"
     is16=options.sound16 or options.default16
     expected="A220 I5 D1 H5 T6" if is16 else "A220 I5 D1 T3"
     tag=backend
@@ -39,6 +48,8 @@ def main():
     if is16:tag+="-sb16"
     if options.default16:tag+="-default"
     elif options.sound2:tag+="-sb2"
+    if options.mouse:tag+="-mouse"
+    if options.fm:tag+="-fm"
     out=ROOT.parent/"generated-artifacts/msdos-sound"
     out.mkdir(parents=True,exist_ok=True)
     wav=out/(tag+".wav")
@@ -50,14 +61,21 @@ def main():
                 ROOT/"tests/msdos_sound.asm","-o",tmp/(name+".com"))
         run("nasm","-f","bin",*(("-DSB16=1",) if is16 else ()),
             ROOT/"tests/msdos_sound_detect.asm","-o",tmp/"DETECT.com")
+        run("nasm","-f","bin",ROOT/"tests/msdos_fm.asm","-o",tmp/"FM.com")
         (tmp/"disc/SOUND.IMG").write_bytes(fat12_image({
             "SOUND.COM":(tmp/"SOUND.com").read_bytes(),
             "AUTO.COM":(tmp/"AUTO.com").read_bytes(),
             "DETECT.COM":(tmp/"DETECT.com").read_bytes(),
+            "FM.COM":(tmp/"FM.com").read_bytes(),
         }))
         run("xorriso","-as","mkisofs","-quiet","-o",tmp/"dos.iso",tmp/"disc")
         native=tmp/"native.img";native_disk(native);safe=protected(native)
         args=["-drive",f"file={native},if=ide,index=1,format=raw"]
+        if options.usb_keyboard:
+            args+=["-m","256","-device","qemu-xhci,id=usb",
+                   "-device","usb-kbd,bus=usb.0,port=2"]
+            if options.mouse:
+                args+=["-device","usb-mouse,bus=usb.0,port=3"]
         if backend!="none":
             args+=["-audiodev",f"wav,id=audio,path={wav},out.frequency=48000"]
             args+=["-device","AC97,audiodev=audio"] if backend=="ac97" else [
@@ -128,6 +146,9 @@ def main():
             base=check_output()
             guest.key("f8");guest.wait("Returned from MS-DOS")
             check_stopped(base)
+            if not disabled and backend!="none":
+                assert "no non-silent samples received from the game" in guest.screen()
+                assert "native output DMA stalled" not in guest.screen()
             shell(guest,"ms-dos /image SOUND.IMG"+switch)
             guest.wait("MS-DOS 6.22 -",90);guest.wait("C:\\>")
             check_environment()
@@ -136,6 +157,10 @@ def main():
                 clear_dos(guest);shell(guest,"a:\\detect.com")
                 guest.wait("SB DETECTION OK - ENV PORTS VERSION DMA")
                 guest.command("screendump",{"filename":str(out/(tag+"-detection.ppm"))})
+            if options.fm:
+                clear_dos(guest);shell(guest,"a:\\fm.com")
+                guest.wait("NO FM DETECTED" if disabled else "FM DETECTION OK")
+                time.sleep(2) # record FM alone before starting PCM
             clear_dos(guest);shell(guest,"a:\\sound.com")
             guest.wait("NO DSP DETECTED" if disabled else "SOUND IRQ OK",30)
             if not disabled:
@@ -149,9 +174,27 @@ def main():
             if not disabled and backend!="none":
                 guest.wait("DOS audio output stopped:")
             guest.command("screendump",{"filename":str(out/(tag+"-shell.ppm"))})
+            if not disabled and backend!="none":
+                screen=guest.screen()
+                assert "DOS audio signal: peak " in screen
+                # The restored shell also contains the preceding boot-only
+                # session's zero-peak report. Check only the latest session.
+                latest=screen.rsplit("DOS audio signal: peak ",1)[1]
+                assert "no non-silent samples received" not in latest
+                assert "native output DMA stalled" not in latest
+                if backend=="hda":
+                    assert "HDA codec " in latest and "timeouts 0." in latest
             shell(guest,"ms-dos /image SOUND.IMG"+switch)
             guest.wait("MS-DOS 6.22 -",90);guest.wait("C:\\>")
             base=check_output()
+            if options.fm and not disabled:
+                # A fresh session is silent before FM is programmed again.
+                time.sleep(1)
+                if backend!="none":
+                    report=physical(locations["report"],20)
+                    assert int.from_bytes(report[16:20],"little")==0,"FM key-on survived F8"
+                clear_dos(guest);shell(guest,"a:\\fm.com")
+                guest.wait("FM DETECTION OK")
             clear_dos(guest);shell(guest,"a:\\sound.com")
             guest.wait("NO DSP DETECTED" if disabled else "SOUND IRQ OK",30)
             guest.key("f8");guest.wait("Returned from MS-DOS")
@@ -194,8 +237,20 @@ def main():
             start=next(i for i,x in enumerate(values) if abs(x)>1000)+rate//4
             segment=values[start:start+rate//2]
             crossings=sum(a<=0<b for a,b in zip(segment,segment[1:]))
-            assert 450<crossings<550,("Wrong PCM frequency",crossings)
-            print(f"PASS: {tag} recorded digital PCM, ~{crossings*2} Hz, "
+            if options.fm:
+                def amplitude(samples,freq):
+                    step=2*math.pi*freq/rate
+                    return 2*abs(sum(x*complex(math.cos(i*step),math.sin(i*step))
+                                     for i,x in enumerate(samples)))/len(samples)
+                windows=[values[i:i+rate//4] for i in range(0,len(values)-rate//4,rate//4)]
+                strengths=[(amplitude(w,440),amplitude(w,1000)) for w in windows]
+                assert any(fm>500 and pcm<200 for fm,pcm in strengths),"No FM-only recording"
+                assert sum(fm>500 and pcm>1000 for fm,pcm in strengths)>=8, \
+                    "No simultaneous FM and digital PCM recording"
+                print("PASS: recorded FM-only and simultaneous 440Hz FM + 1kHz PCM")
+            else:
+                assert 450<crossings<550,("Wrong PCM frequency",crossings)
+            print(f"PASS: {tag} recorded {'FM + PCM' if options.fm else str(crossings*2)+' Hz PCM'}, "
                   f"{len(loud)/rate:.1f}s non-silent; single/auto-init guest IRQ5, F8, re-entry")
             if backend=="hda":
                 print("PASS: native IRQs masked; stream/CORB/RIRB stopped on every F8")

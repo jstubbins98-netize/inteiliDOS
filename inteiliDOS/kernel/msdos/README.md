@@ -111,7 +111,8 @@ INT 33h subset and input restrictions.
 This is a 486SX-compatible CPU with 16 MiB guest RAM and 640 KiB conventional
 memory. Protected-mode extenders can use private guest descriptor tables,
 paging and extended RAM. A DPMI host or memory manager is separate software;
-there is no VESA/SVGA, FM/MIDI or emulated network card. Compatibility
+there is no VESA/SVGA, MPU-401/MIDI or emulated network card. Optional
+AdLib/OPL FM shares the Sound Blaster output path. Compatibility
 depends on the game's devices and extender, not only its CPU requirement.
 
 ### 486SX CPU
@@ -184,6 +185,32 @@ including relocated IDT dispatch, fault return IPs, string I/O, protected-mode
 refusal, 386 rejection, persistence and F8 during REP with CLI.
 
 ## Provenance and licenses
+
+### Sound Blaster FM synthesis
+
+`sound.c` mixes private PCM with `fm.c`'s AdLib/OPL model. Both CPU paths
+reach it through the shared port dispatcher; no new native I/O permission
+or guest DMA/IRQ scheduling is introduced. SB2 exposes OPL2-compatible
+registers, while SB16 also exposes OPL3's second bank and stereo/4-op mode.
+DSP reset and speaker commands affect PCM only; F8/exit clears both.
+FM timers model status polling, not a native IRQ or MPU-401/MIDI device.
+
+`opl3/` contains Nuked OPL3 1.8, Copyright Nuke.YKT, under
+**LGPL-2.1-or-later**. Keep its headers, LICENSE and source/relinking materials
+when distributing a linked kernel. `opl3/README.md` records the pinned
+upstream revision, minimal freestanding changes and distribution requirements.
+The adapter remains MPL-2.0; this does not relicense Nuked OPL3.
+
+`python3 tests/run_msdos_fm_test.py --sanitize` runs the PCM/SB16 regressions
+and isolated FM checks (timers/aliases, independent DSP, short IRQ probes,
+mixing/clipping, volumes, stereo, disabled sound, cleanup and re-entry).
+`tests/run_msdos_sound_test.py KERNEL hda --sound2 --fm` and the equivalent
+`ac97 --sound16 --fm` record FM alone and FM+PCM together under real DOS,
+check both frequencies, then F8 and silent re-entry. `--disabled --fm`
+uses a sound-off kernel; `none --sound16 --fm` tests the silent backend.
+`tests/run_msdos_mario_fm_test.py KERNEL INSTALLED_NATIVE_DISK` optionally
+selects both music and voice through Mario's SETUP and records HDA output.
+The supplied disk is copied, never changed; no game files are bundled.
 
 ### Keyboard BIOS compatibility overlay
 

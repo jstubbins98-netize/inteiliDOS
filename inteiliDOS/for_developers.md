@@ -689,8 +689,9 @@ instruction decoding, BIOS hooks, media change handling or native restoration.
 
 The guest targets 486SX compatibility, including protected mode, virtual-8086
 mode and paging. DOS extenders/DPMI hosts and EMS/XMS managers are user-supplied
-guest software, not built-in services. No x87, VESA/SVGA, FM/MIDI or network
-stack is supplied by the CPU upgrade.
+guest software, not built-in services. VESA/SVGA, MPU-401/MIDI and a network
+stack are not supplied by the CPU upgrade. Optional AdLib/OPL FM is part of
+the isolated Sound Blaster device, not a MIDI interface.
 Protected-mode game compatibility remains experimental: the CPU fixture
 passes, but the optional D386MYH/CWSDPR0 end-to-end game test does not reach VGA.
 EGA/VGA graphics are emulated, but cycle-accurate retrace, arbitrary adapter BIOS

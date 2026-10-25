@@ -152,6 +152,8 @@ set(KERNEL_C_SOURCES
     kernel/msdos/video.c
     kernel/msdos/real286.c
     kernel/msdos/sound.c
+    kernel/msdos/fm.c
+    kernel/msdos/opl3/opl3.c
     kernel/msdos/mouse.c
 )
 

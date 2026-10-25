@@ -19,7 +19,7 @@ static uint32_t guest_palette_version;
 static int guest_vga;
 static int pcm_available;
 static uint32_t audio_tick;
-static int16_t discard_audio[480*2];
+static int16_t discard_audio[48*2];
 static uint8_t inb(uint16_t p) {
     uint8_t v;__asm__ volatile("inb %1,%0":"=a"(v):"Nd"(p));return v;
 }
@@ -44,7 +44,7 @@ void msdos_devices_init(void) {
     audio_tick=timer_get_ticks();
     pcm_available=msdos_sound_model() && pcm_start(msdos_sound_render);
     if (msdos_sound_model()) {
-        vga_puts("DOS digital audio: ");
+        vga_puts("DOS PCM + FM audio: ");
         vga_puts(pcm_available?pcm_backend():pcm_error());
         if (!pcm_available) vga_puts("; audio will be silent");
         vga_puts(".\n");
@@ -57,8 +57,8 @@ void msdos_devices_audio_poll(void) {
      * This case is reported explicitly by the command, not a fake codec. */
     uint32_t now=timer_get_ticks(),elapsed=now-audio_tick;
     if (elapsed>100) elapsed=100;
-    while (elapsed>=10) {
-        msdos_sound_render(discard_audio,480);elapsed-=10;
+    while (elapsed) {
+        msdos_sound_render(discard_audio,48);elapsed--;
     }
     audio_tick=now-elapsed;
 }
@@ -106,6 +106,7 @@ static void leave_graphics(void) {
 int msdos_devices_graphics(void) {return graphics;}
 void msdos_devices_restore(void) {
     pcm_stop();pcm_available=0;
+    msdos_sound_stop();
     leave_graphics();speaker_off();sound=0;
 }
 void msdos_devices_update(const uint8_t *ram,const uint8_t *ports) {

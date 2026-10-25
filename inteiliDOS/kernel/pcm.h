@@ -7,4 +7,6 @@ void pcm_poll(void);
 void pcm_stop(void);
 const char *pcm_backend(void);
 const char *pcm_error(void);
+/* Report the last session, including after pcm_stop restored the hardware. */
+void pcm_report(void);
 #endif

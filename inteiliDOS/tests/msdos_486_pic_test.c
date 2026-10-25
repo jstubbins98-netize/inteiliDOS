@@ -73,7 +73,22 @@ int main(void) {
     ferr_acked=1;assert(irq(NULL)==-1 && !ferr_acked);
     write8(NULL,0xf0,0);assert(ferr_acked);
     fpu_error(NULL,0);assert(!ferr && !ferr_acked);
-    cpui386_delete(cpu);free(ram);free(ports);
+    /* An early exception must survive CPU disposal for the shell report. */
+    cpui386_reset(cpu);
+    uint16_t boot[12]={0},ip=0x100,flags=2;
+    boot[0]=0x1234;boot[4]=0x9000;
+    cpui386_real_state(cpu,boot,&ip,&flags,1);
+    memset(ram,0,0x100);
+    ram[0x100]=0x0f;ram[0x101]=0x0b; /* UD2, with no guest #UD handler. */
+    cpui386_step(cpu,1);
+    assert(cpui386_error(cpu));
+    capture_fault();
+    cpui386_delete(cpu);cpu=NULL;
+    const msdos_486_fault_t *fault=msdos_486_last_fault();
+    assert(fault->code==-2 && fault->exception==6);
+    assert(fault->cs==0 && fault->ip==0x100 && fault->ax==0x1234);
+    assert(fault->sp==0x9000 && !(fault->cr0&1));
+    free(ram);free(ports);
     puts("PASS: delayed IRQ0/1/5, PIC remapping/masks/EOI, BIOS tick/midnight, isolated FERR/IRQ13 slave PIC");
     return 0;
 }

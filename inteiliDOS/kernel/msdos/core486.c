@@ -20,6 +20,15 @@ static int key_break;
 static uint16_t mouse_regs[12],mouse_ip,mouse_flags;
 static uint32_t mouse_high[8];
 static int mouse_busy;
+static msdos_486_fault_t last_fault;
+const msdos_486_fault_t *msdos_486_last_fault(void) {return &last_fault;}
+static void capture_fault(void) {
+    CPUI386_State state;cpui386_get_state(cpu,&state);
+    last_fault=(msdos_486_fault_t){
+        cpui386_error(cpu),cpui386_get_excno(cpu),
+        state.seg[1],state.ip,state.cr0,state.cr2,state.gpr[0],state.gpr[4]
+    };
+}
 /* Only the virtual slave PIC's FPU line is needed here. Never touch the
  * native PIC or host FPU when delivering a legacy DOS coprocessor error. */
 static uint8_t slave_base,slave_mask,slave_init,slave_icw1,slave_service,slave_read_isr;
@@ -285,6 +294,7 @@ static void mouse_event(void) {
     cpui386_real_state(cpu,r,&ip,&flags,1);mouse_busy=1;
 }
 int msdos_486_execute(uint8_t *memory,uint8_t *io) {
+    last_fault=(msdos_486_fault_t){0};
     ram=memory;ports=io;CPU_CB *cb;
     cpu=cpui386_new(4,(char *)ram,MSDOS_486_RAM,&cb);
     if (!cpu) return -1;
@@ -307,7 +317,10 @@ int msdos_486_execute(uint8_t *memory,uint8_t *io) {
     int result=0;unsigned rounds=0,timer_pending=0;
     for (;;) {
         cpui386_step(cpu,1000);
-        if (cpui386_error(cpu)) {result=-2;break;}
+        if (cpui386_error(cpu)) {
+            capture_fault();
+            result=-2;break;
+        }
         if (msdos_pc_poll(ram,ports)) break;
         ++rounds;
         if (!(rounds%20)) timer_pending=1;

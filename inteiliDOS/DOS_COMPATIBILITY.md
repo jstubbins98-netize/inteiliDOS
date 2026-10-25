@@ -421,9 +421,9 @@ outside that private extent.
 
 Not bundled: a DPMI host or EMS/XMS manager. Supply a game's DOS extender
 or compatible memory manager separately; CPU support does not install one.
-Not implemented: VESA/SVGA graphics, full SB16/FM/MIDI and other sound
-cards, DOS networking, and native CD-ROM drivers. Optional 8-bit digital
-playback is described below. Windows NE/LE/LX/PE
+Not implemented: VESA/SVGA graphics, full SB16 peripherals, MPU-401/MIDI and
+other sound cards, DOS networking, and native CD-ROM drivers. Optional PCM
+and AdLib/OPL FM playback are described below. Windows NE/LE/LX/PE
 executables are not supported. Unsupported CPU instructions stop the emulator
 with an explicit diagnostic. An unimplemented device is not a promise that
 the emulator can run every program probing that device.
@@ -606,14 +606,14 @@ Native output still requires PCI-enabled firmware support as described below.
 Both switches together are rejected before any disk changes. They can appear
 before or after media arguments; F8 exits and the next launch uses its own selection.
 
-Supported playback is a **digital DSP subset**, not every function of the cards:
+Supported playback is **PCM plus AdLib/OPL FM**, not every function of the cards:
 
 - SB2: DSP **2.01**, 8-bit unsigned mono, port **220h**, **IRQ5**, **DMA1**.
 - SB16: DSP **4.05**, 8/16-bit signed/unsigned mono/stereo PCM, the same port,
   IRQ5 and DMA1 plus word-addressed **DMA5** for 16-bit data.
   Single/auto-init output, explicit sample rate, pause/resume, finish-auto-init,
   separate 8/16-bit interrupt acknowledgements and mixer IRQ-status discovery
-  are supported. Master/PCM left/right volume and mixer reset are implemented.
+  are supported. Master/PCM/FM left/right volume and mixer reset are implemented.
   IRQ/DMA mixer selection registers report the fixed wiring, not other channels.
 - Games may read `BLASTER` from their DOS environment or probe the DSP directly:
   reset returns **AAh**, the version query matches the selected card, and E0h/E2h
@@ -622,6 +622,16 @@ Supported playback is a **digital DSP subset**, not every function of the cards:
   E2h writes only to the guest's private memory; it is not recording support.
 - DSP reset/version, direct DAC output, time-constant sample rates, single-cycle
   and auto-init 8-bit DMA, pause/continue, speaker control and block interrupts.
+- SB2 includes OPL2-compatible 9-channel FM; SB16 includes OPL3 stereo,
+  second-bank, 4-operator and rhythm synthesis using integer-only Nuked OPL3.
+  AdLib ports **388h/389h**, SB aliases **220h/221h** and **228h/229h**,
+  plus SB16's second bank at **38Ah/38Bh** and **222h/223h** are private
+  registers, never hardware passthrough. OPL timer 1/2 start, mask, reset and
+  overflow status support the normal AdLib detection handshake. Timer status
+  does not generate DSP IRQ5. Timer delays use nominal ISA-access time and
+  rendered sample time, not cycle-accurate Yamaha/ISA clocks.
+  FM is mixed and saturated with PCM at 48 kHz; digital speaker-off and DSP
+  reset do not silence music. Session exit/F8 clears both devices.
 - For game setup, select Sound Blaster digital effects, address 220, IRQ 5, DMA 1.
   When sound is selected, inteiliDOS updates the private DOS HDD's `AUTOEXEC.BAT`
   with `SET BLASTER=A220 I5 D1 T3` for SB2 or
@@ -635,9 +645,19 @@ Supported playback is a **digital DSP subset**, not every function of the cards:
   address **220h**, IRQ **5**, and enable the Digital Voice option. Its
   displayed factory IRQ default of **7** does not match this emulator.
   Selecting Sound Blaster only for music does not enable digital speech.
+  For Mario's SETUP, select **Sound Blaster** separately for the **music card**
+  and the **digital voice card**, then enable Music, Sound Effects and
+  Digital Voice. Move with arrows, press **Space** to select (checkmark), then
+  **Enter** to confirm. BLASTER supplies IRQ5/DMA1 to the tested release.
+  Advance the title screens before checking welcome speech. Do not select
+  **None** as the music card in that release: it attempts to open an empty
+  filename and displays a misleading “Insert Disk #5” prompt, also seen in
+  DOSBox with the same installed files.
+  Native laptop analog routing is not certified by QEMU recordings.
   This does not install a driver or guarantee an application's compatibility.
-- No AdLib/OPL/FM music, MPU-401/MIDI, recording, DSP/ASP effects or full mixer
-  register emulation. Select **no music** if the game requires one of these.
+- No MPU-401/MIDI interface, recording, DSP/ASP effects or full mixer register
+  emulation. FM synthesis does not imply support for a MIDI device or a
+  General MIDI/Roland music selection.
 
 Guest DMA reads only private emulator RAM; no guest ISA DMA, PIC or audio-port
 writes reach native hardware. Native playback uses bounded 48 kHz stereo
@@ -646,9 +666,35 @@ Intel HDA pin/DAC path. AC'97 and analog HDA output are verified by QEMU
 recordings, including repeated initialization and F8 during playback. Native
 HDA interrupts stay masked; response-status polling keeps codec commands
 moving, and shutdown disconnects the codec before stopping command DMA.
+Native polling refills already-consumed portions of audio buffers rather
+than waiting for a complete 10 ms descriptor. This lets short Sound Blaster
+DMA-detection transfers complete before game-driver timeouts, while retaining
+the full native queue for playback. AC'97 counts are converted from channel
+samples to complete stereo frames before any buffer region is reused.
 It is not arbitrary PCI sound-card, HDMI, USB-audio or
 Bluetooth support. Codec topology and firmware vary; QEMU tests do not certify
 a particular physical PC.
+
+After F8, an enabled native output also reports the session's PCM peak,
+rendered frames and observed DMA position advances. A zero peak means no
+non-silent samples reached the output buffer; it does not establish a speaker
+fault. A stalled/error message indicates a native DMA problem. HDA sessions
+add the codec ID, selected pin and DAC nodes, stream-error status and codec
+command timeout count. A nonzero peak and advancing DMA still do not guarantee
+audible output: a physical codec may require board-specific analog routing.
+Include these lines when reporting silent playback.
+
+If DOS stops before the first audio poll, the output is reported as
+unexercised rather than assumed stalled. An early CPU fault can leave only
+the initial silent buffers queued. CPU-fault exits additionally show the
+emulator error code, exception number, CS:EIP, CR0/CR2 and EAX/ESP; include
+these lines when reporting a crash. A detected codec and zero audio peak
+alone do not establish an audio-driver fault.
+
+HDA initialization waits for command-ring reset and supported codec power
+transitions, preserves the external amplifier's BTL/channel-swap settings when
+enabling EAPD, and checks the selected pin and DAC format/stream assignment
+instead of assuming every configuration command succeeded.
 
 If enabled but no supported output is available, an explicit diagnostic reports
 silent audio. Guest DMA and interrupt timing still progress, so waiting for an

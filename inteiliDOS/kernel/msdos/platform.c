@@ -2,6 +2,7 @@
  * No guest port accesses reach host hardware. Only bounded speaker tones,
  * text output, keyboard events and private-file disk sectors are exported. */
 #include "msdos.h"
+#include "core486.h"
 #include "sound.h"
 #include "mouse.h"
 #include "startup.h"
@@ -864,8 +865,8 @@ int msdos_run(int argc, const char *argv[]) {
         return 1;
     }
     if (model) vga_puts(model==MSDOS_SOUND_SB16?
-        "DOS sound: Sound Blaster 16 digital PCM, 220h IRQ5 DMA1/5.\n":
-        "DOS sound: Sound Blaster 2 digital PCM, 220h IRQ5 DMA1.\n");
+        "DOS sound: Sound Blaster 16 PCM + OPL3 FM, 220h IRQ5 DMA1/5.\n":
+        "DOS sound: Sound Blaster 2 PCM + OPL2 FM, 220h IRQ5 DMA1.\n");
     int mouse_ready=msdos_mouse_start(mouse);
     if (mouse) vga_puts(mouse_ready?
         "DOS mouse: driver enabled; pointer hidden, F12 toggles visibility.\n":
@@ -893,6 +894,14 @@ int msdos_run(int argc, const char *argv[]) {
     if (audio_error) vga_puts("DOS audio: an unsupported DSP command or invalid DMA buffer was used.\n");
     if (audio_backend) {vga_puts("DOS audio output stopped: ");vga_puts(audio_backend);vga_puts(".\n");}
     else if (model) {vga_puts("DOS audio was silent: ");vga_puts(pcm_error());vga_puts(".\n");}
+    if (model) pcm_report();
+    if (rc==-2) {
+        const msdos_486_fault_t *f=msdos_486_last_fault();
+        vga_printf("DOS CPU fault: code %d; exception %u; at %04x:%08x.\n",
+                   f->code,(unsigned)f->exception,f->cs,f->ip);
+        vga_printf("CR0=%08x CR2=%08x EAX=%08x ESP=%08x.\n",
+                   f->cr0,f->cr2,f->ax,f->sp);
+    }
     vga_puts(io_failed?"MS-DOS stopped: disk I/O failed.\n":
              rc==-3?"MS-DOS stopped: unsupported CPU operation.\n":
              rc==-4?"MS-DOS stopped: invalid guest interrupt table.\n":
