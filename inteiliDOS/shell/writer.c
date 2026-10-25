@@ -1,5 +1,5 @@
-/* inteiliWriter: bounded native word processor, with USB text/Markdown/PDF.
- * PDF is export-only; editing/loading uses ASCII TXT or Markdown documents. */
+/* inteiliWriter: bounded native word processor, with USB TXT/Markdown/PDF/DOCX.
+ * PDF/DOCX are export-only; editing/loading uses ASCII TXT or Markdown. */
 #include "writer.h"
 #include "writer_document.h"
 #include "writer_fonts.h"
@@ -85,7 +85,7 @@ static void draw(void) {
         VGA_COLOR_WHITE, VGA_COLOR_BLUE);
     show(message);
     row_fill(24, VGA_COLOR_BLACK, VGA_COLOR_LIGHT_CYAN);
-    put(0, 24, "F2 Save F3 Load F4 Del F5 TXT F6 MD F7 PDF F8 Bold F9 Italic F10 Quit",
+    put(0, 24, "F2 Save F3 Load F4 Del F5 TXT F6 MD F7 PDF F8 Bold F9 Italic F10 Word F11 Quit",
         VGA_COLOR_BLACK, VGA_COLOR_LIGHT_CYAN);
     vga_set_cursor(FIRST_ROW + (int)(row - top), 2 + (int)col);
 }
@@ -177,13 +177,13 @@ static int overwrite_ok(const char *path, int choice) {
     storage_error(rc, choice == 3);
     return 0;
 }
-/* format: 0=editable save; 1=USB TXT; 2=USB Markdown; 3=USB PDF. */
+/* format: 0=editable save; 1=USB TXT; 2=USB Markdown; 3=USB PDF; 4=USB DOCX. */
 static void save_document(int format) {
     char path[64] = "";
     if (!format && filename[0]) kstrncpy(path, filename, 63);
     if (!prompt(format ? "USB export filename: " : "Save filename (.txt or .md): ",
                 path, sizeof(path))) { show("Save/export cancelled."); return; }
-    const char *ext = format == 3 ? ".pdf" : format == 2 ? ".md" :
+    const char *ext = format == 4 ? ".docx" : format == 3 ? ".pdf" : format == 2 ? ".md" :
                       (!format && (ext_is(path, ".md") ||
                        (!extension(path) && writer_has_formatting(&document)))) ? ".md" : ".txt";
     if (!ensure_extension(path, sizeof(path), ext)) return;
@@ -194,9 +194,10 @@ static void save_document(int format) {
     int choice = target(path, 1, format != 0);
     if (!choice) { show("Save/export cancelled."); return; }
     uint32_t size = 0;
-    int rc = format == 3 ? writer_export_pdf(&document, io_buffer, sizeof(io_buffer), &size) :
+    int rc = format == 4 ? writer_export_docx(&document, io_buffer, sizeof(io_buffer), &size) :
+        format == 3 ? writer_export_pdf(&document, io_buffer, sizeof(io_buffer), &size) :
         writer_export_text(&document, ext_is(path, ".md"), io_buffer, sizeof(io_buffer), &size);
-    if (rc) { show("Export exceeds the 64 KiB/128-page PDF limit. Nothing written."); return; }
+    if (rc) { show("Export exceeds 64 KiB (PDF also limited to 128 pages). Nothing written."); return; }
     if (!overwrite_ok(path, choice)) return;
     rc = choice == 3 ? usb_file_write(path, io_buffer, size) :
         fs_volume_write((uint8_t)(choice - 1), path, io_buffer, size);
@@ -204,7 +205,7 @@ static void save_document(int format) {
     if (!format) {
         kstrncpy(filename, path, 63); filename[63] = 0;
         document.dirty = 0;
-        show("Document saved. F3 loads TXT/Markdown; PDF is export-only.");
+        show("Document saved. F3 loads TXT/Markdown; PDF/Word are export-only.");
     } else show("USB export complete. F2 saves the editable working document.");
 }
 static void load_document(void) {
@@ -243,11 +244,11 @@ void writer_run(void) {
     writer_fonts_begin(&workspace->fonts);
     writer_document_init(&document);
     filename[0] = 0; top = 0;
-    show("Ready. USB exports require USB /MOUNT first. F5 TXT / F6 MD / F7 PDF.");
+    show("USB /MOUNT first. F5 TXT / F6 MD / F7 PDF / F10 Word (.docx). F11 quits.");
     for (;;) {
         draw();
         int c = keyboard_getchar();
-        if (c == KEY_F10) {
+        if (c == KEY_F11) {
             if (!document.dirty || confirm("Unsaved changes. Quit without saving? [Y] Yes")) break;
             show("Quit cancelled.");
         } else if (c == KEY_F1) {
@@ -260,6 +261,7 @@ void writer_run(void) {
         else if (c == KEY_F5) save_document(1);
         else if (c == KEY_F6) save_document(2);
         else if (c == KEY_F7) save_document(3);
+        else if (c == KEY_F10) save_document(4);
         else if (c == KEY_F8) {
             document.typing_style ^= WRITER_BOLD;
             show(document.typing_style & WRITER_BOLD ? "Bold ON for new text." : "Bold OFF for new text.");

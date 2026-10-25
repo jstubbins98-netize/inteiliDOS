@@ -28,4 +28,6 @@ int writer_export_text(const writer_document_t *doc, int markdown,
                        uint8_t *output, uint32_t capacity, uint32_t *size);
 int writer_export_pdf(const writer_document_t *doc, uint8_t *output,
                       uint32_t capacity, uint32_t *size);
+int writer_export_docx(const writer_document_t *doc, uint8_t *output,
+                       uint32_t capacity, uint32_t *size);
 #endif

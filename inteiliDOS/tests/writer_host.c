@@ -41,7 +41,7 @@ int keyboard_getchar(void) {
     if (key_at < key_count) return keys[key_at++];
     exhausted++;
     /* Bound a broken test's loop, without hiding its queue exhaustion. */
-    return exhausted % 2 ? KEY_F10 : 'y';
+    return exhausted % 2 ? KEY_F11 : 'y';
 }
 void vga_set_cursor(int row, int col) { (void)row; (void)col; }
 void vga_set_color(vga_color_t fg, vga_color_t bg) { (void)fg; (void)bg; }

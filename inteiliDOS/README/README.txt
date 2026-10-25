@@ -11,7 +11,7 @@ MAIN FEATURES
 - inteiliShell: command history, file commands and plain-English aliases.
 - Built-in applications: iEdit text editor, InteiliBASIC interpreter,
   InteiliSheets spreadsheet, InteiliFile Manager and InteiliTalk speech.
-  inteiliWriter (WRITER or DOCS) adds word processing and USB TXT/Markdown/PDF
+  inteiliWriter (WRITER or DOCS) adds word processing and USB TXT/Markdown/PDF/Word
   export. F8 toggles bold and F9 toggles italic; Markdown/PDF preserve styles.
   iEdit and InteiliSheets use F2 to save, F3 to load and F10 to quit.
   In iEdit, F4 deletes the current line.

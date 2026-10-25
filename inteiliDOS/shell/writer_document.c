@@ -251,6 +251,111 @@ int writer_export_text(const writer_document_t *doc, int markdown,
     *size = s.length;
     return 0;
 }
+/* Minimal Office Open XML package, using stored ZIP entries (no runtime
+ * compressor). Preflight the whole package before touching the output. */
+static void xml_text(sink_t *s, char c) {
+    if (c == '&') string(s, "&amp;");
+    else if (c == '<') string(s, "&lt;");
+    else if (c == '>') string(s, "&gt;");
+    else byte(s, c);
+}
+static void docx_part(sink_t *s, const writer_document_t *doc, unsigned part) {
+    string(s, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+    if (part == 0) {
+        string(s, "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+            "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+            "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+            "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+            "</Types>");
+    } else if (part == 1) {
+        string(s, "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+            "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>"
+            "</Relationships>");
+    } else {
+        string(s, "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p>");
+        for (uint32_t i = 0; i < doc->length;) {
+            if (doc->text[i] == '\n') {
+                string(s, "</w:p><w:p>"); i++; continue;
+            }
+            unsigned style = doc->style[i] & 3;
+            string(s, "<w:r>");
+            if (style) {
+                string(s, "<w:rPr>");
+                if (style & WRITER_BOLD) string(s, "<w:b/>");
+                if (style & WRITER_ITALIC) string(s, "<w:i/>");
+                string(s, "</w:rPr>");
+            }
+            string(s, "<w:t xml:space=\"preserve\">");
+            do { xml_text(s, doc->text[i++]); }
+            while (i < doc->length && doc->text[i] != '\n' &&
+                   (doc->style[i] & 3) == style);
+            string(s, "</w:t></w:r>");
+        }
+        string(s, "</w:p><w:sectPr/></w:body></w:document>");
+    }
+}
+static void zip16(sink_t *s, uint32_t n) {
+    byte(s, (char)n); byte(s, (char)(n >> 8));
+}
+static void zip32(sink_t *s, uint32_t n) {
+    zip16(s, n); zip16(s, n >> 16);
+}
+static uint32_t zip_crc(const uint8_t *data, uint32_t size) {
+    uint32_t crc = 0xffffffffu;
+    while (size--) {
+        crc ^= *data++;
+        for (unsigned i = 0; i < 8; i++)
+            crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1)));
+    }
+    return ~crc;
+}
+static void docx_package(sink_t *s, const writer_document_t *doc) {
+    static const char *names[] = {"[Content_Types].xml", "_rels/.rels", "word/document.xml"};
+    static const unsigned lengths[] = {19, 11, 17};
+    uint32_t offsets[3], sizes[3], crcs[3];
+    for (unsigned i = 0; i < 3; i++) {
+        sink_t count = {0, 0, s->capacity, 0};
+        docx_part(&count, doc, i);
+        if (count.failed) { s->failed = 1; return; }
+        sizes[i] = count.length; offsets[i] = s->length;
+        zip32(s, 0x04034b50); zip16(s, 20);
+        zip16(s, 0); zip16(s, 0); zip16(s, 0); zip16(s, 0x21);
+        zip32(s, 0); zip32(s, sizes[i]); zip32(s, sizes[i]);
+        zip16(s, lengths[i]); zip16(s, 0); string(s, names[i]);
+        uint32_t start = s->length;
+        docx_part(s, doc, i);
+        crcs[i] = s->data && !s->failed ? zip_crc(s->data + start, sizes[i]) : 0;
+        if (s->data && !s->failed) {
+            for (unsigned j = 0; j < 4; j++)
+                s->data[offsets[i] + 14 + j] = (uint8_t)(crcs[i] >> (j * 8));
+        }
+    }
+    uint32_t central = s->length;
+    for (unsigned i = 0; i < 3; i++) {
+        zip32(s, 0x02014b50); zip16(s, 20); zip16(s, 20);
+        zip16(s, 0); zip16(s, 0); zip16(s, 0); zip16(s, 0x21);
+        zip32(s, crcs[i]); zip32(s, sizes[i]); zip32(s, sizes[i]);
+        zip16(s, lengths[i]); zip16(s, 0); zip16(s, 0);
+        zip16(s, 0); zip16(s, 0); zip32(s, 0); zip32(s, offsets[i]);
+        string(s, names[i]);
+    }
+    uint32_t central_size = s->length - central;
+    zip32(s, 0x06054b50); zip16(s, 0); zip16(s, 0);
+    zip16(s, 3); zip16(s, 3); zip32(s, central_size);
+    zip32(s, central); zip16(s, 0);
+}
+int writer_export_docx(const writer_document_t *doc, uint8_t *output,
+                       uint32_t capacity, uint32_t *size) {
+    *size = 0;
+    sink_t count = {0, 0, capacity, 0};
+    docx_package(&count, doc);
+    if (count.failed) return -1;
+    sink_t s = {output, 0, capacity, 0};
+    docx_package(&s, doc);
+    if (s.failed) return -1;
+    *size = s.length;
+    return 0;
+}
 static void page_content(sink_t *s, const writer_document_t *doc, uint32_t start) {
     string(s, "BT\n/F1 10 Tf\n13 TL\n48 744 Td\n");
     for (unsigned row = 0; row < PAGE_ROWS; row++) {

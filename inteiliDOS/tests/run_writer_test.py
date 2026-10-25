@@ -5,11 +5,15 @@ Disposable QEMU disks only. Also checks the existing iEdit app after its scratch
 buffer became on-demand storage. No real host disks are opened.
 """
 import argparse
+import io
+import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 import shutil
 import struct
 import subprocess
 import tempfile
+import time
 
 from build_test_kernel import build
 from run_launchpad_dos_test import Guest
@@ -87,21 +91,31 @@ def main():
             type_text(g, "USB0:\\FIRST.TXT\n"); g.wait("Document loaded.")
             g.key("right"); g.key("f4"); g.wait("Logical line deleted.")
             type_text(g, BODY)
-            for key, filename in (("f5", "DOC.TXT"), ("f6", "DOC.MD"), ("f7", "DOC.PDF")):
+            for key, filename in (("f5", "DOC.TXT"), ("f6", "DOC.MD"),
+                                  ("f7", "DOC.PDF"), ("f10", "DOC.DOCX")):
                 g.key(key); g.wait("USB export filename:")
                 type_text(g, filename + "\n"); g.wait("USB drive:"); g.key("0")
                 g.wait("USB export complete.")
             g.command("screendump", {"filename": str(output / "writer.ppm")})
+            # Compare rendered pixels across several VGA blink phases, not
+            # just text VRAM (which is identical even when glyphs disappear).
+            guide = crop_ppm(output / "writer.ppm", 0, 24, 80, 1)
+            for phase in range(8):
+                time.sleep(0.25)
+                capture = output / f"guide-phase-{phase}.ppm"
+                g.command("screendump", {"filename": str(capture)})
+                assert crop_ppm(capture, 0, 24, 80, 1) == guide, \
+                    "Writer's fixed function-key guide blinked"
             g.key("f2"); g.wait("Save filename")
             # Previous USB filename is prefilled; Backspace clears it.
             for _ in range(len("USB0:\\FIRST.TXT")): g.key("backspace")
             type_text(g, "NATIVE.TXT\n"); g.wait("Save to:"); g.key("1")
-            g.wait("Document saved."); g.key("f10")
+            g.wait("Document saved."); g.key("f11")
             shell(g, "inteiliwriter"); g.wait("inteiliWriter | Word processor")
             g.key("f3"); g.wait("Load TXT/Markdown")
             type_text(g, "NATIVE.TXT\n"); g.wait("Load from:"); g.key("1")
             g.wait("Document loaded."); g.wait("This document was written to USB.")
-            g.key("f10")
+            g.key("f11")
             # Ensure the small iEdit allocation change preserves native behavior.
             shell(g, "iedit"); g.wait("iEdit")
             type_text(g, "legacy editor")
@@ -127,7 +141,7 @@ def main():
             assert len(set(colors)) == 1, "Font styles must not just change ink colors"
             g.key("f2"); g.wait("Save filename")
             type_text(g, "USB0:\\STYLE.MD\n"); g.wait("File exists.")
-            g.key("y"); g.wait("Document saved."); g.key("f10")
+            g.key("y"); g.wait("Document saved."); g.key("f11")
             shell(g, "docs"); g.wait("inteiliWriter | Word processor")
             g.key("f3"); g.wait("Load TXT/Markdown")
             type_text(g, "USB0:\\STYLE.MD\n"); g.wait("Document loaded.")
@@ -136,7 +150,7 @@ def main():
                         for col in (2, 9, 16, 23)]
             assert restored == glyphs, "Markdown reload lost character formatting"
             g.key("f6"); g.wait("USB export filename:")
-            type_text(g, "USB0:\\COPY.MD\n"); g.wait("USB export complete."); g.key("f10")
+            type_text(g, "USB0:\\COPY.MD\n"); g.wait("USB export complete."); g.key("f11")
             shell_snapshot(g, output / "shell-after.ppm")
             assert crop_ppm(output / "shell-before.ppm", 0, 0, 80, 2) == \
                 crop_ppm(output / "shell-after.ppm", 0, 0, 80, 2), "Shell font/color restoration failed"
@@ -148,6 +162,15 @@ def main():
         assert files["FIRST.TXT"] == b"hello brave world"
         assert files["DOC.TXT"] == BODY.replace("\n", "\r\n").encode()
         assert files["DOC.MD"] == BODY.encode()
+        prefix = struct.unpack_from("<I", stick.read_bytes(), 454)[0] * 512
+        docx = subprocess.check_output(["mtype", "-i", f"{stick}@@{prefix}", "::DOC.DOCX"])
+        with zipfile.ZipFile(io.BytesIO(docx)) as package:
+            assert package.testzip() is None
+            tree = ET.fromstring(package.read("word/document.xml"))
+            ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+            assert "\n".join("".join(p.itertext()) for p in
+                             tree.findall("w:body/w:p", ns)) == BODY
+        (output / "DOC.DOCX").write_bytes(docx)
         assert files["LEGACY.TXT"] == b"legacy editor\n"
         assert files["STYLE.TXT"] == b"sample sample sample sample"
         assert files["STYLE.MD"] == b"sample **sample** *sample* ***sample***"
@@ -168,7 +191,7 @@ def main():
             for name in ("writer", "formatted", "formatted-reloaded", "shell-after"):
                 subprocess.run(["magick", str(output / (name + ".ppm")),
                                 str(output / (name + ".png"))], check=True)
-        print("PASS: real keyboard navigation, save/load/delete, USB TXT/MD/PDF bytes, "
+        print("PASS: real keyboard navigation, save/load/delete, USB TXT/MD/PDF/DOCX bytes, "
               "PDF fonts/reader, DOCS alias, four VGA styles, Markdown style reload, "
               "shell font restoration, native persistence, preserved files and iEdit", flush=True)
 

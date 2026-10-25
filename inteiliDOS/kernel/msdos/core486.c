@@ -206,6 +206,12 @@ static int firmware(void *opaque,CPUI386 *c) {
         ram[address+1]==0x1c && ram[address+2]==0xcf)
         timer_bios();
     if (!posted && address==0x7c00) {
+        /* The XT ROM writes FFh to port 92h during generic POST port
+         * initialization. On our AT machine that accidentally opens A20.
+         * Establish the conventional closed gate once at boot handoff;
+         * later guest BIOS/KBC/92h requests still control it normally.
+         * EXEPACK's backwards real-mode unpacker needs the 1 MiB alias. */
+        gate(0);
         /* POST initializes the IVT. Install the memory service afterwards,
          * before IO.SYS/HIMEM can query it, including far-call chains. */
         putword(0x15*4,0x3200);putword(0x15*4+2,0xf000);

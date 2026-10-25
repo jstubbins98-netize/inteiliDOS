@@ -4,6 +4,9 @@ No physical disks: storage is in-memory, VGA is a private mmap fixture.
 Run: python3 inteiliDOS/tests/test_writer.py
 """
 import ctypes as C
+import io
+import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 import random
 import re
@@ -15,6 +18,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 CAP = 16384
 F1, F2, F3, F4, F5, F6, F7, F8, F9, F10 = 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99
+F11 = 0x9a
 LEFT, RIGHT, UP, DOWN = 0x82, 0x83, 0x80, 0x81
 
 
@@ -45,6 +49,7 @@ class WriterTests(unittest.TestCase):
         cls.lib.writer_vertical.argtypes = [C.POINTER(Doc), C.c_int]
         cls.lib.writer_words.argtypes = [C.POINTER(Doc)]
         cls.lib.writer_export_pdf.argtypes = [C.POINTER(Doc), C.c_void_p, C.c_uint32, C.POINTER(C.c_uint32)]
+        cls.lib.writer_export_docx.argtypes = cls.lib.writer_export_pdf.argtypes
         cls.lib.writer_export_text.argtypes = [
             C.POINTER(Doc), C.c_int, C.c_void_p, C.c_uint32, C.POINTER(C.c_uint32)]
         cls.lib.writer_host_keys.argtypes = [C.POINTER(C.c_int), C.c_int]
@@ -219,7 +224,7 @@ class WriterTests(unittest.TestCase):
                    F3, "DOC.TXT\n30",  # Actual reload of the saved content.
                    RIGHT, F4, "Final (text)\\demo\nLine two",
                    F5, "DOC.TXT\n0y", F6, "DOC.md\n0", F7, "DOC.pdf\n0",
-                   F2, "\ny", F10)
+                   F2, "\ny", F11)
         self.assertEqual(self.fetch("USB0:\\DOC.TXT"), b"Final (text)\\demo\r\nLine two")
         self.assertEqual(self.fetch("USB0:\\DOC.md"), b"Final (text)\\\\demo\nLine two")
         self.check_pdf(self.fetch("USB0:\\DOC.pdf"))
@@ -229,19 +234,19 @@ class WriterTests(unittest.TestCase):
         self.reset_ui()
         self.lib.writer_host_store(b"USB1:\\BAD.TXT", b"\x00binary", 7)
         self.queue("Keep this", F3, "yUSB1:\\BAD.TXT\n",
-                   F5, "USB0:\\KEEP.TXT\n", F10, "y")
+                   F5, "USB0:\\KEEP.TXT\n", F11, "y")
         self.assertEqual(self.fetch("USB0:\\KEEP.TXT"), b"Keep this")
 
     def test_ui_save_failure_keeps_unsaved_document(self):
         self.reset_ui()
         self.lib.writer_host_fail(1)
-        self.queue("Still here", F2, "USB0:\\FAIL.TXT\n", F10, "n", F10, "y")
+        self.queue("Still here", F2, "USB0:\\FAIL.TXT\n", F11, "n", F11, "y")
         self.assertIn(b"* unsaved", self.lib.writer_host_screen())
         self.assertIn(b"Still here", self.lib.writer_host_screen())
 
     def test_ui_native_save_cancel_and_ordinary_words(self):
         self.reset_ui()
-        self.queue("save load quit", F5, 27, F2, "NATIVE.MD\n1", F10)
+        self.queue("save load quit", F5, 27, F2, "NATIVE.MD\n1", F11)
         self.assertEqual(self.fetch("C:\\NATIVE.MD"), b"save load quit")
 
     def test_formatting_roundtrip_all_transitions_and_pdf_fonts(self):
@@ -316,13 +321,71 @@ class WriterTests(unittest.TestCase):
                    F6, "USB0:\\STYLE.MD\n", F7, "USB0:\\STYLE.PDF\n",
                    F3, "yUSB0:\\STYLE.MD\n",  # Restore actual character formatting.
                    F6, "USB0:\\COPY.MD\n",
-                   F2, "USB0:\\PLAIN.TXT\nn", F10)
+                   F2, "USB0:\\PLAIN.TXT\nn", F11)
         self.assertEqual(self.fetch("USB0:\\STYLE.MD"), b"Normal **Bold** *Italic****Both***")
         self.assertEqual(self.fetch("USB0:\\COPY.MD"), self.fetch("USB0:\\STYLE.MD"))
         self.assertIn(b"Courier-BoldOblique", self.fetch("USB0:\\STYLE.PDF"))
         # The cancelled plain-text save must not write a file.
         out = C.create_string_buffer(65536)
         self.assertLess(self.lib.writer_host_fetch(b"USB0:\\PLAIN.TXT", out), 0)
+
+    def check_docx(self, raw, text):
+        with zipfile.ZipFile(io.BytesIO(raw)) as package:
+            self.assertIsNone(package.testzip())
+            self.assertEqual(set(package.namelist()),
+                             {"[Content_Types].xml", "_rels/.rels", "word/document.xml"})
+            for name in package.namelist():
+                ET.fromstring(package.read(name))
+            tree = ET.fromstring(package.read("word/document.xml"))
+        ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        paragraphs = tree.findall("w:body/w:p", ns)
+        self.assertEqual("\n".join("".join(p.itertext()) for p in paragraphs), text)
+        return tree, ns
+
+    def test_docx_styles_xml_escaping_paragraphs_and_capacity(self):
+        for text in ("", " \n\nlast\n", 'A<&> "word"'):
+            self.load(text)
+            if text:
+                self.doc.style[0] = 3
+            out = C.create_string_buffer(65536)
+            size = C.c_uint32()
+            self.assertEqual(self.lib.writer_export_docx(
+                C.byref(self.doc), out, len(out), C.byref(size)), 0)
+            tree, ns = self.check_docx(out.raw[:size.value], text)
+            if text and text[0] != "\n":
+                self.assertIsNotNone(tree.find(".//w:b", ns))
+                self.assertIsNotNone(tree.find(".//w:i", ns))
+            tiny = C.create_string_buffer(b"unchanged", 10)
+            self.assertEqual(self.lib.writer_export_docx(
+                C.byref(self.doc), tiny, len(tiny), C.byref(size)), -1)
+            self.assertEqual(size.value, 0)
+            self.assertEqual(tiny.value, b"unchanged")
+        self.load("x" * CAP)
+        for i in range(CAP):
+            self.doc.style[i] = i % 4
+        before = out.raw
+        self.assertEqual(self.lib.writer_export_docx(
+            C.byref(self.doc), out, len(out), C.byref(size)), -1)
+        self.assertEqual(out.raw, before)
+
+    def test_ui_f10_exports_docx_and_f11_confirms_quit(self):
+        self.reset_ui()
+        self.queue("Word ", F8, "bold", F9, " both", F10,
+                   "USB0:\\LETTER\n", F11, "n", "!",
+                   F10, "USB0:\\LETTER.docx\ny", F11, "y")
+        tree, ns = self.check_docx(self.fetch("USB0:\\LETTER.docx"), "Word bold both!")
+        self.assertIsNotNone(tree.find(".//w:b", ns))
+        self.assertIsNotNone(tree.find(".//w:i", ns))
+        self.assertIn(b"* unsaved", self.lib.writer_host_screen())
+
+    def test_ui_docx_cancel_and_write_failure_leave_document_dirty(self):
+        self.reset_ui()
+        self.lib.writer_host_fail(1)
+        self.queue("Keep", F10, 27, F10, "USB0:\\FAIL.docx\n", F11, "n",
+                   F11, "y")
+        out = C.create_string_buffer(65536)
+        self.assertLess(self.lib.writer_host_fetch(b"USB0:\\FAIL.docx", out), 0)
+        self.assertIn(b"* unsaved", self.lib.writer_host_screen())
 
 
 if __name__ == "__main__":

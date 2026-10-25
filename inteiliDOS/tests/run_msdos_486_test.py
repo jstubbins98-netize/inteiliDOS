@@ -33,7 +33,10 @@ def main():
                 for name in ("D386MYH.EXE","CWSDPR0.EXE","DOOM1.WAD"):
                     (destination/name).write_bytes(archive.read(name))
         run("nasm","-f","bin","-DDOS=1",ROOT/"tests/msdos_486.asm","-o",tmp/"cpu.com")
-        (tmp/"disc/CPU486.IMG").write_bytes(fat12_image({"CPU486.COM":(tmp/"cpu.com").read_bytes()}))
+        run("nasm","-f","bin",ROOT/"tests/msdos_a20_gate.asm","-o",tmp/"gate.com")
+        (tmp/"disc/CPU486.IMG").write_bytes(fat12_image({
+            "CPU486.COM":(tmp/"cpu.com").read_bytes(),
+            "GATE.COM":(tmp/"gate.com").read_bytes()}))
         run("xorriso","-as","mkisofs","-quiet","-iso-level","1",
             "-o",tmp/"dos.iso",tmp/"disc")
         native=tmp/"native.img";native_disk(native);safe=protected(native)
@@ -78,6 +81,10 @@ def main():
             guest.key("f8");guest.wait("Returned from MS-DOS")
             shell(guest,"ms-dos /image CPU486.IMG")
             guest.wait("MS-DOS 6.22 -",timeout=120)
+            prompt()
+            shell(guest,"a:\\gate")
+            guest.wait("A20 BOOT AND TOGGLE PASS")
+            prompt()
             shell(guest,"a:\\cpu486")
             guest.wait("486 PROTECTED PAGING PASS",timeout=60)
             shell(guest,"type c:\\check.txt");guest.wait("BEFORE486")

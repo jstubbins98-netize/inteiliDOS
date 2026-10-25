@@ -47,6 +47,10 @@ void writer_fonts_begin(writer_font_state_t *state) {
     unsigned height = (read_reg(0x3D4, 9) & 31) + 1;
     outb(0x3D4, crtc_index);
     state->palette8 = palette_read(8);
+    state->mode_control = palette_read(0x10);
+    /* Writer uses bright backgrounds for its fixed title/key-guide rows.
+     * Attribute bit 7 must select background intensity, not text blinking. */
+    palette_write(0x10, state->mode_control & ~0x08u);
     unsigned bank = (state->map & 3) | ((state->map >> 2) & 4);
     unsigned source = (bank & 3) * 16384 + (bank & 4) * 2048;
     mapping_t m = map_font();
@@ -78,4 +82,5 @@ void writer_fonts_end(const writer_font_state_t *state) {
     unmap_font(m);
     write_reg(0x3C4, 3, state->map); outb(0x3C4, seq_index);
     palette_write(8, state->palette8);
+    palette_write(0x10, state->mode_control);
 }

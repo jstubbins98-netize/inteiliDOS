@@ -469,7 +469,13 @@ The PDF serializer emits uncompressed PDF 1.4 with exact stream lengths,
 escaped literal strings, page objects and byte-offset cross references.
 It switches among Courier's four base fonts for character style runs.
 It uses no host renderer or external runtime. TXT/Markdown are reloadable;
-PDF is export-only. All output must fit before a storage write is attempted.
+PDF is export-only. F10 exports a Word `.docx` to mounted USB storage and F11
+quits (with the existing unsaved-change confirmation). DOCX uses a minimal
+Office Open XML package in an uncompressed ZIP with per-entry CRC32, content
+types, package relationships and a WordprocessingML document. Paragraphs,
+spaces and bold/italic style runs are preserved with XML escaping. DOCX is
+export-only, not a new editable interchange format. All output must fit
+before a storage write is attempted.
 
 Validation:
 

@@ -373,6 +373,15 @@ optional-floppy failure. It never accesses physical CMOS or VGA.
 checks saved files. `run_hdd_cold_boot_test.py` checks real BIOS HDD-only
 startup without a kernel loader or CD.
 
+`run_msdos_486_test.py` also runs the original `msdos_a20_gate.asm`
+fixture before its protected-mode/paging checks. It checks the A20 state
+inherited from the real ROM/DOS boot, low-memory/HMA aliasing, and guest
+BIOS, fast-A20 and keyboard-controller toggles. This catches POST accidentally
+leaving A20 enabled, which causes older EXEPACK executables loaded low in
+memory to report “Packed file is corrupt.” A CPU-only test that explicitly
+disables A20 before executing the unpacker cannot detect that boot-state bug.
+No game binaries are included in this regression.
+
 ### Separately supplied DOS CD and floppy media
 
 ```bash
