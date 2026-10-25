@@ -120,6 +120,10 @@ Upstream projects maintain their complete individual contributor lists.
   University of California** ([upstream](https://www.jhauser.us/arithmetic/SoftFloat.html)).
   Integer-only 80-bit arithmetic for the optional DOS x87 interpreter.
   Retain its BSD-3-Clause notice in `kernel/msdos/softfloat/LICENSE`.
+- **Nuked OPL3 1.8** — **Nuke.YKT**
+  ([upstream](https://github.com/nukeykt/Nuked-OPL3)), integer-only AdLib/OPL
+  FM synthesis for DOS games. Retain its LGPL-2.1-or-later license, source and
+  relinking materials; see `kernel/msdos/opl3/LICENSE` and its README.
 - **FatFs FAT/exFAT filesystem library and Unicode support** — **ChaN**
   ([FatFs project](https://elm-chan.org/fsw/ff/)), with upstream contributor
   and copyright notices retained in `kernel/fatfs/`. The vendored source
@@ -180,4 +184,5 @@ See the `LICENSE` file for details.
 Third-party components, tools, guest software and assets retain their own
 copyrights and licenses. The inteiliDOS license does not relicense them or
 grant rights to distribute MS-DOS disk images. Preserve the applicable
-upstream notices, including the 8086tiny MIT license and FatFs notices.
+upstream notices, including the 8086tiny MIT license, Nuked OPL3 LGPL license
+and FatFs notices.
