@@ -1,10 +1,10 @@
-/* FatFs R0.16: USB-only, synchronous, no formatter or automatic disk changes. */
+/* FatFs R0.16: USB-only, synchronous; formatting requires explicit confirmation. */
 #define FFCONF_DEF 80386
 #define FS_FATFS_WINDOW_ALIGNMENT 4
 #define FF_FS_READONLY 0
 #define FF_FS_MINIMIZE 0
 #define FF_USE_FIND 0
-#define FF_USE_MKFS 0
+#define FF_USE_MKFS 1
 #define FF_USE_FASTSEEK 0
 #define FF_USE_EXPAND 0
 #define FF_USE_CHMOD 0

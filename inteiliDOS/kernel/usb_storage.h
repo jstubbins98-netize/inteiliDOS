@@ -15,6 +15,15 @@ typedef struct {
 int usb_storage_mount_all(void);
 int usb_storage_eject_all(void);
 const usb_volume_info_t *usb_storage_volumes(void);
+enum {USB_FORMAT_FAT16=1,USB_FORMAT_FAT32,USB_FORMAT_EXFAT};
+typedef struct {
+    unsigned drive, filesystem;
+    uint32_t sectors, revision, fingerprint;
+} usb_format_plan_t;
+/* Preparation is read-only. Commit only after the shell's destructive
+ * confirmation; it revalidates the mounted medium and never scans/remaps. */
+int usb_storage_prepare_format(unsigned drive,unsigned filesystem,usb_format_plan_t *plan);
+int usb_storage_format(const usb_format_plan_t *plan);
 int usb_path(const char *path); /* case-insensitive USB prefix, including invalid IDs */
 int usb_file_list(const char *path, usb_file_info_t *out, unsigned max);
 int usb_file_read(const char *path, uint8_t *buf, uint32_t max, uint32_t *length);

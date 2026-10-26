@@ -71,6 +71,7 @@ Useful inteiliShell commands:
   HEALTH        Open System Health.
   USB /MOUNT    Mount supported USB drives.
   USB /COPY     Choose one USB file and its destination.
+  USB /FORMAT   Confirmed whole-USB quick format as FAT16, FAT32 or exFAT.
   USB /EJECT    Safely release USB storage.
   MS-DOS        Enter the DOS emulator.
   MS-DOS /USB   Load supplied DOS installation images from USB.

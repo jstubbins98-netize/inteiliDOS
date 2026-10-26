@@ -194,7 +194,7 @@ set_default_profile() {
     ENABLE_FLOPPY=1
     AUDIO_MODE=0
     MSDOS_SOUND=0
-    MSDOS_SOUND_MODEL=2
+    MSDOS_SOUND_MODEL=16
     TIMER_HZ=1000
     TARGET_X86_64=0
     case "$PROFILE_PRESET" in
@@ -265,16 +265,9 @@ run_wizard() {
     if [[ "$CPU_CLASS" -ge 7 ]]; then
         ask_menu \
             "Enable sound card emulation in the MS-DOS emulator?" \
-            "Provides Sound Blaster 2 or Sound Blaster 16 digital playback through supported Intel ICH AC'97 or analog HDA outputs. Physical codec compatibility varies. No FM music, MIDI or recording. This is separate from CLOAD capture. Choose No if sound is not needed." \
+            "Enables Sound Blaster 16 digital PCM and OPL3 FM music through supported Intel ICH AC'97 or analog HDA outputs. Physical codec compatibility varies. No MIDI or recording. This is separate from CLOAD capture. Choose No if sound is not needed." \
             2 "Yes" "No"
         [[ "$REPLY" -eq 1 ]] && MSDOS_SOUND=1 || MSDOS_SOUND=0
-        if [[ "$MSDOS_SOUND" -eq 1 ]]; then
-            ask_menu \
-                "Which sound card should the MS-DOS emulator use?" \
-                "Sound Blaster 2: 8-bit mono PCM at A220 I5 D1. Sound Blaster 16: 8/16-bit mono or stereo PCM at A220 I5 D1 H5. This selects the default; MS-DOS /SOUND2 or /SOUND16 overrides it per session. Neither option includes FM music or MIDI." \
-                1 "Sound Blaster 2" "Sound Blaster 16"
-            [[ "$REPLY" -eq 2 ]] && MSDOS_SOUND_MODEL=16 || MSDOS_SOUND_MODEL=2
-        fi
         [[ "$MSDOS_SOUND" -eq 0 ]] || ENABLE_PCI=1
     fi
 

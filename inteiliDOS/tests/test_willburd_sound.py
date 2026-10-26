@@ -15,14 +15,13 @@ SCRIPT=Path(__file__).resolve().parents[1]/"build.sh"
 QUESTION="Enable sound card emulation in the MS-DOS emulator?"
 
 
-def wizard(cpu, sound=None, help_first=False, model="1"):
+def wizard(cpu, sound=None, help_first=False):
     with tempfile.TemporaryDirectory(prefix="willburd-audio-") as folder:
         script=Path(folder)/"build.sh";shutil.copy2(SCRIPT,script)
         answers=["",str(cpu)]
         if cpu>=5:
             if help_first: answers+=["H"]
             answers+=[sound or ""]
-            if sound=="1":answers+=[model]
         answers+=["","2","1","1","1","1","1"]
         master,slave=pty.openpty()
         child=subprocess.Popen(["bash",str(script),"--config-only"],
@@ -54,31 +53,25 @@ def wizard(cpu, sound=None, help_first=False, model="1"):
 
 class SoundWizardTest(unittest.TestCase):
     def test_modern_yes_no_and_help(self):
-        for cpu,choice in ((5,"1"),(5,"2"),(6,"1"),(7,"1"),(7,"")):
+        for cpu,choice in ((cpu,choice) for cpu in (5,6,7) for choice in ("1","2","")):
             with self.subTest(cpu=cpu,choice=choice):
                 text,config=wizard(cpu,choice,help_first=cpu==6)
                 self.assertIn(QUESTION,text)
                 enabled=int(choice=="1")
                 self.assertIn(f"#define CONFIG_MSDOS_SOUND {enabled}",config)
                 if enabled: self.assertIn("#define CONFIG_ENABLE_PCI 1",config)
-                self.assertIn("#define CONFIG_MSDOS_SOUND_MODEL 2",config)
-                self.assertEqual("Which sound card should" in text,bool(enabled))
+                self.assertIn("#define CONFIG_MSDOS_SOUND_MODEL 16",config)
+                self.assertNotIn("Which sound card should",text)
+                self.assertIn(f"{enabled} (Sound Blaster 16)",text)
                 self.assertIn("#define CONFIG_AUDIO_MODE 0",config)
 
     def test_legacy_skips_question(self):
-        for cpu in (1,4):
+        for cpu in (1,2,3,4):
             text,config=wizard(cpu)
             self.assertNotIn(QUESTION,text)
             self.assertIn("#define CONFIG_MSDOS_SOUND 0",config)
-
-    def test_sound_card_choice(self):
-        for cpu in (5,6,7):
-            for model in ("1","2",""):
-                with self.subTest(cpu=cpu,model=model):
-                    text,config=wizard(cpu,"1",model=model)
-                    expected=16 if model=="2" else 2
-                    self.assertIn(f"#define CONFIG_MSDOS_SOUND_MODEL {expected}",config)
-                    self.assertIn(f"(Sound Blaster {expected})",text)
+            self.assertIn("#define CONFIG_MSDOS_SOUND_MODEL 16",config)
+            self.assertNotIn("Which sound card should",text)
 
 
 if __name__=="__main__":

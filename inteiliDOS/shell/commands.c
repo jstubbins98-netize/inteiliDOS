@@ -157,7 +157,7 @@ static int cmd_help(int argc, const char *argv[]) {
     println("  DISKCHECK - Check IDE hard disk health and geometry");
     println("  BOOTREPAIR - Confirmed native boot-sector repair; preserves files");
     println("  CDROM    - Usage; /DRIVE-INFO, /EJECT, /LIST, /RUN");
-    println("  USB      - USB drive usage; /MOUNT, /EJECT");
+    println("  USB      - Usage; /MOUNT, /EJECT, /COPY, /SHOW-PORTS, /FORMAT");
 
     /* System */
     vga_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);

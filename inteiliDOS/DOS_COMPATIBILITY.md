@@ -577,9 +577,9 @@ and the existing floppy/CD/USB media options normally.
 
 When a 2000s, Athlon 64/Core 2, or early-2010s processor family is selected,
 Willburd asks whether to enable sound-card emulation immediately after the CPU
-question. The default is **No**. Answering **Yes** opens a second question:
-**Sound Blaster 2** (the default choice) or **Sound Blaster 16**.
-Legacy CPU choices skip both questions.
+question. The default is **No**. Answering **Yes** always configures
+**Sound Blaster 16** with digital PCM and OPL3 FM music; there is no
+second card-selection question. Legacy CPU choices skip the sound question.
 Non-interactive presets also leave it off.
 
 The generated `configurations/config.h` contains:

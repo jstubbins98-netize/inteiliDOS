@@ -5,6 +5,7 @@
 #include "../kernel/fs.h"
 #include "../kernel/memory.h"
 #include "../kernel/vga.h"
+#include "../kernel/keyboard.h"
 
 static uint8_t file_buffer[USB_FILE_MAX+1]; /* detect native read truncation */
 static int option(const char *a,const char *b) {
@@ -22,6 +23,7 @@ static void usage(void) {
              "USB /MOUNT   Detect and mount supported USB drives (read/write)\n"
              "USB /EJECT   Flush and safely disconnect all detected USB drives\n"
              "USB /SHOW-PORTS  List currently mounted USB drives and capacities\n"
+             "USB /FORMAT [USBn: [FAT16|FAT32|EXFAT]]  Confirmed whole-drive quick format\n"
              "USB /COPY    Choose ONE file and its save destination (no bulk copy)\n"
              "Mounted drives: USB0:..USB3: (not C: or D:)\n"
              "Examples: DIR USB0:    TYPE USB0:\\NOTES.TXT\n"
@@ -40,9 +42,88 @@ static void statuses(void) {
     }
     if (!shown) vga_puts("No supported USB storage drives detected.\n");
 }
+static int format_line(char *out,unsigned capacity) {
+    unsigned n=0;int overflow=0;
+    out[0]=0;
+    for (;;) {
+        int c=keyboard_getchar();
+        if (c==KEY_ESCAPE) {vga_putchar('\n');return -1;}
+        if (c=='\r' || c=='\n') {
+            out[n]=0;vga_putchar('\n');return overflow?-1:(int)n;
+        }
+        if (c==KEY_BACKSPACE && n) {out[--n]=0;vga_putchar('\b');}
+        else if (c>=32 && c<127) {
+            if (n+1<capacity) {out[n++]=(char)c;out[n]=0;vga_putchar(c);}
+            else overflow=1;
+        }
+    }
+}
+static unsigned format_filesystem(const char *name) {
+    if (option(name,"FAT16") || option(name,"1")) return USB_FORMAT_FAT16;
+    if (option(name,"FAT32") || option(name,"2")) return USB_FORMAT_FAT32;
+    if (option(name,"EXFAT") || option(name,"3")) return USB_FORMAT_EXFAT;
+    return 0;
+}
+static int format_command(int argc,const char *argv[]) {
+    if (argc>3) {vga_puts("Use USB /FORMAT [USBn: [FAT16|FAT32|EXFAT]].\n");return -1;}
+    const usb_volume_info_t *v=usb_storage_volumes();
+    unsigned count=0;
+    vga_puts("Mounted USB drives available to format:\n");
+    for (unsigned i=0;i<USB_STORAGE_MAX;i++) if (v[i].mounted) {
+        vga_printf(" USB%u: %u MiB - %s\n",i,v[i].sectors/2048,v[i].status);count++;
+    }
+    if (!count) {vga_puts("No USB drive mounted. Run USB /MOUNT first.\n");return -1;}
+    char answer[64];
+    const char *target=argc>=2?argv[1]:answer;
+    if (argc<2) {
+        vga_puts("Select USB0:..USB3: (Enter/Esc cancels): ");
+        if (format_line(answer,sizeof(answer))<=0) goto cancelled;
+    }
+    if (kstrlen(target)!=5 || !usb_path(target) || target[3]<'0' ||
+        target[3]>='0'+USB_STORAGE_MAX || target[4]!=':') {
+        vga_puts("Select an explicit mounted USB0:..USB3: drive, not a native disk or file.\n");
+        return -1;
+    }
+    unsigned drive=(unsigned)(target[3]-'0');
+    if (!v[drive].mounted) {vga_puts("That USB drive is not mounted.\n");return -1;}
+    unsigned filesystem;
+    if (argc>=3) filesystem=format_filesystem(argv[2]);
+    else {
+        vga_puts("Filesystem: 1 FAT16 (8 MiB..2 GiB), 2 FAT32 (>=64 MiB), 3 exFAT (>=8 MiB).\n"
+                 "Enter name or number (Enter/Esc cancels): ");
+        if (format_line(answer,sizeof(answer))<=0) goto cancelled;
+        filesystem=format_filesystem(answer);
+    }
+    if (!filesystem) {vga_puts("Unsupported filesystem. Choose FAT16, FAT32 or EXFAT. No changes made.\n");return -1;}
+    usb_format_plan_t plan;
+    int rc=usb_storage_prepare_format(drive,filesystem,&plan);
+    if (rc) {vga_puts(usb_storage_error(rc));vga_putchar('\n');return -1;}
+    const char *name=filesystem==USB_FORMAT_FAT16?"FAT16":
+                     filesystem==USB_FORMAT_FAT32?"FAT32":"exFAT";
+    vga_printf("WARNING: Erase ALL files and ALL partitions on USB%u: (%u MiB), creating %s.\n",
+               drive,plan.sectors/2048,name);
+    vga_puts("This quick format is not a secure erase. Back up anything you need first.\n");
+    char confirmation[]="FORMAT USB0:";
+    confirmation[10]=(char)('0'+drive);
+    vga_printf("Type exactly %s to erase this drive (anything else cancels): ",confirmation);
+    if (format_line(answer,sizeof(answer))<=0 || kstrcmp(answer,confirmation)) goto cancelled;
+    vga_printf("Formatting USB%u: as %s. Do not remove it; cancellation is no longer available.\n",drive,name);
+    rc=usb_storage_format(&plan);
+    if (rc) {
+        vga_puts(usb_storage_error(rc));vga_putchar('\n');
+        vga_printf("USB%u: %s\n",drive,v[drive].status?v[drive].status:"Unavailable");
+        return -1;
+    }
+    vga_printf("USB%u: formatted as %s and remounted read/write. Other drives were not formatted.\n",
+               drive,name);
+    return 0;
+cancelled:
+    vga_puts("USB format cancelled. No formatting writes made.\n");return 0;
+}
 int usb_command(int argc,const char *argv[]) {
     if (!argc || (argc==1 && option(argv[0],"/?"))) {usage();return 0;}
     if (argc==1 && option(argv[0],"/COPY")) return usb_pick_and_copy();
+    if (option(argv[0],"/FORMAT")) return format_command(argc,argv);
     if (argc==1 && option(argv[0],"/SHOW-PORTS")) {
         const usb_volume_info_t *v=usb_storage_volumes();
         unsigned count=0;

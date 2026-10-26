@@ -1,6 +1,7 @@
 /* USB mass storage volumes. FatFs never sees an ATA/floppy/native device.
  * Files are opened/closed within each operation; no live file handles can
- * survive eject. No autoformat, no write cache outside FatFs, no IRQ I/O.
+ * survive eject. Formatting is explicit and USB-only, never automatic.
+ * No write cache outside FatFs, no IRQ I/O.
  */
 #include "usb_storage.h"
 #include "usb_transport.h"
@@ -11,6 +12,7 @@
 
 static FATFS filesystems[USB_STORAGE_MAX];
 static usb_volume_info_t volumes[USB_STORAGE_MAX];
+static uint32_t revisions[USB_STORAGE_MAX];
 
 static void volume_name(unsigned i, char out[3]) {
     out[0]='0'+i;out[1]=':';out[2]=0;
@@ -90,6 +92,7 @@ int usb_storage_mount_all(void) {
     for (unsigned i=0;i<USB_STORAGE_MAX;i++) {
         char path[3];volume_name(i,path);f_mount(0,path,0);
         kmemset(&volumes[i],0,sizeof(volumes[i]));
+        revisions[i]++;
     }
     usb_transport_forget_absent();
     if (usb_transport_scan()<0) return -1;
@@ -130,6 +133,7 @@ int usb_storage_eject_all(void) {
     }
     for (unsigned i=0;i<USB_STORAGE_MAX;i++) {
         if (!volumes[i].detected && !usb_transport_present(i)) continue;
+        revisions[i]++;
         if (!usb_transport_present(i)) {
             volumes[i].status="Drive disconnected or failed; safe eject not confirmed";
             volumes[i].mounted=0;
@@ -176,12 +180,92 @@ const char *usb_storage_error(int code) {
     case -102:return "File is too large for this operation (64 KiB maximum).";
     case -103:return "USB drive full or write incomplete; file may be partial.";
     case -104:return "Files of 4 GiB or larger cannot be streamed by this kernel.";
+    case -105:return "Unsupported format or size: FAT16 8 MiB..2 GiB; FAT32 >=64 MiB; exFAT >=8 MiB.";
+    case -106:return "USB media changed or is unavailable. Formatting cancelled before writes; mount and select it again.";
+    case -107:return "USB cache flush failed; formatting did not start. Safe removal is not confirmed.";
+    case -108:return "Format failed; the selected USB may be partially formatted and is not mounted.";
+    case -109:return "Format written but flush or filesystem verification failed; USB is not mounted. Do not remove it yet.";
     case -FR_NO_FILE:case -FR_NO_PATH:return "USB file or directory not found.";
     case -FR_WRITE_PROTECTED:return "USB drive is write protected.";
     case -FR_INVALID_NAME:return "Invalid filename; use CP437/ASCII names without reserved characters.";
     case -FR_DENIED:return "Access denied, directory full, or drive full.";
     default:return "USB I/O failed; check media. Safe eject is not confirmed.";
     }
+}
+static int format_fingerprint(unsigned drive,uint32_t *hash) {
+    uint8_t sector[512];
+    uint32_t h=2166136261u;
+    /* Include the mounted VBR/volume serial as well as the partition table.
+     * Transport bindings remain pinned: no scan or slot reuse during a format. */
+    for (unsigned n=0;n<2;n++) {
+        if (disk_read(drive,sector,n?filesystems[drive].volbase:0,1)!=RES_OK) return -106;
+        for (unsigned j=0;j<512;j++) h=(h^sector[j])*16777619u;
+    }
+    *hash=h;return 0;
+}
+int usb_storage_prepare_format(unsigned drive,unsigned filesystem,usb_format_plan_t *plan) {
+    if (!plan || drive>=USB_STORAGE_MAX || filesystem<USB_FORMAT_FAT16 ||
+        filesystem>USB_FORMAT_EXFAT) return -105;
+    if (!volumes[drive].mounted || !usb_transport_present(drive)) return -106;
+    uint32_t sectors;
+    if (capacity(drive,&sectors) || sectors!=volumes[drive].sectors) return -106;
+    if ((filesystem==USB_FORMAT_FAT16 && (sectors<16384 || sectors>4194304)) ||
+        (filesystem==USB_FORMAT_FAT32 && sectors<131072) ||
+        (filesystem==USB_FORMAT_EXFAT && sectors<16384)) return -105;
+    uint32_t fingerprint;
+    int rc=format_fingerprint(drive,&fingerprint);
+    if (rc) return rc;
+    *plan=(usb_format_plan_t){drive,filesystem,sectors,revisions[drive],fingerprint};
+    return 0;
+}
+int usb_storage_format(const usb_format_plan_t *plan) {
+    if (!plan) return -105;
+    usb_format_plan_t current;
+    int rc=usb_storage_prepare_format(plan->drive,plan->filesystem,&current);
+    if (rc) return rc;
+    if (plan->revision!=current.revision || plan->sectors!=current.sectors ||
+        plan->fingerprint!=current.fingerprint) return -106;
+    unsigned drive=plan->drive;
+    if (sync_disk(drive)) return -107;
+    char path[3];volume_name(drive,path);
+    if (f_mount(0,path,0)!=FR_OK) return -106;
+    revisions[drive]++;
+    volumes[drive].mounted=0;volumes[drive].status="Formatting; do not remove";
+    MKFS_PARM parameters={0};
+    /* Align the data area to 1 MiB. Besides flash alignment, the reserved
+     * space keeps a 2 GiB FAT16 volume below FAT16's cluster-count limit. */
+    parameters.align=2048;
+    parameters.n_fat=plan->filesystem==USB_FORMAT_EXFAT?1:2;
+    parameters.fmt=plan->filesystem==USB_FORMAT_FAT16?FM_FAT:
+                   plan->filesystem==USB_FORMAT_FAT32?FM_FAT32:FM_EXFAT;
+    if (plan->filesystem==USB_FORMAT_FAT16) {
+        unsigned cluster=1;
+        while (cluster<64 && plan->sectors/cluster>65524) cluster*=2;
+        parameters.au_size=cluster*512;
+    }
+    /* One sector of stack workspace avoids a persistent formatter buffer.
+     * No FM_SFD: replace the whole drive with a new partitioned volume. */
+    uint32_t work[128];
+    if (f_mkfs(path,&parameters,work,sizeof(work))!=FR_OK) {
+        volumes[drive].status="Format failed/possibly partial; not mounted";
+        return -108;
+    }
+    if (sync_disk(drive)) {
+        volumes[drive].status="Format flush failed; not mounted or safe to remove";
+        return -109;
+    }
+    unsigned expected=plan->filesystem==USB_FORMAT_FAT16?FS_FAT16:
+                      plan->filesystem==USB_FORMAT_FAT32?FS_FAT32:FS_EXFAT;
+    if (f_mount(&filesystems[drive],path,1)!=FR_OK || filesystems[drive].fs_type!=expected) {
+        f_mount(0,path,0);
+        volumes[drive].status="Formatted filesystem verification failed; not mounted";
+        return -109;
+    }
+    volumes[drive].mounted=1;
+    volumes[drive].status=expected==FS_EXFAT?"Mounted (exFAT read/write)":
+                          expected==FS_FAT32?"Mounted (FAT32 read/write)":
+                          "Mounted (FAT16 read/write)";
+    return 0;
 }
 int usb_file_list(const char *path,usb_file_info_t *out,unsigned max) {
     char actual[128];unsigned drive;

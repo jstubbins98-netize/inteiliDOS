@@ -135,6 +135,14 @@ USB /COPY
   Open the picker to choose one file and its save destination.
   This does not copy every file on the drive.
 
+USB /FORMAT [USBn: [FAT16|FAT32|EXFAT]]
+  Choose one mounted USB drive and its filesystem, then type the required
+  FORMAT USBn: confirmation. Erases all files and partitions on that drive.
+  FAT16: 8 MiB to 2 GiB; FAT32: at least 64 MiB; exFAT: at least 8 MiB.
+  Quick format, not secure erasure. Enter/Esc cancels an unanswered prompt.
+  Keep the drive connected once formatting starts. On success it is flushed
+  and remounted read/write. Native HDD paths are never accepted.
+
 USB /EJECT
   Flush and safely disconnect detected USB storage. Do not remove a drive
   if flushing or safe removal fails. USB keyboard operation is preserved.
